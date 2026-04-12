@@ -1,0 +1,95 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Loader2, MapPinned, Megaphone } from "lucide-react";
+import { AppShell } from "@/components/app-shell";
+import { QAChatbot } from "@/components/qa-chatbot";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { fetchAIGuidance } from "@/lib/dandi-state";
+import { lostItems } from "@/lib/mock-data";
+
+export default function LostDetailPage({ params }: { params: { id: string } }) {
+  const item = useMemo(() => lostItems.find((it) => it.id === params.id) ?? lostItems[0], [params.id]);
+  const [aiGuide, setAiGuide] = useState<{ cautionTitle: string; cautions: string[]; chatbotTips: string[] } | null>(null);
+  const loading = aiGuide === null;
+
+  useEffect(() => {
+    let mounted = true;
+    fetchAIGuidance({ name: item.name, category: item.category, type: item.type })
+      .then((data) => {
+        if (!mounted) return;
+        setAiGuide(data);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [item.category, item.name, item.type]);
+
+  return (
+    <AppShell subtitle="분실물 상세 정보 및 수령 안내">
+      <Card className="overflow-hidden">
+        <div className="h-52 bg-gradient-to-br from-blue-100 to-slate-200" />
+        <CardContent className="space-y-4 p-5">
+          <Badge>{item.category}</Badge>
+          <h1 className="text-2xl font-bold">{item.name}</h1>
+          <div className="grid gap-2 text-sm text-muted-foreground">
+            <p>습득 위치: {item.place}</p>
+            <p>습득 시간: {item.time}</p>
+            <p>보관 장소: 혜당관 학생팀 425호</p>
+          </div>
+
+          <Accordion type="single" collapsible className="rounded-xl border px-4">
+            <AccordionItem value="details" className="border-none">
+              <AccordionTrigger className="text-base">상세 정보 보기</AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-2">
+                  <p>제품 카테고리: {item.category}</p>
+                  <p>종류: {item.type}</p>
+                  <div className="rounded-lg bg-blue-50 p-3">
+                    <p className="flex items-center gap-2 text-sm font-semibold text-primary">
+                      <AlertCircle className="h-4 w-4" />
+                      {aiGuide?.cautionTitle ?? "AI 수령 주의사항"}
+                    </p>
+                    {loading ? (
+                      <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        생성형 AI가 수령 주의사항을 분석 중입니다...
+                      </div>
+                    ) : (
+                      <ul className="mt-2 list-inside list-disc text-sm text-slate-700">
+                        {(aiGuide?.cautions ?? []).map((caution) => (
+                          <li key={caution}>{caution}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </CardContent>
+      </Card>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <Button asChild size="lg">
+          <Link href="/map?from=detail&focus=current">
+            <MapPinned className="h-4 w-4" />
+            주인 찾아주세요 (지도 보기)
+          </Link>
+        </Button>
+        <Button asChild size="lg" variant="outline">
+          <Link href="/register-item">
+            <Megaphone className="h-4 w-4" />
+            물건 잃어버렸어요 (신고)
+          </Link>
+        </Button>
+      </div>
+
+      <QAChatbot tips={aiGuide?.chatbotTips} />
+    </AppShell>
+  );
+}
