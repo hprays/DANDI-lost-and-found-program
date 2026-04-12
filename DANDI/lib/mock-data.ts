@@ -1,6 +1,16 @@
 export const categories = ["전체", "전자기기", "지갑/가방", "신분증", "의류/악세서리", "도서/문구", "기타"];
 export const buildings = ["전체", "소프트웨어ICT관", "인문관", "상경관", "사회관", "도서관"];
 
+export type OfficeMarker = {
+  name: string;
+  location: string;
+  address: string;
+  hours: string;
+  phone: string;
+  lat: number;
+  lng: number;
+};
+
 export const lostItems = [
   {
     id: "1",
@@ -31,13 +41,15 @@ export const lostItems = [
   },
 ];
 
-export const officeMarkers = [
+export const officeMarkers: OfficeMarker[] = [
   {
     name: "AI 융합대학 사무실",
     location: "ICT관 311호",
     address: "경기 용인시 수지구 죽전로 152",
     hours: "평일 09:00-18:00",
     phone: "031-000-0001",
+    lat: 37.32258,
+    lng: 127.12711,
   },
   {
     name: "미디어센터",
@@ -45,6 +57,8 @@ export const officeMarkers = [
     address: "사회과학관 103호",
     hours: "평일 09:00-18:00",
     phone: "031-000-0002",
+    lat: 37.32198,
+    lng: 127.12657,
   },
   {
     name: "글로컬산학협력관",
@@ -52,6 +66,8 @@ export const officeMarkers = [
     address: "글로컬산학협력관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0003",
+    lat: 37.32211,
+    lng: 127.12589,
   },
   {
     name: "제1공학관",
@@ -59,6 +75,8 @@ export const officeMarkers = [
     address: "제1공학관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0004",
+    lat: 37.32134,
+    lng: 127.12597,
   },
   {
     name: "제2공학관",
@@ -66,6 +84,8 @@ export const officeMarkers = [
     address: "제2공학관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0005",
+    lat: 37.32151,
+    lng: 127.12642,
   },
   {
     name: "제3공학관",
@@ -73,6 +93,8 @@ export const officeMarkers = [
     address: "제3공학관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0006",
+    lat: 37.32122,
+    lng: 127.12686,
   },
   {
     name: "사회과학관",
@@ -80,6 +102,8 @@ export const officeMarkers = [
     address: "사회과학관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0007",
+    lat: 37.32188,
+    lng: 127.12663,
   },
   {
     name: "사범관",
@@ -87,6 +111,8 @@ export const officeMarkers = [
     address: "사범관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0008",
+    lat: 37.32206,
+    lng: 127.12619,
   },
   {
     name: "상경관",
@@ -94,6 +120,8 @@ export const officeMarkers = [
     address: "상경관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0009",
+    lat: 37.32163,
+    lng: 127.12543,
   },
   {
     name: "인문관",
@@ -101,6 +129,8 @@ export const officeMarkers = [
     address: "인문관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0010",
+    lat: 37.32222,
+    lng: 127.12568,
   },
   {
     name: "혜당관 학생팀",
@@ -108,6 +138,8 @@ export const officeMarkers = [
     address: "단국대학교 죽전캠퍼스",
     hours: "평일 09:00-18:00",
     phone: "031-000-0011",
+    lat: 37.32286,
+    lng: 127.12674,
   },
   {
     name: "퇴계도서관 사무실",
@@ -115,6 +147,8 @@ export const officeMarkers = [
     address: "중앙도서관 건물",
     hours: "평일 09:00-18:00",
     phone: "031-000-0012",
+    lat: 37.32244,
+    lng: 127.12637,
   },
   {
     name: "범정관(대학본부)",
@@ -122,6 +156,8 @@ export const officeMarkers = [
     address: "범정관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0013",
+    lat: 37.32275,
+    lng: 127.12599,
   },
   {
     name: "법학관",
@@ -129,6 +165,8 @@ export const officeMarkers = [
     address: "법학관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0014",
+    lat: 37.32107,
+    lng: 127.12624,
   },
   {
     name: "국제관",
@@ -136,6 +174,8 @@ export const officeMarkers = [
     address: "국제관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0015",
+    lat: 37.32088,
+    lng: 127.12685,
   },
   {
     name: "난파음악관",
@@ -143,6 +183,8 @@ export const officeMarkers = [
     address: "난파음악관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0016",
+    lat: 37.32073,
+    lng: 127.12582,
   },
   {
     name: "미술관",
@@ -150,6 +192,8 @@ export const officeMarkers = [
     address: "미술관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0017",
+    lat: 37.32058,
+    lng: 127.12611,
   },
   {
     name: "체육관",
@@ -157,6 +201,8 @@ export const officeMarkers = [
     address: "체육관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0018",
+    lat: 37.32031,
+    lng: 127.12591,
   },
   {
     name: "무용관",
@@ -164,5 +210,7 @@ export const officeMarkers = [
     address: "무용관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0019",
+    lat: 37.32015,
+    lng: 127.12636,
   },
 ];
