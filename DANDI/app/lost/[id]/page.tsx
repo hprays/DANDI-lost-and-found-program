@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Loader2, MapPinned, Megaphone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -32,7 +33,9 @@ export default function LostDetailPage({ params }: { params: { id: string } }) {
   return (
     <AppShell subtitle="분실물 상세 정보 및 수령 안내">
       <Card className="overflow-hidden">
-        <div className="h-52 bg-gradient-to-br from-blue-100 to-slate-200" />
+        <div className="relative h-52">
+          <Image src={item.image} alt={item.name} fill sizes="(max-width: 768px) 100vw, 40vw" className="object-cover" />
+        </div>
         <CardContent className="space-y-4 p-5">
           <Badge>{item.category}</Badge>
           <h1 className="text-2xl font-bold">{item.name}</h1>

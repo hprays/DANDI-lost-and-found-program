@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { QAChatbot } from "@/components/qa-chatbot";
@@ -73,7 +74,15 @@ export default function HomePage() {
           {lostItems.map((item) => (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
-                <div className="h-36 bg-gradient-to-br from-blue-100 to-slate-200" />
+                <div className="relative h-40">
+                  <Image
+                    src={item.image}
+                    alt={item.name}
+                    fill
+                    sizes="(max-width: 768px) 100vw, 50vw"
+                    className="object-cover"
+                  />
+                </div>
                 <CardContent className="space-y-2 p-4">
                   <div className="flex items-center justify-between">
                     <Badge>{item.category}</Badge>
