@@ -46,6 +46,7 @@ type DandiStateContextValue = {
 
 const DandiStateContext = createContext<DandiStateContextValue | null>(null);
 const ADMIN_MASTER_CODE = "DKU-ADMIN-2026";
+const ADMIN_UI_TEST_MODE = process.env.NEXT_PUBLIC_ADMIN_UI_TEST_MODE !== "false";
 
 function nowISO() {
   return new Date().toISOString();
@@ -98,6 +99,26 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       adminOtpRequestedAt,
       adminAuditLogs,
       requestAdminOtp: (adminCode) => {
+        if (ADMIN_UI_TEST_MODE) {
+          const otp = Math.floor(100000 + Math.random() * 900000).toString();
+          setPendingAdminOtp(otp);
+          setAdminOtpRequestedAt(shortDateTime());
+          setAdminOtpTryCount(0);
+          setAdminAuditLogs((prev) => [
+            {
+              id: `a-${Date.now()}`,
+              message: "관리자 OTP 인증 요청이 생성되었습니다.",
+              createdAt: shortDateTime(),
+            },
+            ...prev,
+          ]);
+          return {
+            ok: true,
+            message: "OTP가 발급되었습니다. 인증번호를 확인해 입력해 주세요.",
+            demoOtp: otp,
+          };
+        }
+
         if (adminCode.trim() !== ADMIN_MASTER_CODE) {
           return { ok: false, message: "관리자 인증번호가 올바르지 않습니다." };
         }
@@ -117,6 +138,23 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         return { ok: true, message: "OTP가 발급되었습니다. 관리자에게 전달된 번호를 입력해 주세요.", demoOtp: otp };
       },
       verifyAdminOtp: (otp) => {
+        if (ADMIN_UI_TEST_MODE) {
+          if (!adminOtpRequestedAt) {
+            setAdminOtpRequestedAt(shortDateTime());
+          }
+          setAdminVerified(true);
+          setPendingAdminOtp(null);
+          setAdminAuditLogs((prev) => [
+            {
+              id: `a-${Date.now()}`,
+              message: `관리자 OTP 인증 처리 (${otp || "빈 값"}).`,
+              createdAt: shortDateTime(),
+            },
+            ...prev,
+          ]);
+          return { ok: true, message: "관리자 인증이 완료되었습니다." };
+        }
+
         if (!pendingAdminOtp) {
           return { ok: false, message: "먼저 OTP를 요청해 주세요." };
         }

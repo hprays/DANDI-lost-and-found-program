@@ -9,15 +9,25 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { useDandiState } from "@/lib/dandi-state";
 
 export default function AdminPage() {
-  const { reports, resolveReport, adminVerified, requestAdminOtp, verifyAdminOtp, logoutAdmin, adminOtpRequestedAt, adminAuditLogs } =
-    useDandiState();
+  const { reports, resolveReport, adminVerified, requestAdminOtp, verifyAdminOtp, logoutAdmin, adminOtpRequestedAt, adminAuditLogs } = useDandiState();
   const [adminCode, setAdminCode] = useState("");
   const [otp, setOtp] = useState("");
   const [otpMessage, setOtpMessage] = useState("");
-  const [demoOtp, setDemoOtp] = useState<string | null>(null);
+  const [regName, setRegName] = useState("");
+  const [regCategory, setRegCategory] = useState("");
+  const [regLocation, setRegLocation] = useState("");
+  const [regFoundAt, setRegFoundAt] = useState("");
+  const [regStorage, setRegStorage] = useState("");
+  const [regOtp, setRegOtp] = useState("");
+  const [regMemo, setRegMemo] = useState("");
+  const [regMessage, setRegMessage] = useState("");
+  const [registeredItems, setRegisteredItems] = useState<
+    Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
+  >([]);
 
   const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
@@ -25,7 +35,6 @@ export default function AdminPage() {
   const requestOtp = () => {
     const result = requestAdminOtp(adminCode);
     setOtpMessage(result.message);
-    setDemoOtp(result.demoOtp ?? null);
   };
 
   const verifyOtp = () => {
@@ -33,8 +42,40 @@ export default function AdminPage() {
     setOtpMessage(result.message);
     if (result.ok) {
       setOtp("");
-      setDemoOtp(null);
     }
+  };
+
+  const registerItem = () => {
+    if (!regName.trim() || !regCategory.trim() || !regLocation.trim() || !regFoundAt || !regStorage.trim() || !regOtp.trim()) {
+      setRegMessage("물품명, 카테고리, 위치, 습득시간, 보관장소, OTP를 입력해 주세요.");
+      return;
+    }
+
+    setRegisteredItems((prev) => [
+      {
+        id: `adm-${Date.now()}`,
+        name: regName.trim(),
+        category: regCategory.trim(),
+        location: regLocation.trim(),
+        storage: regStorage.trim(),
+        createdAt: new Date().toLocaleString("ko-KR", { hour12: false }),
+      },
+      ...prev,
+    ]);
+
+    setRegName("");
+    setRegCategory("");
+    setRegLocation("");
+    setRegFoundAt("");
+    setRegStorage("");
+    setRegOtp("");
+    setRegMemo("");
+    setRegMessage("등록 완료되었습니다.");
+  };
+
+  const clearLastRegistered = () => {
+    setRegisteredItems((prev) => prev.slice(1));
+    setRegMessage("최근 등록 항목을 삭제했습니다.");
   };
 
   return (
@@ -80,9 +121,6 @@ export default function AdminPage() {
             </div>
 
             {otpMessage ? <p className="text-sm font-semibold text-primary">{otpMessage}</p> : null}
-            {demoOtp ? (
-              <p className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">개발 테스트 OTP: {demoOtp}</p>
-            ) : null}
           </CardContent>
         </Card>
       ) : (
@@ -120,12 +158,104 @@ export default function AdminPage() {
             </Card>
           </div>
 
-          <Tabs defaultValue="pending">
-            <TabsList className="grid w-full grid-cols-3">
+          <Tabs defaultValue="register">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="register">물품 등록</TabsTrigger>
               <TabsTrigger value="pending">검수 대기</TabsTrigger>
               <TabsTrigger value="processed">처리 완료</TabsTrigger>
               <TabsTrigger value="audit">작업 이력</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="register" className="space-y-3">
+              <Card>
+                <CardHeader>
+                  <CardTitle>관리자 물품 등록</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    등록은 관리자 계정만 가능합니다.
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>사진 업로드</Label>
+                    <label className="flex h-28 cursor-pointer items-center justify-center rounded-xl border border-dashed text-slate-500 hover:bg-slate-50">
+                      클릭하여 사진 업로드
+                      <input type="file" accept="image/*" className="hidden" />
+                    </label>
+                    <p className="text-xs text-muted-foreground">신분증은 사진 없이 텍스트 정보만 기록합니다.</p>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-name">물품명</Label>
+                      <Input id="reg-name" value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="예: 검은색 반지갑" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-category">카테고리</Label>
+                      <Input id="reg-category" value={regCategory} onChange={(e) => setRegCategory(e.target.value)} placeholder="예: 지갑/가방" />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-location">습득 위치</Label>
+                      <Input id="reg-location" value={regLocation} onChange={(e) => setRegLocation(e.target.value)} placeholder="예: 혜당관 1층" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-found-at">습득 시간</Label>
+                      <Input id="reg-found-at" type="datetime-local" value={regFoundAt} onChange={(e) => setRegFoundAt(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-storage">보관 장소</Label>
+                    <Input id="reg-storage" value={regStorage} onChange={(e) => setRegStorage(e.target.value)} placeholder="예: 혜당관 학생팀 425호" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-otp">OTP 인증 (장부 기록)</Label>
+                    <div className="flex gap-2">
+                      <Input id="reg-otp" value={regOtp} onChange={(e) => setRegOtp(e.target.value)} placeholder="6자리 OTP" />
+                      <Button variant="outline">인증요청</Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-memo">추가 메모</Label>
+                    <Textarea id="reg-memo" value={regMemo} onChange={(e) => setRegMemo(e.target.value)} placeholder="특징/인수인계 메모" />
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <Button onClick={registerItem}>등록 완료</Button>
+                    <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={clearLastRegistered}>
+                      등록 삭제
+                    </Button>
+                  </div>
+                  {regMessage ? <p className="text-sm font-semibold text-primary">{regMessage}</p> : null}
+                </CardContent>
+              </Card>
+
+              {registeredItems.length > 0 ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>등록된 물품 목록</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {registeredItems.map((item) => (
+                      <div key={item.id} className="rounded-lg border p-3 text-sm">
+                        <p className="font-semibold">
+                          {item.name} / {item.category}
+                        </p>
+                        <p className="text-muted-foreground">
+                          {item.location} / 보관: {item.storage}
+                        </p>
+                        <p className="text-xs text-muted-foreground">{item.createdAt}</p>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              ) : null}
+            </TabsContent>
 
             <TabsContent value="pending" className="space-y-3">
               {pendingReports.map((report) => (

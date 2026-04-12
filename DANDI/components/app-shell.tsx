@@ -15,14 +15,14 @@ export function AppShell({
   const pathname = usePathname();
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-transparent">
       <AppHeader subtitle={subtitle} />
       <motion.main
         key={pathname}
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.22, ease: "easeOut" }}
-        className="mx-auto w-full max-w-screen-lg px-4 pb-28 pt-4 md:pb-6"
+        className="mx-auto w-full max-w-screen-xl px-4 pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-[calc(5.75rem+env(safe-area-inset-top))] md:pb-28"
       >
         {children}
       </motion.main>

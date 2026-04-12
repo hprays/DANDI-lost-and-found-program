@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Bot, MessageCircleQuestion, SendHorizonal, X } from "lucide-react";
+import { Bot, Loader2, SendHorizonal, Sparkles, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,25 +21,56 @@ const defaultAnswers: Record<string, string> = {
 export function QAChatbot({ tips }: QAChatbotProps) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
+  const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<Array<{ role: "user" | "bot"; text: string }>>([
     { role: "bot", text: "안녕하세요. 단디 Q&A 챗봇입니다. 분실물 수령/위치/서류를 물어보세요." },
   ]);
 
   const quickTips = useMemo(() => tips ?? Object.keys(defaultAnswers), [tips]);
 
-  const ask = (text: string) => {
+  const ask = async (text: string) => {
     if (!text.trim()) return;
-    const answer = defaultAnswers[text] ?? "요청한 내용은 관리자 또는 지도 페이지에서 추가로 확인할 수 있어요.";
-    setMessages((prev) => [...prev, { role: "user", text }, { role: "bot", text: answer }]);
+    const baseUserMessage = { role: "user" as const, text };
+    setMessages((prev) => [...prev, baseUserMessage]);
     setQuestion("");
+
+    try {
+      setLoading(true);
+      const response = await fetch("/api/chatbot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          history: messages.slice(-8),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("chat api failed");
+      }
+      const data = (await response.json()) as { answer: string };
+      setMessages((prev) => [...prev, { role: "bot", text: data.answer }]);
+    } catch {
+      const fallback = defaultAnswers[text] ?? "요청한 내용은 관리자 또는 지도 페이지에서 추가로 확인할 수 있어요.";
+      setMessages((prev) => [...prev, { role: "bot", text: fallback }]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <>
-      <Button onClick={() => setOpen((v) => !v)} className="fixed bottom-24 right-4 z-30 rounded-full shadow-soft md:bottom-6" size="lg">
-        <MessageCircleQuestion className="h-4 w-4" />
-        Q&A 챗봇
-      </Button>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="챗봇 열기"
+        className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-sky-500 shadow-[0_12px_28px_rgba(37,99,235,0.45)] transition active:scale-95 md:bottom-24"
+      >
+        <div className="relative">
+          <Bot className="h-6 w-6 text-white" />
+          <Sparkles className="absolute -right-2 -top-2 h-3.5 w-3.5 text-yellow-200" />
+        </div>
+      </button>
 
       <AnimatePresence>
         {open ? (
@@ -48,7 +79,7 @@ export function QAChatbot({ tips }: QAChatbotProps) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 14, scale: 0.98 }}
             transition={{ duration: 0.2 }}
-            className="fixed bottom-40 right-4 z-40 w-[92vw] max-w-sm md:bottom-20"
+            className="fixed bottom-[calc(9.5rem+env(safe-area-inset-bottom))] right-4 z-40 w-[92vw] max-w-sm md:bottom-28"
           >
             <Card className="border-primary/30 shadow-xl">
               <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
@@ -80,8 +111,8 @@ export function QAChatbot({ tips }: QAChatbotProps) {
                 </div>
                 <div className="flex items-center gap-2">
                   <Input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="질문을 입력하세요" />
-                  <Button size="icon" onClick={() => ask(question)} aria-label="전송">
-                    <SendHorizonal className="h-4 w-4" />
+                  <Button size="icon" onClick={() => ask(question)} aria-label="전송" disabled={loading}>
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
                   </Button>
                 </div>
               </CardContent>

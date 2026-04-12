@@ -17,18 +17,18 @@ export function MobileBottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/95 pb-safe backdrop-blur">
+    <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white/96 pb-safe backdrop-blur">
       <div className="mx-auto grid w-full max-w-screen-md grid-cols-4">
         {tabs.map((tab) => {
           const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
           const Icon = tab.icon;
 
           return (
-            <Link key={tab.href} href={tab.href} className="relative flex min-h-16 flex-col items-center justify-center gap-1 text-xs font-semibold">
+            <Link key={tab.href} href={tab.href} className="relative flex min-h-16 flex-col items-center justify-center gap-0.5 text-[11px] font-semibold">
               {active ? (
                 <motion.span
                   layoutId="active-tab"
-                  className="absolute inset-x-3 top-1 h-10 rounded-xl bg-primary/12"
+                  className="absolute inset-x-2 top-1 h-11 rounded-xl bg-primary/12"
                   transition={{ type: "spring", stiffness: 360, damping: 30 }}
                 />
               ) : null}
