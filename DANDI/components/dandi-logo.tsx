@@ -1,13 +1,21 @@
-import { MapPin } from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 export function DandiLogo({ className }: { className?: string }) {
   return (
-    <div className={cn("inline-flex items-center gap-2.5 font-bold text-primary", className)}>
-      <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-        <MapPin className="h-5 w-5 text-primary" />
+    <Link href="/home" className={cn("inline-flex items-center gap-2", className)}>
+      <span className="relative h-9 w-9 shrink-0 overflow-hidden rounded-md md:h-10 md:w-10">
+        <Image
+          src="/dandi-logo-full.png"
+          alt="DANDI 로고"
+          fill
+          priority
+          sizes="(max-width: 768px) 36px, 40px"
+          className="object-cover [object-position:50%_23%]"
+        />
       </span>
-      <span className="text-2xl tracking-tight text-primary">DANDI</span>
-    </div>
+      <span className="text-2xl font-extrabold leading-none tracking-tight text-primary md:text-3xl">DANDI</span>
+    </Link>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BellRing, Plus, X } from "lucide-react";
+import { AccountMenu } from "@/components/account-menu";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -110,6 +111,15 @@ export default function MyPage() {
                 <p className="mt-1 text-xs text-muted-foreground">{notice.createdAt}</p>
               </button>
             ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>하단 마이페이지 메뉴</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AccountMenu fullWidth label="마이페이지 메뉴" />
           </CardContent>
         </Card>
       </div>
