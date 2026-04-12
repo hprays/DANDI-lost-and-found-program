@@ -1,7 +1,7 @@
 import Link from "next/link";
-import Image from "next/image";
 import { CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { ItemImage } from "@/components/item-image";
 import { QAChatbot } from "@/components/qa-chatbot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,13 +75,7 @@ export default function HomePage() {
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
                 <div className="relative h-40">
-                  <Image
-                    src={item.image}
-                    alt={item.name}
-                    fill
-                    sizes="(max-width: 768px) 100vw, 50vw"
-                    className="object-cover"
-                  />
+                  <ItemImage src={item.image} alt={item.name} category={item.category} />
                 </div>
                 <CardContent className="space-y-2 p-4">
                   <div className="flex items-center justify-between">

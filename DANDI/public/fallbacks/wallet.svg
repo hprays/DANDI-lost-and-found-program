@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#E5E7EB"/>
+      <stop offset="100%" stop-color="#D1D5DB"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="400" fill="url(#bg)"/>
+  <rect x="150" y="135" width="300" height="150" rx="20" fill="#111827" opacity="0.25"/>
+  <rect x="170" y="155" width="260" height="110" rx="14" fill="#111827" opacity="0.35"/>
+  <circle cx="390" cy="210" r="10" fill="#F9FAFB"/>
+  <text x="300" y="360" text-anchor="middle" fill="#111827" font-size="28" font-family="Arial, sans-serif" font-weight="700">AI PREVIEW · WALLET/BAG</text>
+</svg>

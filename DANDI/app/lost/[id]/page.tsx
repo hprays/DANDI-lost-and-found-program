@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Loader2, MapPinned, Megaphone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { ItemImage } from "@/components/item-image";
 import { QAChatbot } from "@/components/qa-chatbot";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +34,7 @@ export default function LostDetailPage({ params }: { params: { id: string } }) {
     <AppShell subtitle="분실물 상세 정보 및 수령 안내">
       <Card className="overflow-hidden">
         <div className="relative h-52">
-          <Image src={item.image} alt={item.name} fill sizes="(max-width: 768px) 100vw, 40vw" className="object-cover" />
+          <ItemImage src={item.image} alt={item.name} category={item.category} sizes="(max-width: 768px) 100vw, 40vw" />
         </div>
         <CardContent className="space-y-4 p-5">
           <Badge>{item.category}</Badge>
