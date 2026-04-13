@@ -17,13 +17,13 @@ export function ItemImage({ src, alt, category, sizes = "(max-width: 768px) 100v
   const safeSrc = failed || !src ? fallbackSrc : src;
 
   return (
-    <div className="relative h-full w-full">
+    <div className="relative h-full w-full bg-slate-100">
       <Image
         src={safeSrc}
         alt={alt}
         fill
         sizes={sizes}
-        className="object-cover"
+        className="object-contain"
         onError={() => setFailed(true)}
         unoptimized={!safeSrc.startsWith("/")}
       />
