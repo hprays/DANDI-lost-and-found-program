@@ -20,7 +20,7 @@ export const lostItems = [
     place: "소프트웨어ICT관 1층 로비",
     time: "10분 전 등록",
     color: "white",
-    image: "https://placehold.co/600x400/e9f2ff/1d4ed8?text=AirPods",
+    image: "/lost-items/airpod-right.png",
   },
   {
     id: "2",
@@ -30,7 +30,7 @@ export const lostItems = [
     place: "상경관 315호 앞 벤치",
     time: "30분 전 등록",
     color: "black",
-    image: "https://placehold.co/600x400/f3f4f6/111827?text=Wallet",
+    image: "/lost-items/wallet-black.png",
   },
   {
     id: "3",
