@@ -74,8 +74,8 @@ export default function HomePage() {
           {lostItems.map((item) => (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
-                <div className="relative h-40">
-                  <ItemImage src={item.image} alt={item.name} category={item.category} />
+                <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 md:aspect-[16/10]">
+                  <ItemImage src={item.image} alt={item.name} category={item.category} fit="cover" />
                 </div>
                 <CardContent className="space-y-2 p-4">
                   <div className="flex items-center justify-between">

@@ -9,21 +9,22 @@ type ItemImageProps = {
   alt: string;
   category?: string;
   sizes?: string;
+  fit?: "contain" | "cover";
 };
 
-export function ItemImage({ src, alt, category, sizes = "(max-width: 768px) 100vw, 50vw" }: ItemImageProps) {
+export function ItemImage({ src, alt, category, sizes = "(max-width: 768px) 100vw, 50vw", fit = "contain" }: ItemImageProps) {
   const [failed, setFailed] = useState(false);
   const fallbackSrc = useMemo(() => getFallbackImageByCategory(category), [category]);
   const safeSrc = failed || !src ? fallbackSrc : src;
 
   return (
-    <div className="relative h-full w-full bg-slate-100">
+    <div className="relative h-full w-full bg-gradient-to-br from-slate-50 to-slate-200">
       <Image
         src={safeSrc}
         alt={alt}
         fill
         sizes={sizes}
-        className="object-contain"
+        className={fit === "cover" ? "object-cover object-center" : "object-contain object-center"}
         onError={() => setFailed(true)}
         unoptimized={!safeSrc.startsWith("/")}
       />

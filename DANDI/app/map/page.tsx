@@ -75,9 +75,14 @@ export default function MapPage() {
 
       const officeIcon = L.divIcon({
         className: "",
-        html: '<span style="display:inline-block;width:14px;height:14px;border-radius:9999px;background:#2563eb;border:2px solid #fff;box-shadow:0 0 0 1px rgba(15,23,42,.2)"></span>',
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
+        html: `
+          <span style="position:relative;display:inline-block;width:22px;height:30px;">
+            <span style="position:absolute;left:3px;top:0;width:16px;height:16px;border-radius:9999px;background:#2563eb;border:2px solid #fff;box-shadow:0 1px 6px rgba(15,23,42,.35);"></span>
+            <span style="position:absolute;left:8px;top:14px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:10px solid #2563eb;"></span>
+          </span>
+        `,
+        iconSize: [22, 30],
+        iconAnchor: [11, 29],
       });
 
       officeMarkers.forEach((office) => {
@@ -131,7 +136,7 @@ export default function MapPage() {
       const center = { lat: 37.3219, lng: 127.1264 };
       const map = new google.maps.Map(mapRef.current, {
         center,
-        zoom: 16,
+        zoom: 15,
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
@@ -217,7 +222,7 @@ export default function MapPage() {
     const google = window.google;
     const marker = markerRef.current.get(activeOffice.name);
     mapInstanceRef.current.panTo({ lat: activeOffice.lat, lng: activeOffice.lng });
-    mapInstanceRef.current.setZoom(17);
+    mapInstanceRef.current.setZoom(16);
 
     if (marker && infoWindowRef.current) {
       infoWindowRef.current.setContent(

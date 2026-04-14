@@ -70,7 +70,10 @@ export default function LandingPage() {
             <Badge variant="secondary" className="rounded-full bg-white/20 px-4 py-1 text-slate-100">
               단국대학교 재학생 전용 서비스
             </Badge>
-            <h1 className="mt-6 text-4xl font-extrabold leading-tight md:text-6xl">잃어버린 물건, 단디가 찾아드려요</h1>
+            <h1 className="mt-6 text-4xl font-extrabold leading-tight tracking-tight md:text-6xl">
+              <span className="block">잃어버린 물건</span>
+              <span className="block">단디가 찾아드려요</span>
+            </h1>
             <p className="mt-4 text-base text-blue-100 md:text-xl">
               캠퍼스 내 분실물 현황을 실시간으로 확인하고, AI 수령 안내와 지도 기반 경로로 빠르게 되찾아보세요.
             </p>

@@ -14,10 +14,12 @@ const menus = [
 export function LandingHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-white/85 backdrop-blur-md">
-      <div className="container flex h-16 items-center justify-between">
-        <DandiLogo />
+      <div className="container grid h-16 grid-cols-[1fr_auto] items-center md:grid-cols-3">
+        <div className="justify-self-start">
+          <DandiLogo />
+        </div>
 
-        <nav className="hidden items-center gap-8 md:flex">
+        <nav className="hidden items-center justify-center gap-8 md:flex">
           {menus.map((menu) => (
             <Link key={menu.href} href={menu.href} className="text-sm font-semibold text-slate-600 transition-colors hover:text-primary">
               {menu.label}
@@ -25,13 +27,13 @@ export function LandingHeader() {
           ))}
         </nav>
 
-        <div className="hidden md:block">
+        <div className="hidden justify-self-end md:block">
           <Button asChild className="rounded-full px-6">
             <Link href="/login">시작하기</Link>
           </Button>
         </div>
 
-        <div className="md:hidden">
+        <div className="justify-self-end md:hidden">
           <details className="group relative">
             <summary className="list-none">
               <Button variant="ghost" size="icon" aria-label="메뉴 열기">

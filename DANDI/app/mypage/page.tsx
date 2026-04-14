@@ -47,6 +47,9 @@ export default function MyPage() {
         <Card>
           <CardHeader>
             <CardTitle>관심 키워드 알림 설정</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              내가 등록한 키워드와 일치하는 전체 분실물(내 신고 포함)이 올라오면 알림을 받습니다.
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center gap-2">
@@ -66,7 +69,7 @@ export default function MyPage() {
               ))}
             </div>
             <div className="flex items-center justify-between rounded-xl border p-3">
-              <p className="text-sm font-medium">매칭 알림 받기</p>
+              <p className="text-sm font-medium">매칭 알림 받기 (키워드 기준)</p>
               <Switch checked={alertEnabled} onCheckedChange={setAlertEnabled} />
             </div>
           </CardContent>
