@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useMemo, useState } from "react";
 
-export type ReportStatus = "pending" | "resolved" | "unavailable";
+export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
 
 export type LostReport = {
   id: string;
@@ -13,6 +13,7 @@ export type LostReport = {
   memo?: string;
   status: ReportStatus;
   createdAt: string;
+  pickedUpAt?: string;
 };
 
 export type UserNotice = {
@@ -29,17 +30,29 @@ export type AdminAuditLog = {
   createdAt: string;
 };
 
+export type PickupPass = {
+  id: string;
+  reportId: string;
+  token: string;
+  issuedAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+};
+
 type DandiStateContextValue = {
   reports: LostReport[];
   notices: UserNotice[];
   adminVerified: boolean;
   adminOtpRequestedAt: string | null;
   adminAuditLogs: AdminAuditLog[];
+  pickupPasses: PickupPass[];
   requestAdminOtp: (adminCode: string) => { ok: boolean; message: string; demoOtp?: string };
   verifyAdminOtp: (otp: string) => { ok: boolean; message: string };
   logoutAdmin: () => void;
   submitReport: (payload: Omit<LostReport, "id" | "status" | "createdAt">) => string;
   resolveReport: (reportId: string, status: Extract<ReportStatus, "resolved" | "unavailable">) => void;
+  issuePickupPass: (reportId: string) => { ok: boolean; message: string; token?: string };
+  verifyPickupPass: (token: string) => { ok: boolean; message: string };
   deleteReport: (reportId: string) => void;
   markNoticeRead: (noticeId: string) => void;
 };
@@ -54,6 +67,15 @@ function nowISO() {
 
 function shortDateTime() {
   return new Date().toLocaleString("ko-KR", { hour12: false });
+}
+
+function minutesLaterISO(minutes: number) {
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
+function pickupToken() {
+  const rand = Math.floor(100000 + Math.random() * 900000);
+  return `DKU-${rand}`;
 }
 
 export function DandiStateProvider({ children }: { children: React.ReactNode }) {
@@ -90,6 +112,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       createdAt: shortDateTime(),
     },
   ]);
+  const [pickupPasses, setPickupPasses] = useState<PickupPass[]>([]);
 
   const value = useMemo<DandiStateContextValue>(
     () => ({
@@ -98,6 +121,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       adminVerified,
       adminOtpRequestedAt,
       adminAuditLogs,
+      pickupPasses,
       requestAdminOtp: (adminCode) => {
         if (ADMIN_UI_TEST_MODE) {
           const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -238,6 +262,82 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           ...prev,
         ]);
       },
+      issuePickupPass: (reportId) => {
+        const target = reports.find((report) => report.id === reportId);
+        if (!target) {
+          return { ok: false, message: "해당 신고 항목을 찾을 수 없습니다." };
+        }
+        if (target.status !== "resolved") {
+          return { ok: false, message: "습득 완료 처리된 항목만 QR 발급이 가능합니다." };
+        }
+
+        const existing = pickupPasses.find((pass) => pass.reportId === reportId && !pass.usedAt && Date.parse(pass.expiresAt) > Date.now());
+        if (existing) {
+          return { ok: true, message: "이미 발급된 유효 QR이 있습니다.", token: existing.token };
+        }
+
+        const pass: PickupPass = {
+          id: `p-${Date.now()}`,
+          reportId,
+          token: pickupToken(),
+          issuedAt: shortDateTime(),
+          expiresAt: minutesLaterISO(10),
+          usedAt: null,
+        };
+        setPickupPasses((prev) => [pass, ...prev]);
+        setNotices((prev) => [
+          {
+            id: `n-${Date.now()}`,
+            title: "수령 QR이 발급되었습니다",
+            message: "관리실 방문 시 QR 코드를 제시해 최종 수령 인증을 진행해 주세요. (10분 유효)",
+            createdAt: shortDateTime(),
+            read: false,
+          },
+          ...prev,
+        ]);
+        return { ok: true, message: "수령 QR이 발급되었습니다.", token: pass.token };
+      },
+      verifyPickupPass: (token) => {
+        const normalized = token.trim().toUpperCase();
+        if (!normalized) {
+          return { ok: false, message: "QR 코드를 입력해 주세요." };
+        }
+        const pass = pickupPasses.find((it) => it.token.toUpperCase() === normalized);
+        if (!pass) {
+          return { ok: false, message: "유효하지 않은 QR 코드입니다." };
+        }
+        if (pass.usedAt) {
+          return { ok: false, message: "이미 사용된 QR 코드입니다." };
+        }
+        if (Date.parse(pass.expiresAt) <= Date.now()) {
+          return { ok: false, message: "만료된 QR 코드입니다. 재발급이 필요합니다." };
+        }
+
+        const usedAt = shortDateTime();
+        setPickupPasses((prev) => prev.map((it) => (it.id === pass.id ? { ...it, usedAt } : it)));
+        setReports((prev) =>
+          prev.map((report) => (report.id === pass.reportId ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report))
+        );
+        setAdminAuditLogs((prev) => [
+          {
+            id: `a-${Date.now()}`,
+            message: `${pass.reportId} 신고건의 QR 수령 인증이 완료되었습니다.`,
+            createdAt: usedAt,
+          },
+          ...prev,
+        ]);
+        setNotices((prev) => [
+          {
+            id: `n-${Date.now()}`,
+            title: "최종 수령 완료",
+            message: "관리실에서 QR 인증이 완료되어 물품 수령이 마무리되었습니다.",
+            createdAt: usedAt,
+            read: false,
+          },
+          ...prev,
+        ]);
+        return { ok: true, message: "QR 인증 완료: 최종 수령 처리되었습니다." };
+      },
       deleteReport: (reportId) => {
         setReports((prev) => prev.filter((report) => report.id !== reportId));
         setAdminAuditLogs((prev) => [
@@ -253,7 +353,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         setNotices((prev) => prev.map((notice) => (notice.id === noticeId ? { ...notice, read: true } : notice)));
       },
     }),
-    [adminAuditLogs, adminOtpRequestedAt, adminOtpTryCount, adminVerified, notices, pendingAdminOtp, reports]
+    [adminAuditLogs, adminOtpRequestedAt, adminOtpTryCount, adminVerified, notices, pendingAdminOtp, pickupPasses, reports]
   );
 
   return <DandiStateContext.Provider value={value}>{children}</DandiStateContext.Provider>;

@@ -13,7 +13,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { useDandiState } from "@/lib/dandi-state";
 
 export default function AdminPage() {
-  const { reports, resolveReport, adminVerified, requestAdminOtp, verifyAdminOtp, logoutAdmin, adminOtpRequestedAt, adminAuditLogs } = useDandiState();
+  const {
+    reports,
+    resolveReport,
+    pickupPasses,
+    verifyPickupPass,
+    adminVerified,
+    requestAdminOtp,
+    verifyAdminOtp,
+    logoutAdmin,
+    adminOtpRequestedAt,
+    adminAuditLogs,
+  } = useDandiState();
   const [adminCode, setAdminCode] = useState("");
   const [otp, setOtp] = useState("");
   const [otpMessage, setOtpMessage] = useState("");
@@ -25,6 +36,8 @@ export default function AdminPage() {
   const [regOtp, setRegOtp] = useState("");
   const [regMemo, setRegMemo] = useState("");
   const [regMessage, setRegMessage] = useState("");
+  const [pickupToken, setPickupToken] = useState("");
+  const [pickupMessage, setPickupMessage] = useState("");
   const [registeredItems, setRegisteredItems] = useState<
     Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
   >([]);
@@ -76,6 +89,14 @@ export default function AdminPage() {
   const clearLastRegistered = () => {
     setRegisteredItems((prev) => prev.slice(1));
     setRegMessage("최근 등록 항목을 삭제했습니다.");
+  };
+
+  const onVerifyPickup = () => {
+    const result = verifyPickupPass(pickupToken);
+    setPickupMessage(result.message);
+    if (result.ok) {
+      setPickupToken("");
+    }
   };
 
   return (
@@ -134,8 +155,10 @@ export default function AdminPage() {
             </Card>
             <Card>
               <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">습득 완료</p>
-                <p className="mt-1 text-2xl font-bold">{reports.filter((report) => report.status === "resolved").length}</p>
+                <p className="text-xs text-muted-foreground">습득/수령 완료</p>
+                <p className="mt-1 text-2xl font-bold">
+                  {reports.filter((report) => report.status === "resolved" || report.status === "picked_up").length}
+                </p>
               </CardContent>
             </Card>
             <Card>
@@ -159,9 +182,10 @@ export default function AdminPage() {
           </div>
 
           <Tabs defaultValue="register">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="register">물품 등록</TabsTrigger>
               <TabsTrigger value="pending">검수 대기</TabsTrigger>
+              <TabsTrigger value="pickup">수령 인증</TabsTrigger>
               <TabsTrigger value="processed">처리 완료</TabsTrigger>
               <TabsTrigger value="audit">작업 이력</TabsTrigger>
             </TabsList>
@@ -289,10 +313,53 @@ export default function AdminPage() {
                   <p className="font-semibold">{report.itemName}</p>
                   <p className="text-muted-foreground">{report.location}</p>
                   <p className="mt-1 text-xs font-semibold text-primary">
-                    {report.status === "resolved" ? "습득 완료" : "습득 불가"} / {report.createdAt}
+                    {report.status === "resolved" ? "습득 완료" : report.status === "picked_up" ? "최종 수령 완료" : "습득 불가"} /{" "}
+                    {report.createdAt}
                   </p>
                 </div>
               ))}
+            </TabsContent>
+
+            <TabsContent value="pickup" className="space-y-3">
+              <Card>
+                <CardHeader>
+                  <CardTitle>QR 최종 수령 인증</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex gap-2">
+                    <Input
+                      value={pickupToken}
+                      onChange={(e) => setPickupToken(e.target.value)}
+                      placeholder="사용자 QR 코드 입력 (예: DKU-123456)"
+                    />
+                    <Button onClick={onVerifyPickup}>수령 인증 완료</Button>
+                  </div>
+                  {pickupMessage ? <p className="text-sm font-semibold text-primary">{pickupMessage}</p> : null}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>발급된 수령 코드</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {pickupPasses.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">발급된 수령 코드가 없습니다.</p>
+                  ) : (
+                    pickupPasses.map((pass) => (
+                      <div key={pass.id} className="rounded-lg border p-3 text-sm">
+                        <p className="font-semibold">{pass.token}</p>
+                        <p className="text-muted-foreground">
+                          신고 ID: {pass.reportId} / 만료: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-primary">
+                          {pass.usedAt ? `인증 완료 (${pass.usedAt})` : "미사용"}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             <TabsContent value="audit" className="space-y-2">
