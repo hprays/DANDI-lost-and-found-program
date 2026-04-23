@@ -49,17 +49,21 @@ type DandiStateContextValue = {
   requestAdminOtp: (adminCode: string) => { ok: boolean; message: string; demoOtp?: string };
   verifyAdminOtp: (otp: string) => { ok: boolean; message: string };
   logoutAdmin: () => void;
-  submitReport: (payload: Omit<LostReport, "id" | "status" | "createdAt">) => string;
-  resolveReport: (reportId: string, status: Extract<ReportStatus, "resolved" | "unavailable">) => void;
-  issuePickupPass: (reportId: string) => { ok: boolean; message: string; token?: string };
-  verifyPickupPass: (token: string) => { ok: boolean; message: string };
-  deleteReport: (reportId: string) => void;
+  submitReport: (payload: Omit<LostReport, "id" | "status" | "createdAt">) => Promise<{ ok: boolean; message: string; reportId?: string }>;
+  resolveReport: (
+    reportId: string,
+    status: Extract<ReportStatus, "resolved" | "unavailable">
+  ) => Promise<{ ok: boolean; message: string }>;
+  issuePickupPass: (reportId: string) => Promise<{ ok: boolean; message: string; token?: string }>;
+  verifyPickupPass: (token: string) => Promise<{ ok: boolean; message: string }>;
+  deleteReport: (reportId: string) => Promise<{ ok: boolean; message: string }>;
   markNoticeRead: (noticeId: string) => void;
 };
 
 const DandiStateContext = createContext<DandiStateContextValue | null>(null);
 const ADMIN_MASTER_CODE = "DKU-ADMIN-2026";
 const ADMIN_UI_TEST_MODE = process.env.NEXT_PUBLIC_ADMIN_UI_TEST_MODE !== "false";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
 function nowISO() {
   return new Date().toISOString();
@@ -76,6 +80,38 @@ function minutesLaterISO(minutes: number) {
 function pickupToken() {
   const rand = Math.floor(100000 + Math.random() * 900000);
   return `DKU-${rand}`;
+}
+
+function apiUrl(path: string) {
+  if (!path.startsWith("/")) return `${API_BASE_URL}/${path}`;
+  return `${API_BASE_URL}${path}`;
+}
+
+async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  if (!response.ok) {
+    let serverMessage = "요청 처리에 실패했습니다.";
+    try {
+      const err = (await response.json()) as { message?: string; error?: string };
+      serverMessage = err.message || err.error || serverMessage;
+    } catch {
+      // ignore json parsing errors
+    }
+    throw new Error(serverMessage);
+  }
+
+  if (response.status === 204) {
+    return {} as T;
+  }
+
+  return (await response.json()) as T;
 }
 
 export function DandiStateProvider({ children }: { children: React.ReactNode }) {
@@ -217,137 +253,177 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           ...prev,
         ]);
       },
-      submitReport: (payload) => {
-        const reportId = `r-${Date.now()}`;
-        const report: LostReport = {
-          id: reportId,
-          ...payload,
-          status: "pending",
-          createdAt: shortDateTime(),
-        };
-        setReports((prev) => [report, ...prev]);
-        setNotices((prev) => [
-          {
-            id: `n-${Date.now()}`,
-            title: "분실물 신고가 접수되었습니다",
-            message: "관리자 확인 후 처리 결과를 알려드릴게요.",
-            createdAt: shortDateTime(),
-            read: false,
-          },
-          ...prev,
-        ]);
-        return reportId;
+      submitReport: async (payload) => {
+        try {
+          const data = await apiJson<{ id?: string; reportId?: string; createdAt?: string; status?: ReportStatus; message?: string }>(
+            "/api/reports",
+            {
+              method: "POST",
+              body: JSON.stringify(payload),
+            }
+          );
+          const reportId = data.id ?? data.reportId ?? `r-${Date.now()}`;
+          const report: LostReport = {
+            id: reportId,
+            ...payload,
+            status: data.status ?? "pending",
+            createdAt: data.createdAt ?? shortDateTime(),
+          };
+          setReports((prev) => [report, ...prev.filter((it) => it.id !== reportId)]);
+          setNotices((prev) => [
+            {
+              id: `n-${Date.now()}`,
+              title: "분실물 신고가 접수되었습니다",
+              message: "관리자 확인 후 처리 결과를 알려드릴게요.",
+              createdAt: shortDateTime(),
+              read: false,
+            },
+            ...prev,
+          ]);
+          return { ok: true, message: data.message ?? "신고가 접수되었습니다.", reportId };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "신고 등록에 실패했습니다." };
+        }
       },
-      resolveReport: (reportId, status) => {
-        setReports((prev) => prev.map((report) => (report.id === reportId ? { ...report, status } : report)));
-        setAdminAuditLogs((prev) => [
-          {
-            id: `a-${Date.now()}`,
-            message: `${reportId} 신고건을 ${status === "resolved" ? "습득 완료" : "습득 불가"}로 처리했습니다.`,
-            createdAt: shortDateTime(),
-          },
-          ...prev,
-        ]);
-        setNotices((prev) => [
-          {
-            id: `n-${Date.now()}`,
-            title: status === "resolved" ? "습득 완료 알림" : "습득 불가 알림",
-            message:
-              status === "resolved"
-                ? "신고하신 물품이 확인되었습니다. 지도에서 관리실 위치를 확인해 주세요."
-                : "신고하신 물품은 아직 습득되지 않았습니다. 알림은 계속 유지됩니다.",
-            createdAt: shortDateTime(),
-            read: false,
-          },
-          ...prev,
-        ]);
+      resolveReport: async (reportId, status) => {
+        try {
+          await apiJson<{ message?: string }>(`/api/reports/${reportId}/status`, {
+            method: "PATCH",
+            body: JSON.stringify({ status }),
+          });
+          setReports((prev) => prev.map((report) => (report.id === reportId ? { ...report, status } : report)));
+          setAdminAuditLogs((prev) => [
+            {
+              id: `a-${Date.now()}`,
+              message: `${reportId} 신고건을 ${status === "resolved" ? "습득 완료" : "습득 불가"}로 처리했습니다.`,
+              createdAt: shortDateTime(),
+            },
+            ...prev,
+          ]);
+          setNotices((prev) => [
+            {
+              id: `n-${Date.now()}`,
+              title: status === "resolved" ? "습득 완료 알림" : "습득 불가 알림",
+              message:
+                status === "resolved"
+                  ? "신고하신 물품이 확인되었습니다. 지도에서 관리실 위치를 확인해 주세요."
+                  : "신고하신 물품은 아직 습득되지 않았습니다. 알림은 계속 유지됩니다.",
+              createdAt: shortDateTime(),
+              read: false,
+            },
+            ...prev,
+          ]);
+          return { ok: true, message: "상태 변경이 완료되었습니다." };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "상태 변경에 실패했습니다." };
+        }
       },
-      issuePickupPass: (reportId) => {
+      issuePickupPass: async (reportId) => {
         const target = reports.find((report) => report.id === reportId);
         if (!target) {
-          return { ok: false, message: "해당 신고 항목을 찾을 수 없습니다." };
+          return { ok: false, message: "해당 신고 항목을 찾을 수 없습니다.", token: undefined };
         }
         if (target.status !== "resolved") {
-          return { ok: false, message: "습득 완료 처리된 항목만 QR 발급이 가능합니다." };
+          return { ok: false, message: "습득 완료 처리된 항목만 QR 발급이 가능합니다.", token: undefined };
         }
 
-        const existing = pickupPasses.find((pass) => pass.reportId === reportId && !pass.usedAt && Date.parse(pass.expiresAt) > Date.now());
-        if (existing) {
-          return { ok: true, message: "이미 발급된 유효 QR이 있습니다.", token: existing.token };
-        }
+        try {
+          const data = await apiJson<{ id?: string; token?: string; expiresAt?: string; issuedAt?: string; usedAt?: string | null; message?: string }>(
+            "/api/pickup-passes",
+            {
+              method: "POST",
+              body: JSON.stringify({ reportId }),
+            }
+          );
 
-        const pass: PickupPass = {
-          id: `p-${Date.now()}`,
-          reportId,
-          token: pickupToken(),
-          issuedAt: shortDateTime(),
-          expiresAt: minutesLaterISO(10),
-          usedAt: null,
-        };
-        setPickupPasses((prev) => [pass, ...prev]);
-        setNotices((prev) => [
-          {
-            id: `n-${Date.now()}`,
-            title: "수령 QR이 발급되었습니다",
-            message: "관리실 방문 시 QR 코드를 제시해 최종 수령 인증을 진행해 주세요. (10분 유효)",
-            createdAt: shortDateTime(),
-            read: false,
-          },
-          ...prev,
-        ]);
-        return { ok: true, message: "수령 QR이 발급되었습니다.", token: pass.token };
+          const pass: PickupPass = {
+            id: data.id ?? `p-${Date.now()}`,
+            reportId,
+            token: data.token ?? pickupToken(),
+            issuedAt: data.issuedAt ?? shortDateTime(),
+            expiresAt: data.expiresAt ?? minutesLaterISO(10),
+            usedAt: data.usedAt ?? null,
+          };
+
+          setPickupPasses((prev) => [pass, ...prev.filter((it) => it.id !== pass.id)]);
+          setNotices((prev) => [
+            {
+              id: `n-${Date.now()}`,
+              title: "수령 QR이 발급되었습니다",
+              message: "관리실 방문 시 QR 코드를 제시해 최종 수령 인증을 진행해 주세요. (10분 유효)",
+              createdAt: shortDateTime(),
+              read: false,
+            },
+            ...prev,
+          ]);
+          return { ok: true, message: data.message ?? "수령 QR이 발급되었습니다.", token: pass.token };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "수령 QR 발급에 실패했습니다.", token: undefined };
+        }
       },
-      verifyPickupPass: (token) => {
+      verifyPickupPass: async (token) => {
         const normalized = token.trim().toUpperCase();
         if (!normalized) {
           return { ok: false, message: "QR 코드를 입력해 주세요." };
         }
-        const pass = pickupPasses.find((it) => it.token.toUpperCase() === normalized);
-        if (!pass) {
-          return { ok: false, message: "유효하지 않은 QR 코드입니다." };
-        }
-        if (pass.usedAt) {
-          return { ok: false, message: "이미 사용된 QR 코드입니다." };
-        }
-        if (Date.parse(pass.expiresAt) <= Date.now()) {
-          return { ok: false, message: "만료된 QR 코드입니다. 재발급이 필요합니다." };
-        }
 
-        const usedAt = shortDateTime();
-        setPickupPasses((prev) => prev.map((it) => (it.id === pass.id ? { ...it, usedAt } : it)));
-        setReports((prev) =>
-          prev.map((report) => (report.id === pass.reportId ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report))
-        );
-        setAdminAuditLogs((prev) => [
-          {
-            id: `a-${Date.now()}`,
-            message: `${pass.reportId} 신고건의 QR 수령 인증이 완료되었습니다.`,
-            createdAt: usedAt,
-          },
-          ...prev,
-        ]);
-        setNotices((prev) => [
-          {
-            id: `n-${Date.now()}`,
-            title: "최종 수령 완료",
-            message: "관리실에서 QR 인증이 완료되어 물품 수령이 마무리되었습니다.",
-            createdAt: usedAt,
-            read: false,
-          },
-          ...prev,
-        ]);
-        return { ok: true, message: "QR 인증 완료: 최종 수령 처리되었습니다." };
+        try {
+          const data = await apiJson<{ reportId?: string; usedAt?: string; message?: string }>("/api/pickup-passes/verify", {
+            method: "POST",
+            body: JSON.stringify({ token: normalized }),
+          });
+
+          const reportId = data.reportId ?? pickupPasses.find((it) => it.token.toUpperCase() === normalized)?.reportId;
+          if (!reportId) {
+            return { ok: false, message: "인증 대상 신고건을 찾지 못했습니다." };
+          }
+
+          const usedAt = data.usedAt ?? shortDateTime();
+          setPickupPasses((prev) =>
+            prev.map((it) => (it.token.toUpperCase() === normalized ? { ...it, usedAt } : it))
+          );
+          setReports((prev) =>
+            prev.map((report) => (report.id === reportId ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report))
+          );
+          setAdminAuditLogs((prev) => [
+            {
+              id: `a-${Date.now()}`,
+              message: `${reportId} 신고건의 QR 수령 인증이 완료되었습니다.`,
+              createdAt: usedAt,
+            },
+            ...prev,
+          ]);
+          setNotices((prev) => [
+            {
+              id: `n-${Date.now()}`,
+              title: "최종 수령 완료",
+              message: "관리실에서 QR 인증이 완료되어 물품 수령이 마무리되었습니다.",
+              createdAt: usedAt,
+              read: false,
+            },
+            ...prev,
+          ]);
+          return { ok: true, message: data.message ?? "QR 인증 완료: 최종 수령 처리되었습니다." };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "QR 인증 처리에 실패했습니다." };
+        }
       },
-      deleteReport: (reportId) => {
-        setReports((prev) => prev.filter((report) => report.id !== reportId));
-        setAdminAuditLogs((prev) => [
-          {
-            id: `a-${Date.now()}`,
-            message: `${reportId} 신고건이 관리자에 의해 삭제되었습니다.`,
-            createdAt: shortDateTime(),
-          },
-          ...prev,
-        ]);
+      deleteReport: async (reportId) => {
+        try {
+          await apiJson<object>(`/api/reports/${reportId}`, { method: "DELETE" });
+          setReports((prev) => prev.filter((report) => report.id !== reportId));
+          setAdminAuditLogs((prev) => [
+            {
+              id: `a-${Date.now()}`,
+              message: `${reportId} 신고건이 관리자에 의해 삭제되었습니다.`,
+              createdAt: shortDateTime(),
+            },
+            ...prev,
+          ]);
+          return { ok: true, message: "신고 항목이 삭제되었습니다." };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "신고 항목 삭제에 실패했습니다." };
+        }
       },
       markNoticeRead: (noticeId) => {
         setNotices((prev) => prev.map((notice) => (notice.id === noticeId ? { ...notice, read: true } : notice)));

@@ -91,8 +91,8 @@ export default function AdminPage() {
     setRegMessage("최근 등록 항목을 삭제했습니다.");
   };
 
-  const onVerifyPickup = () => {
-    const result = verifyPickupPass(pickupToken);
+  const onVerifyPickup = async () => {
+    const result = await verifyPickupPass(pickupToken);
     setPickupMessage(result.message);
     if (result.ok) {
       setPickupToken("");
@@ -293,11 +293,23 @@ export default function AdminPage() {
                       {report.location} / 접수: {report.createdAt}
                     </p>
                     <div className="grid gap-2 md:grid-cols-2">
-                      <Button variant="outline" onClick={() => resolveReport(report.id, "resolved")}>
+                      <Button
+                        variant="outline"
+                        onClick={async () => {
+                          const result = await resolveReport(report.id, "resolved");
+                          setRegMessage(result.message);
+                        }}
+                      >
                         <CheckCircle2 className="h-4 w-4" />
                         습득 완료 처리
                       </Button>
-                      <Button variant="outline" onClick={() => resolveReport(report.id, "unavailable")}>
+                      <Button
+                        variant="outline"
+                        onClick={async () => {
+                          const result = await resolveReport(report.id, "unavailable");
+                          setRegMessage(result.message);
+                        }}
+                      >
                         <CircleX className="h-4 w-4" />
                         습득 불가 처리
                       </Button>

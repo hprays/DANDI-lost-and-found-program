@@ -26,23 +26,27 @@ export default function RegisterItemPage() {
     setTimeout(() => setIsVisionLoading(false), 1200);
   };
 
-  const onSubmit = () => {
+  const onSubmit = async () => {
     if (!itemName.trim() || !dateTime || !place.trim()) {
       setSavedMessage("물품명, 일시, 장소를 입력해 주세요.");
       return;
     }
-    submitReport({
+    const result = await submitReport({
       itemName: itemName.trim(),
       category,
       lostAt: dateTime,
       location: place.trim(),
       memo: memo.trim(),
     });
+    if (!result.ok) {
+      setSavedMessage(result.message);
+      return;
+    }
     setItemName("");
     setDateTime("");
     setPlace("");
     setMemo("");
-    setSavedMessage("관리자에게 신고가 전달되었습니다. 처리 상태는 마이페이지에서 확인하세요.");
+    setSavedMessage(result.message || "관리자에게 신고가 전달되었습니다. 처리 상태는 마이페이지에서 확인하세요.");
   };
 
   return (
@@ -133,7 +137,14 @@ export default function RegisterItemPage() {
                     {report.location} / {report.createdAt}
                   </p>
                 </div>
-                <Button variant="outline" size="sm" onClick={() => deleteReport(report.id)}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    const result = await deleteReport(report.id);
+                    setSavedMessage(result.message);
+                  }}
+                >
                   삭제
                 </Button>
               </div>

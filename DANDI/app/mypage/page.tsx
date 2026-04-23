@@ -27,8 +27,8 @@ export default function MyPage() {
     setKeyword("");
   };
 
-  const issueQr = (reportId: string) => {
-    const result = issuePickupPass(reportId);
+  const issueQr = async (reportId: string) => {
+    const result = await issuePickupPass(reportId);
     setPickupMessage(result.message);
   };
 
@@ -146,7 +146,7 @@ export default function MyPage() {
                       </div>
                     ) : (
                       <div className="mt-2">
-                        <Button size="sm" onClick={() => issueQr(report.id)} disabled={report.status === "picked_up"}>
+                        <Button size="sm" onClick={() => void issueQr(report.id)} disabled={report.status === "picked_up"}>
                           수령 QR 발급
                         </Button>
                       </div>
