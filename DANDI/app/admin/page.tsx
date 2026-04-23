@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CheckCircle2, CircleX, Clock3, KeyRound, LogOut, ShieldCheck } from "lucide-react";
+import { CheckCircle2, CircleX, Clock3, KeyRound, Loader2, LogOut, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ export default function AdminPage() {
     logoutAdmin,
     adminOtpRequestedAt,
     adminAuditLogs,
+    apiConfigured,
+    apiBaseUrl,
   } = useDandiState();
   const [adminCode, setAdminCode] = useState("");
   const [otp, setOtp] = useState("");
@@ -38,6 +40,9 @@ export default function AdminPage() {
   const [regMessage, setRegMessage] = useState("");
   const [pickupToken, setPickupToken] = useState("");
   const [pickupMessage, setPickupMessage] = useState("");
+  const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+  const [statusUpdatingType, setStatusUpdatingType] = useState<"resolved" | "unavailable" | null>(null);
+  const [pickupVerifying, setPickupVerifying] = useState(false);
   const [registeredItems, setRegisteredItems] = useState<
     Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
   >([]);
@@ -92,10 +97,15 @@ export default function AdminPage() {
   };
 
   const onVerifyPickup = async () => {
-    const result = await verifyPickupPass(pickupToken);
-    setPickupMessage(result.message);
-    if (result.ok) {
-      setPickupToken("");
+    setPickupVerifying(true);
+    try {
+      const result = await verifyPickupPass(pickupToken);
+      setPickupMessage(result.message);
+      if (result.ok) {
+        setPickupToken("");
+      }
+    } finally {
+      setPickupVerifying(false);
     }
   };
 
@@ -111,6 +121,13 @@ export default function AdminPage() {
             <p className="text-sm text-muted-foreground">등록/검수 기능은 관리자 인증 완료 후에만 사용할 수 있습니다.</p>
           </CardHeader>
           <CardContent className="space-y-4">
+            {!apiConfigured ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                백엔드 주소가 비어 있습니다. `.env.local`에 `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
+            )}
             <div className="rounded-xl border bg-amber-50 px-4 py-3 text-sm text-amber-900">
               <p className="font-semibold">보안 안내</p>
               <p>관리자 인증번호 + OTP 2단계 확인으로 일반 사용자의 관리자 접근을 차단합니다.</p>
@@ -282,54 +299,86 @@ export default function AdminPage() {
             </TabsContent>
 
             <TabsContent value="pending" className="space-y-3">
-              {pendingReports.map((report) => (
-                <Card key={report.id}>
-                  <CardContent className="space-y-3 p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="font-semibold">{report.itemName}</p>
-                      <Badge>{report.category}</Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {report.location} / 접수: {report.createdAt}
-                    </p>
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <Button
-                        variant="outline"
-                        onClick={async () => {
-                          const result = await resolveReport(report.id, "resolved");
-                          setRegMessage(result.message);
-                        }}
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                        습득 완료 처리
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={async () => {
-                          const result = await resolveReport(report.id, "unavailable");
-                          setRegMessage(result.message);
-                        }}
-                      >
-                        <CircleX className="h-4 w-4" />
-                        습득 불가 처리
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+              {pendingReports.length === 0 ? (
+                <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">현재 검수 대기 중인 신고가 없습니다.</p>
+              ) : (
+                pendingReports.map((report) => (
+                  <Card key={report.id}>
+                    <CardContent className="space-y-3 p-4">
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold">{report.itemName}</p>
+                        <Badge>{report.category}</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {report.location} / 접수: {report.createdAt}
+                      </p>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <Button
+                          variant="outline"
+                          disabled={statusUpdatingId === report.id}
+                          onClick={async () => {
+                            setStatusUpdatingId(report.id);
+                            setStatusUpdatingType("resolved");
+                            try {
+                              const result = await resolveReport(report.id, "resolved");
+                              setRegMessage(result.message);
+                            } finally {
+                              setStatusUpdatingId(null);
+                              setStatusUpdatingType(null);
+                            }
+                          }}
+                        >
+                          {statusUpdatingId === report.id && statusUpdatingType === "resolved" ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="h-4 w-4" />
+                          )}
+                          습득 완료 처리
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={statusUpdatingId === report.id}
+                          onClick={async () => {
+                            setStatusUpdatingId(report.id);
+                            setStatusUpdatingType("unavailable");
+                            try {
+                              const result = await resolveReport(report.id, "unavailable");
+                              setRegMessage(result.message);
+                            } finally {
+                              setStatusUpdatingId(null);
+                              setStatusUpdatingType(null);
+                            }
+                          }}
+                        >
+                          {statusUpdatingId === report.id && statusUpdatingType === "unavailable" ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <CircleX className="h-4 w-4" />
+                          )}
+                          습득 불가 처리
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
             </TabsContent>
 
             <TabsContent value="processed" className="space-y-2">
-              {processedReports.map((report) => (
-                <div key={report.id} className="rounded-xl border bg-white p-3 text-sm">
-                  <p className="font-semibold">{report.itemName}</p>
-                  <p className="text-muted-foreground">{report.location}</p>
-                  <p className="mt-1 text-xs font-semibold text-primary">
-                    {report.status === "resolved" ? "습득 완료" : report.status === "picked_up" ? "최종 수령 완료" : "습득 불가"} /{" "}
-                    {report.createdAt}
-                  </p>
-                </div>
-              ))}
+              {processedReports.length === 0 ? (
+                <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">처리 완료된 신고 이력이 없습니다.</p>
+              ) : (
+                processedReports.map((report) => (
+                  <div key={report.id} className="rounded-xl border bg-white p-3 text-sm">
+                    <p className="font-semibold">{report.itemName}</p>
+                    <p className="text-muted-foreground">{report.location}</p>
+                    <p className="mt-1 text-xs font-semibold text-primary">
+                      {report.status === "resolved" ? "습득 완료" : report.status === "picked_up" ? "최종 수령 완료" : "습득 불가"} /{" "}
+                      {report.createdAt}
+                    </p>
+                  </div>
+                ))
+              )}
             </TabsContent>
 
             <TabsContent value="pickup" className="space-y-3">
@@ -344,7 +393,10 @@ export default function AdminPage() {
                       onChange={(e) => setPickupToken(e.target.value)}
                       placeholder="사용자 QR 코드 입력 (예: DKU-123456)"
                     />
-                    <Button onClick={onVerifyPickup}>수령 인증 완료</Button>
+                    <Button onClick={onVerifyPickup} disabled={pickupVerifying}>
+                      {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      수령 인증 완료
+                    </Button>
                   </div>
                   {pickupMessage ? <p className="text-sm font-semibold text-primary">{pickupMessage}</p> : null}
                 </CardContent>

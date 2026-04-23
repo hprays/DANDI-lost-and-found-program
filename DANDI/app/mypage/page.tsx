@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BellRing, Plus, X } from "lucide-react";
+import { BellRing, Loader2, Plus, X } from "lucide-react";
 import { AccountMenu } from "@/components/account-menu";
 import { AppShell } from "@/components/app-shell";
 import { PickupQr } from "@/components/pickup-qr";
@@ -14,11 +14,12 @@ import { Switch } from "@/components/ui/switch";
 import { useDandiState } from "@/lib/dandi-state";
 
 export default function MyPage() {
-  const { notices, reports, pickupPasses, issuePickupPass, markNoticeRead } = useDandiState();
+  const { notices, reports, pickupPasses, issuePickupPass, markNoticeRead, apiConfigured, apiBaseUrl } = useDandiState();
   const [keyword, setKeyword] = useState("");
   const [tags, setTags] = useState<string[]>(["에어팟", "검정", "지갑"]);
   const [alertEnabled, setAlertEnabled] = useState(true);
   const [pickupMessage, setPickupMessage] = useState("");
+  const [issuingReportId, setIssuingReportId] = useState<string | null>(null);
 
   const addTag = () => {
     const trimmed = keyword.trim();
@@ -28,8 +29,13 @@ export default function MyPage() {
   };
 
   const issueQr = async (reportId: string) => {
-    const result = await issuePickupPass(reportId);
-    setPickupMessage(result.message);
+    setIssuingReportId(reportId);
+    try {
+      const result = await issuePickupPass(reportId);
+      setPickupMessage(result.message);
+    } finally {
+      setIssuingReportId(null);
+    }
   };
 
   return (
@@ -40,6 +46,13 @@ export default function MyPage() {
             <CardTitle>내 계정</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
+            {!apiConfigured ? (
+              <div className="col-span-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                백엔드 주소가 비어 있습니다. `.env.local`에 `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
+              </div>
+            ) : (
+              <p className="col-span-full text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
+            )}
             <div className="space-y-2">
               <Label>이름</Label>
               <Input defaultValue="홍길동" />
@@ -87,25 +100,29 @@ export default function MyPage() {
             <CardTitle>분실물 처리 기록</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {reports.map((entry) => (
-              <div key={entry.id} className="rounded-xl border p-3 text-sm">
-                <p className="font-semibold">{entry.itemName}</p>
-                <p className="text-muted-foreground">
-                  {entry.createdAt} / {entry.location}
-                </p>
-                <p className="mt-1 text-xs font-semibold text-primary">
-                  상태:{" "}
-                  {entry.status === "pending"
-                    ? "관리자 확인 중"
-                    : entry.status === "resolved"
-                      ? "습득 완료"
-                      : entry.status === "picked_up"
-                        ? "최종 수령 완료"
-                        : "습득 불가"}
-                </p>
-                {entry.pickedUpAt ? <p className="mt-1 text-xs text-muted-foreground">수령 시각: {entry.pickedUpAt}</p> : null}
-              </div>
-            ))}
+            {reports.length === 0 ? (
+              <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">분실물 처리 기록이 없습니다.</p>
+            ) : (
+              reports.map((entry) => (
+                <div key={entry.id} className="rounded-xl border p-3 text-sm">
+                  <p className="font-semibold">{entry.itemName}</p>
+                  <p className="text-muted-foreground">
+                    {entry.createdAt} / {entry.location}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-primary">
+                    상태:{" "}
+                    {entry.status === "pending"
+                      ? "관리자 확인 중"
+                      : entry.status === "resolved"
+                        ? "습득 완료"
+                        : entry.status === "picked_up"
+                          ? "최종 수령 완료"
+                          : "습득 불가"}
+                  </p>
+                  {entry.pickedUpAt ? <p className="mt-1 text-xs text-muted-foreground">수령 시각: {entry.pickedUpAt}</p> : null}
+                </div>
+              ))
+            )}
           </CardContent>
         </Card>
 
@@ -146,7 +163,12 @@ export default function MyPage() {
                       </div>
                     ) : (
                       <div className="mt-2">
-                        <Button size="sm" onClick={() => void issueQr(report.id)} disabled={report.status === "picked_up"}>
+                        <Button
+                          size="sm"
+                          onClick={() => void issueQr(report.id)}
+                          disabled={report.status === "picked_up" || issuingReportId === report.id}
+                        >
+                          {issuingReportId === report.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                           수령 QR 발급
                         </Button>
                       </div>
@@ -166,18 +188,22 @@ export default function MyPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {notices.map((notice) => (
-              <button
-                key={notice.id}
-                type="button"
-                onClick={() => markNoticeRead(notice.id)}
-                className={`w-full rounded-xl border p-3 text-left text-sm ${notice.read ? "bg-slate-50" : "bg-primary/5"}`}
-              >
-                <p className="font-semibold">{notice.title}</p>
-                <p className="text-muted-foreground">{notice.message}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{notice.createdAt}</p>
-              </button>
-            ))}
+            {notices.length === 0 ? (
+              <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">도착한 알림이 없습니다.</p>
+            ) : (
+              notices.map((notice) => (
+                <button
+                  key={notice.id}
+                  type="button"
+                  onClick={() => markNoticeRead(notice.id)}
+                  className={`w-full rounded-xl border p-3 text-left text-sm ${notice.read ? "bg-slate-50" : "bg-primary/5"}`}
+                >
+                  <p className="font-semibold">{notice.title}</p>
+                  <p className="text-muted-foreground">{notice.message}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{notice.createdAt}</p>
+                </button>
+              ))
+            )}
           </CardContent>
         </Card>
 

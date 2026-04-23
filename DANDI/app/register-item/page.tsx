@@ -12,8 +12,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useDandiState } from "@/lib/dandi-state";
 
 export default function RegisterItemPage() {
-  const { reports, submitReport, deleteReport, adminVerified } = useDandiState();
+  const { reports, submitReport, deleteReport, adminVerified, apiConfigured, apiBaseUrl } = useDandiState();
   const [isVisionLoading, setIsVisionLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [itemName, setItemName] = useState("");
   const [dateTime, setDateTime] = useState("");
   const [place, setPlace] = useState("");
@@ -31,22 +33,27 @@ export default function RegisterItemPage() {
       setSavedMessage("물품명, 일시, 장소를 입력해 주세요.");
       return;
     }
-    const result = await submitReport({
-      itemName: itemName.trim(),
-      category,
-      lostAt: dateTime,
-      location: place.trim(),
-      memo: memo.trim(),
-    });
-    if (!result.ok) {
-      setSavedMessage(result.message);
-      return;
+    setIsSubmitting(true);
+    try {
+      const result = await submitReport({
+        itemName: itemName.trim(),
+        category,
+        lostAt: dateTime,
+        location: place.trim(),
+        memo: memo.trim(),
+      });
+      if (!result.ok) {
+        setSavedMessage(result.message);
+        return;
+      }
+      setItemName("");
+      setDateTime("");
+      setPlace("");
+      setMemo("");
+      setSavedMessage(result.message || "관리자에게 신고가 전달되었습니다. 처리 상태는 마이페이지에서 확인하세요.");
+    } finally {
+      setIsSubmitting(false);
     }
-    setItemName("");
-    setDateTime("");
-    setPlace("");
-    setMemo("");
-    setSavedMessage(result.message || "관리자에게 신고가 전달되었습니다. 처리 상태는 마이페이지에서 확인하세요.");
   };
 
   return (
@@ -56,6 +63,13 @@ export default function RegisterItemPage() {
           <CardTitle>분실물 등록</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!apiConfigured ? (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              백엔드 주소가 비어 있습니다. `.env.local`에 `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
+          )}
           <div className="space-y-2">
             <Label htmlFor="photo">사진 업로드</Label>
             <Input id="photo" type="file" accept="image/*" />
@@ -113,7 +127,10 @@ export default function RegisterItemPage() {
           </div>
 
           <div className="grid gap-2 md:grid-cols-2">
-            <Button onClick={onSubmit}>관리자에게 등록 요청 보내기</Button>
+            <Button onClick={onSubmit} disabled={isSubmitting}>
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              관리자에게 등록 요청 보내기
+            </Button>
             <Button variant="outline" onClick={() => setSavedMessage("대기 목록에서 개별 삭제할 수 있습니다.")}>
               잘못 등록한 항목은 아래에서 삭제
             </Button>
@@ -127,28 +144,39 @@ export default function RegisterItemPage() {
           <CardTitle>관리자 전달 대기 목록</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {reports
-            .filter((report) => report.status === "pending")
-            .map((report) => (
-              <div key={report.id} className="flex items-center justify-between rounded-xl border p-3 text-sm">
-                <div>
-                  <p className="font-semibold">{report.itemName}</p>
-                  <p className="text-muted-foreground">
-                    {report.location} / {report.createdAt}
-                  </p>
+          {reports.filter((report) => report.status === "pending").length === 0 ? (
+            <p className="rounded-lg border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">현재 관리자 전달 대기 항목이 없습니다.</p>
+          ) : (
+            reports
+              .filter((report) => report.status === "pending")
+              .map((report) => (
+                <div key={report.id} className="flex items-center justify-between rounded-xl border p-3 text-sm">
+                  <div>
+                    <p className="font-semibold">{report.itemName}</p>
+                    <p className="text-muted-foreground">
+                      {report.location} / {report.createdAt}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={deletingId === report.id}
+                    onClick={async () => {
+                      setDeletingId(report.id);
+                      try {
+                        const result = await deleteReport(report.id);
+                        setSavedMessage(result.message);
+                      } finally {
+                        setDeletingId(null);
+                      }
+                    }}
+                  >
+                    {deletingId === report.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    삭제
+                  </Button>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    const result = await deleteReport(report.id);
-                    setSavedMessage(result.message);
-                  }}
-                >
-                  삭제
-                </Button>
-              </div>
-            ))}
+              ))
+          )}
         </CardContent>
       </Card>
     </AppShell>

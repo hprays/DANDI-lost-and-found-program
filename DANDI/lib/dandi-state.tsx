@@ -42,6 +42,8 @@ export type PickupPass = {
 type DandiStateContextValue = {
   reports: LostReport[];
   notices: UserNotice[];
+  apiConfigured: boolean;
+  apiBaseUrl: string;
   adminVerified: boolean;
   adminOtpRequestedAt: string | null;
   adminAuditLogs: AdminAuditLog[];
@@ -88,6 +90,10 @@ function apiUrl(path: string) {
 }
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  if (!API_BASE_URL) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
+  }
+
   const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
@@ -103,6 +109,9 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
       serverMessage = err.message || err.error || serverMessage;
     } catch {
       // ignore json parsing errors
+    }
+    if (response.status === 404 && serverMessage === "요청 처리에 실패했습니다.") {
+      serverMessage = `엔드포인트를 찾을 수 없습니다: ${path}`;
     }
     throw new Error(serverMessage);
   }
@@ -154,6 +163,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     () => ({
       reports,
       notices,
+      apiConfigured: Boolean(API_BASE_URL),
+      apiBaseUrl: API_BASE_URL,
       adminVerified,
       adminOtpRequestedAt,
       adminAuditLogs,
