@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
 
@@ -42,15 +42,12 @@ export type PickupPass = {
 type DandiStateContextValue = {
   reports: LostReport[];
   notices: UserNotice[];
+  noticesLoading: boolean;
+  noticesError: string | null;
   apiConfigured: boolean;
   apiBaseUrl: string;
-  adminVerified: boolean;
-  adminOtpRequestedAt: string | null;
   adminAuditLogs: AdminAuditLog[];
   pickupPasses: PickupPass[];
-  requestAdminOtp: (adminCode: string) => { ok: boolean; message: string; demoOtp?: string };
-  verifyAdminOtp: (otp: string) => { ok: boolean; message: string };
-  logoutAdmin: () => void;
   submitReport: (payload: Omit<LostReport, "id" | "status" | "createdAt">) => Promise<{ ok: boolean; message: string; reportId?: string }>;
   resolveReport: (
     reportId: string,
@@ -59,12 +56,11 @@ type DandiStateContextValue = {
   issuePickupPass: (reportId: string) => Promise<{ ok: boolean; message: string; token?: string }>;
   verifyPickupPass: (token: string) => Promise<{ ok: boolean; message: string }>;
   deleteReport: (reportId: string) => Promise<{ ok: boolean; message: string }>;
-  markNoticeRead: (noticeId: string) => void;
+  refreshNotices: () => Promise<void>;
+  markNoticeRead: (noticeId: string) => Promise<{ ok: boolean; message: string }>;
 };
 
 const DandiStateContext = createContext<DandiStateContextValue | null>(null);
-const ADMIN_MASTER_CODE = "DKU-ADMIN-2026";
-const ADMIN_UI_TEST_MODE = process.env.NEXT_PUBLIC_ADMIN_UI_TEST_MODE !== "false";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
 function nowISO() {
@@ -146,10 +142,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       read: false,
     },
   ]);
-  const [adminVerified, setAdminVerified] = useState(false);
-  const [adminOtpRequestedAt, setAdminOtpRequestedAt] = useState<string | null>(null);
-  const [pendingAdminOtp, setPendingAdminOtp] = useState<string | null>(null);
-  const [adminOtpTryCount, setAdminOtpTryCount] = useState(0);
+  const [noticesLoading, setNoticesLoading] = useState(false);
+  const [noticesError, setNoticesError] = useState<string | null>(null);
   const [adminAuditLogs, setAdminAuditLogs] = useState<AdminAuditLog[]>([
     {
       id: "a-1001",
@@ -159,111 +153,34 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
   ]);
   const [pickupPasses, setPickupPasses] = useState<PickupPass[]>([]);
 
+  const refreshNotices = useCallback(async () => {
+    if (!API_BASE_URL) return;
+    setNoticesLoading(true);
+    setNoticesError(null);
+    try {
+      const data = await apiJson<UserNotice[]>("/api/notices", { method: "GET" });
+      setNotices(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setNoticesError(error instanceof Error ? error.message : "알림 목록을 불러오지 못했습니다.");
+    } finally {
+      setNoticesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshNotices();
+  }, [refreshNotices]);
+
   const value = useMemo<DandiStateContextValue>(
     () => ({
       reports,
       notices,
+      noticesLoading,
+      noticesError,
       apiConfigured: Boolean(API_BASE_URL),
       apiBaseUrl: API_BASE_URL,
-      adminVerified,
-      adminOtpRequestedAt,
       adminAuditLogs,
       pickupPasses,
-      requestAdminOtp: (adminCode) => {
-        if (ADMIN_UI_TEST_MODE) {
-          const otp = Math.floor(100000 + Math.random() * 900000).toString();
-          setPendingAdminOtp(otp);
-          setAdminOtpRequestedAt(shortDateTime());
-          setAdminOtpTryCount(0);
-          setAdminAuditLogs((prev) => [
-            {
-              id: `a-${Date.now()}`,
-              message: "관리자 OTP 인증 요청이 생성되었습니다.",
-              createdAt: shortDateTime(),
-            },
-            ...prev,
-          ]);
-          return {
-            ok: true,
-            message: "OTP가 발급되었습니다. 인증번호를 확인해 입력해 주세요.",
-            demoOtp: otp,
-          };
-        }
-
-        if (adminCode.trim() !== ADMIN_MASTER_CODE) {
-          return { ok: false, message: "관리자 인증번호가 올바르지 않습니다." };
-        }
-
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        setPendingAdminOtp(otp);
-        setAdminOtpRequestedAt(shortDateTime());
-        setAdminOtpTryCount(0);
-        setAdminAuditLogs((prev) => [
-          {
-            id: `a-${Date.now()}`,
-            message: "관리자 OTP 인증 요청이 생성되었습니다.",
-            createdAt: shortDateTime(),
-          },
-          ...prev,
-        ]);
-        return { ok: true, message: "OTP가 발급되었습니다. 관리자에게 전달된 번호를 입력해 주세요.", demoOtp: otp };
-      },
-      verifyAdminOtp: (otp) => {
-        if (ADMIN_UI_TEST_MODE) {
-          if (!adminOtpRequestedAt) {
-            setAdminOtpRequestedAt(shortDateTime());
-          }
-          setAdminVerified(true);
-          setPendingAdminOtp(null);
-          setAdminAuditLogs((prev) => [
-            {
-              id: `a-${Date.now()}`,
-              message: `관리자 OTP 인증 처리 (${otp || "빈 값"}).`,
-              createdAt: shortDateTime(),
-            },
-            ...prev,
-          ]);
-          return { ok: true, message: "관리자 인증이 완료되었습니다." };
-        }
-
-        if (!pendingAdminOtp) {
-          return { ok: false, message: "먼저 OTP를 요청해 주세요." };
-        }
-        if (adminOtpTryCount >= 5) {
-          setPendingAdminOtp(null);
-          return { ok: false, message: "OTP 시도 횟수를 초과했습니다. 다시 요청해 주세요." };
-        }
-
-        if (otp.trim() !== pendingAdminOtp) {
-          setAdminOtpTryCount((prev) => prev + 1);
-          return { ok: false, message: "OTP가 일치하지 않습니다." };
-        }
-
-        setAdminVerified(true);
-        setPendingAdminOtp(null);
-        setAdminAuditLogs((prev) => [
-          {
-            id: `a-${Date.now()}`,
-            message: "관리자 OTP 인증이 완료되었습니다.",
-            createdAt: shortDateTime(),
-          },
-          ...prev,
-        ]);
-        return { ok: true, message: "관리자 인증이 완료되었습니다." };
-      },
-      logoutAdmin: () => {
-        setAdminVerified(false);
-        setPendingAdminOtp(null);
-        setAdminOtpRequestedAt(null);
-        setAdminAuditLogs((prev) => [
-          {
-            id: `a-${Date.now()}`,
-            message: "관리자 세션이 로그아웃되었습니다.",
-            createdAt: shortDateTime(),
-          },
-          ...prev,
-        ]);
-      },
       submitReport: async (payload) => {
         try {
           const data = await apiJson<{ id?: string; reportId?: string; createdAt?: string; status?: ReportStatus; message?: string }>(
@@ -436,11 +353,40 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           return { ok: false, message: error instanceof Error ? error.message : "신고 항목 삭제에 실패했습니다." };
         }
       },
-      markNoticeRead: (noticeId) => {
+      refreshNotices,
+      markNoticeRead: async (noticeId) => {
+        const target = notices.find((notice) => notice.id === noticeId);
+        if (!target) {
+          return { ok: false, message: "대상 알림을 찾을 수 없습니다." };
+        }
+
         setNotices((prev) => prev.map((notice) => (notice.id === noticeId ? { ...notice, read: true } : notice)));
+
+        if (!API_BASE_URL) {
+          return { ok: true, message: "읽음 처리되었습니다." };
+        }
+
+        try {
+          await apiJson<{ message?: string }>(`/api/notices/${noticeId}/read`, {
+            method: "PATCH",
+            body: JSON.stringify({ read: true }),
+          });
+          return { ok: true, message: "읽음 처리되었습니다." };
+        } catch (error) {
+          setNotices((prev) => prev.map((notice) => (notice.id === noticeId ? { ...notice, read: false } : notice)));
+          return { ok: false, message: error instanceof Error ? error.message : "알림 읽음 처리에 실패했습니다." };
+        }
       },
     }),
-    [adminAuditLogs, adminOtpRequestedAt, adminOtpTryCount, adminVerified, notices, pendingAdminOtp, pickupPasses, reports]
+    [
+      adminAuditLogs,
+      notices,
+      noticesError,
+      noticesLoading,
+      pickupPasses,
+      refreshNotices,
+      reports,
+    ]
   );
 
   return <DandiStateContext.Provider value={value}>{children}</DandiStateContext.Provider>;

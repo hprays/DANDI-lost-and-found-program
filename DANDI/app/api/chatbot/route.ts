@@ -20,7 +20,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ answer: "질문을 입력해 주세요." }, { status: 400 });
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.LLM_API_KEY ?? process.env.OPENAI_API_KEY;
+    const model = process.env.LLM_MODEL ?? process.env.OPENAI_MODEL ?? "gemini-2.5-flash";
+    const baseUrl = (process.env.LLM_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
     if (!apiKey) {
       return NextResponse.json({
         answer: "현재 AI 서버 키가 설정되지 않아 기본 안내로 답변합니다. 지도 페이지에서 관리실 위치를 확인해 주세요.",
@@ -37,14 +39,14 @@ export async function POST(req: Request) {
       { role: "user", content: message },
     ];
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+        model,
         messages,
         temperature: 0.4,
       }),

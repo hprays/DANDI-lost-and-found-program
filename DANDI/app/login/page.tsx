@@ -1,24 +1,85 @@
 "use client";
 
-import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { signInWithPopup } from "firebase/auth";
+import { firebaseAuth, googleProvider } from "@/lib/firebase-client";
+import { setAuthSession } from "@/lib/auth-session";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-function isDankookEmail(value: string) {
-  return /^[^\s@]+@dankook\.ac\.kr$/i.test(value);
-}
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
+const AUTH_DEMO_MODE = process.env.NEXT_PUBLIC_AUTH_DEMO_MODE === "true";
 
 export default function LoginPage() {
-  const [signupEmail, setSignupEmail] = useState("");
-  const [signupTouched, setSignupTouched] = useState(false);
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
 
-  const emailValid = useMemo(() => isDankookEmail(signupEmail), [signupEmail]);
-  const showError = signupTouched && signupEmail.length > 0 && !emailValid;
+  const onGoogleLogin = async () => {
+    if (!AUTH_DEMO_MODE && !API_BASE_URL) {
+      setMessage("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+    try {
+      const credential = await signInWithPopup(firebaseAuth, googleProvider);
+      const firebaseIdToken = await credential.user.getIdToken();
+
+      if (AUTH_DEMO_MODE) {
+        setAuthSession({
+          accessToken: firebaseIdToken,
+          profileCompleted: true,
+          provider: "firebase-google",
+        });
+        router.replace("/home");
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${firebaseIdToken}`,
+        },
+        body: JSON.stringify({ idToken: firebaseIdToken }),
+      });
+
+      if (!response.ok) {
+        let serverMessage = "로그인 처리에 실패했습니다.";
+        try {
+          const err = (await response.json()) as { message?: string; error?: string };
+          serverMessage = err.message || err.error || serverMessage;
+        } catch {
+          // ignore parse error
+        }
+        setMessage(serverMessage);
+        return;
+      }
+
+      const data = (await response.json()) as {
+        accessToken?: string;
+        profileCompleted?: boolean;
+      };
+
+      const accessToken = data.accessToken ?? firebaseIdToken;
+      const profileCompleted = Boolean(data.profileCompleted);
+      setAuthSession({
+        accessToken,
+        profileCompleted,
+        provider: "firebase-google",
+      });
+
+      router.replace(profileCompleted ? "/home" : "/onboarding");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Google 로그인 중 오류가 발생했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-safe">
@@ -28,73 +89,16 @@ export default function LoginPage() {
             <Search className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-3xl">단디 로그인</CardTitle>
-          <CardDescription>단국대학교 이메일 기반 분실물 서비스</CardDescription>
+          <CardDescription>단국대학교 계정으로 안전하게 로그인하세요.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="login">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="login">로그인</TabsTrigger>
-              <TabsTrigger value="signup">회원가입</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="login">
-              <form className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="login-email">학교 이메일</Label>
-                  <Input id="login-email" type="email" placeholder="example@dankook.ac.kr" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="login-password">비밀번호</Label>
-                  <Input id="login-password" type="password" placeholder="비밀번호 입력" />
-                </div>
-                <div className="text-right">
-                  <Button variant="ghost" size="sm" type="button" className="px-0 text-primary">
-                    비밀번호 찾기
-                  </Button>
-                </div>
-                <Button asChild className="w-full">
-                  <Link href="/home">로그인</Link>
-                </Button>
-              </form>
-            </TabsContent>
-
-            <TabsContent value="signup">
-              <form className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">이름</Label>
-                  <Input id="name" placeholder="홍길동" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="student-no">학번</Label>
-                  <Input id="student-no" placeholder="예: 32191234" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-email">학교 이메일</Label>
-                  <Input
-                    id="signup-email"
-                    type="email"
-                    value={signupEmail}
-                    onBlur={() => setSignupTouched(true)}
-                    onChange={(e) => setSignupEmail(e.target.value)}
-                    placeholder="example@dankook.ac.kr"
-                    className={showError ? "border-red-500 focus-visible:ring-red-400" : ""}
-                  />
-                  {showError ? (
-                    <p className="text-sm font-medium text-red-600">@dankook.ac.kr 도메인 이메일만 사용할 수 있습니다.</p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">단국대 학생 이메일 인증 후 가입됩니다.</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-password">비밀번호</Label>
-                  <Input id="signup-password" type="password" placeholder="8자 이상 입력" />
-                </div>
-                <Button type="button" className="w-full" disabled={!emailValid}>
-                  회원가입
-                </Button>
-              </form>
-            </TabsContent>
-          </Tabs>
+        <CardContent className="space-y-4">
+          <Button className="w-full" onClick={onGoogleLogin} disabled={loading}>
+            {loading ? "로그인 진행 중..." : "학교 계정으로 로그인"}
+          </Button>
+          {AUTH_DEMO_MODE ? (
+            <p className="text-center text-xs text-amber-700">임시 데모 모드: 백엔드 로그인 API 없이 홈으로 이동합니다.</p>
+          ) : null}
+          {message ? <p className="text-center text-sm font-medium text-red-600">{message}</p> : null}
         </CardContent>
       </Card>
     </div>

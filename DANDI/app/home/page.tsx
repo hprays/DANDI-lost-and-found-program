@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useMemo, useState } from "react";
 import { CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ItemImage } from "@/components/item-image";
@@ -8,8 +11,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { buildings, categories, lostItems } from "@/lib/mock-data";
+import { type CustomLostItem, getCustomLostItems } from "@/lib/custom-lost-items";
 
 export default function HomePage() {
+  const [customItems] = useState<CustomLostItem[]>(() => getCustomLostItems());
+
+  const mergedItems = useMemo(() => [...customItems, ...lostItems], [customItems]);
+
   return (
     <AppShell subtitle="분실물 현황을 실시간으로 확인해보세요.">
       <section className="space-y-4">
@@ -71,7 +79,7 @@ export default function HomePage() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          {lostItems.map((item) => (
+          {mergedItems.map((item) => (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
                 <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 md:aspect-[16/10]">

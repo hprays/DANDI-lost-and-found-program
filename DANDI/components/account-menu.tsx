@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { ChevronDown, LogOut, UserCircle2 } from "lucide-react";
+import { clearAuthSession } from "@/lib/auth-session";
 import { cn } from "@/lib/utils";
 
 type AccountMenuProps = {
@@ -50,7 +51,10 @@ export function AccountMenu({ className, fullWidth = false, label = "마이" }: 
           <Link
             href="/"
             className="flex items-center gap-1 rounded-md px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              clearAuthSession();
+              setOpen(false);
+            }}
           >
             <LogOut className="h-3.5 w-3.5" />
             로그아웃

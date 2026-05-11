@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useDandiState } from "@/lib/dandi-state";
 
 export default function RegisterItemPage() {
-  const { reports, submitReport, deleteReport, adminVerified, apiConfigured, apiBaseUrl } = useDandiState();
+  const { reports, submitReport, deleteReport, apiConfigured, apiBaseUrl } = useDandiState();
   const [isVisionLoading, setIsVisionLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -99,31 +99,24 @@ export default function RegisterItemPage() {
 
           <div className="rounded-xl border bg-slate-50 p-4">
             <p className="text-sm font-semibold">관리자 전용 기능</p>
-            {adminVerified ? (
-              <div className="mt-3 space-y-3">
-                <Button type="button" variant="secondary" onClick={onVisionClick} disabled={isVisionLoading}>
-                  {isVisionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Google Vision API 정보 추출
-                </Button>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="id-check">신분증 확인란 (사진 없음)</Label>
-                    <Input id="id-check" placeholder="예: 학생증 확인 완료" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="otp">OTP 인증 입력칸</Label>
-                    <Input id="otp" placeholder="6자리 OTP" />
-                  </div>
+            <div className="mt-3 space-y-3">
+              <Button type="button" variant="secondary" onClick={onVisionClick} disabled={isVisionLoading}>
+                {isVisionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                Google Vision API 정보 추출
+              </Button>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="id-check">신분증 확인란 (사진 없음)</Label>
+                  <Input id="id-check" placeholder="예: 학생증 확인 완료" />
                 </div>
               </div>
-            ) : (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                관리자 인증 완료 후 사진 분석/장부 기록 기능이 열립니다.
-                <Button asChild variant="outline" size="sm" className="ml-2 bg-white">
-                  <Link href="/admin">관리자 OTP 인증하기</Link>
-                </Button>
-              </div>
-            )}
+              <p className="text-xs text-muted-foreground">
+                관리자 계정 권한은 로그인/백엔드에서 별도로 관리합니다.
+              </p>
+              <Button asChild variant="outline" size="sm" className="w-fit bg-white">
+                <Link href="/admin">관리자 페이지로 이동</Link>
+              </Button>
+            </div>
           </div>
 
           <div className="grid gap-2 md:grid-cols-2">

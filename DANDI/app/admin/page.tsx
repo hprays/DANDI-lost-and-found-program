@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { CheckCircle2, CircleX, Clock3, KeyRound, Loader2, LogOut, ShieldCheck } from "lucide-react";
+import { type ChangeEvent, useMemo, useState } from "react";
+import Image from "next/image";
+import { CheckCircle2, CircleX, Clock3, Loader2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { getAuthSession } from "@/lib/auth-session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,36 +12,34 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { addCustomLostItem } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
 
 export default function AdminPage() {
-  const {
-    reports,
-    resolveReport,
-    pickupPasses,
-    verifyPickupPass,
-    adminVerified,
-    requestAdminOtp,
-    verifyAdminOtp,
-    logoutAdmin,
-    adminOtpRequestedAt,
-    adminAuditLogs,
-    apiConfigured,
-    apiBaseUrl,
-  } = useDandiState();
-  const [adminCode, setAdminCode] = useState("");
-  const [otp, setOtp] = useState("");
-  const [otpMessage, setOtpMessage] = useState("");
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
+  const { reports, resolveReport, pickupPasses, verifyPickupPass, adminAuditLogs, apiConfigured, apiBaseUrl } = useDandiState();
   const [regName, setRegName] = useState("");
   const [regCategory, setRegCategory] = useState("");
   const [regLocation, setRegLocation] = useState("");
   const [regFoundAt, setRegFoundAt] = useState("");
   const [regStorage, setRegStorage] = useState("");
-  const [regOtp, setRegOtp] = useState("");
   const [regMemo, setRegMemo] = useState("");
   const [regMessage, setRegMessage] = useState("");
   const [pickupToken, setPickupToken] = useState("");
   const [pickupMessage, setPickupMessage] = useState("");
+  const [visionFile, setVisionFile] = useState<File | null>(null);
+  const [visionPreview, setVisionPreview] = useState<string | null>(null);
+  const [visionLoading, setVisionLoading] = useState(false);
+  const [visionMessage, setVisionMessage] = useState("");
+  const [visionResultId, setVisionResultId] = useState("");
+  const [visionResult, setVisionResult] = useState<{
+    id?: string;
+    category?: string;
+    labels?: string[];
+    rgb?: { r?: number; g?: number; b?: number };
+    text?: string;
+    colorName?: string;
+  } | null>(null);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [statusUpdatingType, setStatusUpdatingType] = useState<"resolved" | "unavailable" | null>(null);
   const [pickupVerifying, setPickupVerifying] = useState(false);
@@ -47,25 +47,24 @@ export default function AdminPage() {
     Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
   >([]);
 
+  const rgbToColorName = (rgb?: { r?: number; g?: number; b?: number }) => {
+    if (rgb?.r === undefined || rgb.g === undefined || rgb.b === undefined) return "-";
+    const { r, g, b } = rgb;
+    if (r > 200 && g > 200 && b > 200) return "밝은 계열";
+    if (r < 70 && g < 70 && b < 70) return "어두운 계열";
+    if (r > g + 40 && r > b + 40) return "붉은 계열";
+    if (g > r + 40 && g > b + 40) return "초록 계열";
+    if (b > r + 40 && b > g + 40) return "파란 계열";
+    if (r > 170 && g > 140 && b < 90) return "노란/베이지 계열";
+    return "중간톤";
+  };
+
   const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
 
-  const requestOtp = () => {
-    const result = requestAdminOtp(adminCode);
-    setOtpMessage(result.message);
-  };
-
-  const verifyOtp = () => {
-    const result = verifyAdminOtp(otp);
-    setOtpMessage(result.message);
-    if (result.ok) {
-      setOtp("");
-    }
-  };
-
   const registerItem = () => {
-    if (!regName.trim() || !regCategory.trim() || !regLocation.trim() || !regFoundAt || !regStorage.trim() || !regOtp.trim()) {
-      setRegMessage("물품명, 카테고리, 위치, 습득시간, 보관장소, OTP를 입력해 주세요.");
+    if (!regName.trim() || !regCategory.trim() || !regLocation.trim() || !regFoundAt || !regStorage.trim()) {
+      setRegMessage("물품명, 카테고리, 위치, 습득시간, 보관장소를 입력해 주세요.");
       return;
     }
 
@@ -80,13 +79,20 @@ export default function AdminPage() {
       },
       ...prev,
     ]);
+    addCustomLostItem({
+      id: `c-${Date.now()}`,
+      name: regName.trim(),
+      category: regCategory.trim(),
+      type: regMemo.trim() || "관리자 등록",
+      place: regLocation.trim(),
+      time: "방금 등록",
+    });
 
     setRegName("");
     setRegCategory("");
     setRegLocation("");
     setRegFoundAt("");
     setRegStorage("");
-    setRegOtp("");
     setRegMemo("");
     setRegMessage("등록 완료되었습니다.");
   };
@@ -109,337 +115,448 @@ export default function AdminPage() {
     }
   };
 
+  const onVisionFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    setVisionFile(file);
+    setVisionResult(null);
+    setVisionResultId("");
+    setVisionMessage("");
+    if (!file) {
+      setVisionPreview(null);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setVisionPreview(objectUrl);
+  };
+
+  const onAnalyzeVision = async () => {
+    if (!visionFile) {
+      setVisionMessage("먼저 분석할 이미지를 선택해 주세요.");
+      return;
+    }
+    if (!API_BASE_URL) {
+      setVisionMessage("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
+      return;
+    }
+    const session = getAuthSession();
+    if (!session?.accessToken) {
+      setVisionMessage("관리자 토큰이 없습니다. 다시 로그인해 주세요.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("image", visionFile);
+
+    setVisionLoading(true);
+    setVisionMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/vision/analyze`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+        },
+        body: formData,
+      });
+      if (!response.ok) {
+        let serverMessage = "Vision 분석 요청에 실패했습니다.";
+        try {
+          const err = (await response.json()) as { message?: string; error?: string };
+          serverMessage = err.message || err.error || serverMessage;
+        } catch {
+          // ignore
+        }
+        setVisionMessage(serverMessage);
+        return;
+      }
+      const data = (await response.json()) as {
+        id?: string;
+        resultId?: string;
+        category?: string;
+        labels?: string[];
+        rgb?: { r?: number; g?: number; b?: number };
+        text?: string;
+      };
+      const resultId = data.id ?? data.resultId ?? "";
+      const normalized = {
+        id: resultId,
+        category: data.category,
+        labels: data.labels ?? [],
+        rgb: data.rgb,
+        text: data.text,
+        colorName: rgbToColorName(data.rgb),
+      };
+      setVisionResult(normalized);
+      setVisionResultId(resultId);
+      setVisionMessage("Vision 분석이 완료되었습니다.");
+    } catch (error) {
+      setVisionMessage(error instanceof Error ? error.message : "Vision 분석 중 오류가 발생했습니다.");
+    } finally {
+      setVisionLoading(false);
+    }
+  };
+
+  const onFetchVisionResult = async () => {
+    if (!visionResultId.trim()) {
+      setVisionMessage("조회할 분석 결과 ID를 입력해 주세요.");
+      return;
+    }
+    if (!API_BASE_URL) {
+      setVisionMessage("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
+      return;
+    }
+    const session = getAuthSession();
+    if (!session?.accessToken) {
+      setVisionMessage("관리자 토큰이 없습니다. 다시 로그인해 주세요.");
+      return;
+    }
+
+    setVisionLoading(true);
+    setVisionMessage("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/vision/results/${encodeURIComponent(visionResultId.trim())}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        let serverMessage = "분석 결과 조회에 실패했습니다.";
+        try {
+          const err = (await response.json()) as { message?: string; error?: string };
+          serverMessage = err.message || err.error || serverMessage;
+        } catch {
+          // ignore
+        }
+        setVisionMessage(serverMessage);
+        return;
+      }
+      const data = (await response.json()) as {
+        id?: string;
+        category?: string;
+        labels?: string[];
+        rgb?: { r?: number; g?: number; b?: number };
+        text?: string;
+      };
+      setVisionResult({
+        id: data.id ?? visionResultId.trim(),
+        category: data.category,
+        labels: data.labels ?? [],
+        rgb: data.rgb,
+        text: data.text,
+        colorName: rgbToColorName(data.rgb),
+      });
+      setVisionMessage("분석 결과를 불러왔습니다.");
+    } catch (error) {
+      setVisionMessage(error instanceof Error ? error.message : "분석 결과 조회 중 오류가 발생했습니다.");
+    } finally {
+      setVisionLoading(false);
+    }
+  };
+
   return (
     <AppShell subtitle="관리자 검수 및 상태 처리">
-      {!adminVerified ? (
-        <Card className="border-primary/20">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-2xl">
-              <ShieldCheck className="h-6 w-6 text-primary" />
-              관리자 OTP 인증
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">등록/검수 기능은 관리자 인증 완료 후에만 사용할 수 있습니다.</p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!apiConfigured ? (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                백엔드 주소가 비어 있습니다. `.env.local`에 `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
-            )}
-            <div className="rounded-xl border bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              <p className="font-semibold">보안 안내</p>
-              <p>관리자 인증번호 + OTP 2단계 확인으로 일반 사용자의 관리자 접근을 차단합니다.</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="admin-code">관리자 인증번호</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="admin-code"
-                  value={adminCode}
-                  onChange={(e) => setAdminCode(e.target.value)}
-                  placeholder="예: DKU-ADMIN-2026"
-                />
-                <Button variant="outline" onClick={requestOtp}>
-                  <KeyRound className="h-4 w-4" />
-                  OTP 요청
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="admin-otp">OTP 인증(장부 기록)</Label>
-              <div className="flex gap-2">
-                <Input id="admin-otp" value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="6자리 OTP 입력" />
-                <Button onClick={verifyOtp}>인증 완료</Button>
-              </div>
-              <p className="text-xs text-muted-foreground">요청 시간: {adminOtpRequestedAt ?? "요청 대기"}</p>
-            </div>
-
-            {otpMessage ? <p className="text-sm font-semibold text-primary">{otpMessage}</p> : null}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">검수 대기</p>
-                <p className="mt-1 text-2xl font-bold">{pendingReports.length}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">습득/수령 완료</p>
-                <p className="mt-1 text-2xl font-bold">
-                  {reports.filter((report) => report.status === "resolved" || report.status === "picked_up").length}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">습득 불가</p>
-                <p className="mt-1 text-2xl font-bold">{reports.filter((report) => report.status === "unavailable").length}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="flex h-full items-center justify-between p-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">관리자 세션</p>
-                  <p className="mt-1 text-sm font-semibold text-emerald-600">인증 완료</p>
-                </div>
-                <Button variant="outline" size="sm" onClick={logoutAdmin}>
-                  <LogOut className="h-4 w-4" />
-                  로그아웃
-                </Button>
-              </CardContent>
-            </Card>
+      <div className="space-y-4">
+        {!apiConfigured ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            백엔드 주소가 비어 있습니다. `.env.local`에 `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
           </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
+        )}
 
-          <Tabs defaultValue="register">
-            <TabsList className="grid w-full grid-cols-5">
-              <TabsTrigger value="register">물품 등록</TabsTrigger>
-              <TabsTrigger value="pending">검수 대기</TabsTrigger>
-              <TabsTrigger value="pickup">수령 인증</TabsTrigger>
-              <TabsTrigger value="processed">처리 완료</TabsTrigger>
-              <TabsTrigger value="audit">작업 이력</TabsTrigger>
-            </TabsList>
+        <div className="grid gap-3 md:grid-cols-3">
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">검수 대기</p>
+              <p className="mt-1 text-2xl font-bold">{pendingReports.length}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">습득/수령 완료</p>
+              <p className="mt-1 text-2xl font-bold">
+                {reports.filter((report) => report.status === "resolved" || report.status === "picked_up").length}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">습득 불가</p>
+              <p className="mt-1 text-2xl font-bold">{reports.filter((report) => report.status === "unavailable").length}</p>
+            </CardContent>
+          </Card>
+        </div>
 
-            <TabsContent value="register" className="space-y-3">
-              <Card>
-                <CardHeader>
-                  <CardTitle>관리자 물품 등록</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                    등록은 관리자 계정만 가능합니다.
-                  </div>
+        <Tabs defaultValue="register">
+          <TabsList className="grid w-full grid-cols-5">
+            <TabsTrigger value="register">물품 등록</TabsTrigger>
+            <TabsTrigger value="pending">검수 대기</TabsTrigger>
+            <TabsTrigger value="pickup">수령 인증</TabsTrigger>
+            <TabsTrigger value="processed">처리 완료</TabsTrigger>
+            <TabsTrigger value="audit">작업 이력</TabsTrigger>
+          </TabsList>
 
-                  <div className="space-y-2">
-                    <Label>사진 업로드</Label>
-                    <label className="flex h-28 cursor-pointer items-center justify-center rounded-xl border border-dashed text-slate-500 hover:bg-slate-50">
-                      클릭하여 사진 업로드
-                      <input type="file" accept="image/*" className="hidden" />
-                    </label>
-                    <p className="text-xs text-muted-foreground">신분증은 사진 없이 텍스트 정보만 기록합니다.</p>
-                  </div>
+          <TabsContent value="register" className="space-y-3">
+            <Card>
+              <CardHeader>
+                <CardTitle>관리자 물품 등록</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  관리자 계정 권한 기준으로 물품 등록/분석이 진행됩니다.
+                </div>
 
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-name">물품명</Label>
-                      <Input id="reg-name" value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="예: 검은색 반지갑" />
+                <div className="space-y-2">
+                  <Label>사진 업로드</Label>
+                  <label className="flex h-28 cursor-pointer items-center justify-center rounded-xl border border-dashed text-slate-500 hover:bg-slate-50">
+                    {visionFile ? `선택됨: ${visionFile.name}` : "클릭하여 사진 업로드"}
+                    <input type="file" accept="image/*" className="hidden" onChange={onVisionFileChange} />
+                  </label>
+                  <p className="text-xs text-muted-foreground">신분증은 사진 없이 텍스트 정보만 기록합니다.</p>
+                  {visionPreview ? (
+                    <div className="overflow-hidden rounded-lg border">
+                      <div className="relative h-40 w-full">
+                        <Image src={visionPreview} alt="vision-preview" fill className="object-cover" unoptimized />
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-category">카테고리</Label>
-                      <Input id="reg-category" value={regCategory} onChange={(e) => setRegCategory(e.target.value)} placeholder="예: 지갑/가방" />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-location">습득 위치</Label>
-                      <Input id="reg-location" value={regLocation} onChange={(e) => setRegLocation(e.target.value)} placeholder="예: 혜당관 1층" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="reg-found-at">습득 시간</Label>
-                      <Input id="reg-found-at" type="datetime-local" value={regFoundAt} onChange={(e) => setRegFoundAt(e.target.value)} />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-storage">보관 장소</Label>
-                    <Input id="reg-storage" value={regStorage} onChange={(e) => setRegStorage(e.target.value)} placeholder="예: 혜당관 학생팀 425호" />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-otp">OTP 인증 (장부 기록)</Label>
+                  ) : null}
+                  <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                    <Input value={visionResultId} onChange={(e) => setVisionResultId(e.target.value)} placeholder="분석 결과 ID 입력 후 조회" />
                     <div className="flex gap-2">
-                      <Input id="reg-otp" value={regOtp} onChange={(e) => setRegOtp(e.target.value)} placeholder="6자리 OTP" />
-                      <Button variant="outline">인증요청</Button>
+                      <Button variant="outline" type="button" onClick={onAnalyzeVision} disabled={visionLoading}>
+                        {visionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        Vision 분석
+                      </Button>
+                      <Button variant="outline" type="button" onClick={onFetchVisionResult} disabled={visionLoading}>
+                        조회
+                      </Button>
                     </div>
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-memo">추가 메모</Label>
-                    <Textarea id="reg-memo" value={regMemo} onChange={(e) => setRegMemo(e.target.value)} placeholder="특징/인수인계 메모" />
-                  </div>
-
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <Button onClick={registerItem}>등록 완료</Button>
-                    <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={clearLastRegistered}>
-                      등록 삭제
-                    </Button>
-                  </div>
-                  {regMessage ? <p className="text-sm font-semibold text-primary">{regMessage}</p> : null}
-                </CardContent>
-              </Card>
-
-              {registeredItems.length > 0 ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>등록된 물품 목록</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {registeredItems.map((item) => (
-                      <div key={item.id} className="rounded-lg border p-3 text-sm">
-                        <p className="font-semibold">
-                          {item.name} / {item.category}
-                        </p>
-                        <p className="text-muted-foreground">
-                          {item.location} / 보관: {item.storage}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{item.createdAt}</p>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              ) : null}
-            </TabsContent>
-
-            <TabsContent value="pending" className="space-y-3">
-              {pendingReports.length === 0 ? (
-                <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">현재 검수 대기 중인 신고가 없습니다.</p>
-              ) : (
-                pendingReports.map((report) => (
-                  <Card key={report.id}>
-                    <CardContent className="space-y-3 p-4">
-                      <div className="flex items-center justify-between">
-                        <p className="font-semibold">{report.itemName}</p>
-                        <Badge>{report.category}</Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {report.location} / 접수: {report.createdAt}
+                  {visionMessage ? <p className="text-xs font-medium text-primary">{visionMessage}</p> : null}
+                  {visionResult ? (
+                    <div className="space-y-1 rounded-lg border bg-slate-50 p-3 text-xs">
+                      <p>
+                        <span className="font-semibold">분석 ID:</span> {visionResult.id ?? "-"}
                       </p>
-                      <div className="grid gap-2 md:grid-cols-2">
-                        <Button
-                          variant="outline"
-                          disabled={statusUpdatingId === report.id}
-                          onClick={async () => {
-                            setStatusUpdatingId(report.id);
-                            setStatusUpdatingType("resolved");
-                            try {
-                              const result = await resolveReport(report.id, "resolved");
-                              setRegMessage(result.message);
-                            } finally {
-                              setStatusUpdatingId(null);
-                              setStatusUpdatingType(null);
-                            }
-                          }}
-                        >
-                          {statusUpdatingId === report.id && statusUpdatingType === "resolved" ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="h-4 w-4" />
-                          )}
-                          습득 완료 처리
-                        </Button>
-                        <Button
-                          variant="outline"
-                          disabled={statusUpdatingId === report.id}
-                          onClick={async () => {
-                            setStatusUpdatingId(report.id);
-                            setStatusUpdatingType("unavailable");
-                            try {
-                              const result = await resolveReport(report.id, "unavailable");
-                              setRegMessage(result.message);
-                            } finally {
-                              setStatusUpdatingId(null);
-                              setStatusUpdatingType(null);
-                            }
-                          }}
-                        >
-                          {statusUpdatingId === report.id && statusUpdatingType === "unavailable" ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <CircleX className="h-4 w-4" />
-                          )}
-                          습득 불가 처리
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </TabsContent>
+                      <p>
+                        <span className="font-semibold">카테고리:</span> {visionResult.category ?? "-"}
+                      </p>
+                      <p>
+                        <span className="font-semibold">라벨:</span> {(visionResult.labels ?? []).join(", ") || "-"}
+                      </p>
+                      <p>
+                        <span className="font-semibold">색상(RGB):</span>{" "}
+                        {visionResult.rgb ? `${visionResult.rgb.r ?? "-"}, ${visionResult.rgb.g ?? "-"}, ${visionResult.rgb.b ?? "-"}` : "-"}
+                      </p>
+                      <p>
+                        <span className="font-semibold">색상 텍스트:</span> {visionResult.colorName ?? "-"}
+                      </p>
+                      <p>
+                        <span className="font-semibold">OCR 텍스트:</span> {visionResult.text?.slice(0, 120) || "-"}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
 
-            <TabsContent value="processed" className="space-y-2">
-              {processedReports.length === 0 ? (
-                <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">처리 완료된 신고 이력이 없습니다.</p>
-              ) : (
-                processedReports.map((report) => (
-                  <div key={report.id} className="rounded-xl border bg-white p-3 text-sm">
-                    <p className="font-semibold">{report.itemName}</p>
-                    <p className="text-muted-foreground">{report.location}</p>
-                    <p className="mt-1 text-xs font-semibold text-primary">
-                      {report.status === "resolved" ? "습득 완료" : report.status === "picked_up" ? "최종 수령 완료" : "습득 불가"} /{" "}
-                      {report.createdAt}
-                    </p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-name">물품명</Label>
+                    <Input id="reg-name" value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="예: 검은색 반지갑" />
                   </div>
-                ))
-              )}
-            </TabsContent>
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-category">카테고리</Label>
+                    <Input id="reg-category" value={regCategory} onChange={(e) => setRegCategory(e.target.value)} placeholder="예: 지갑/가방" />
+                  </div>
+                </div>
 
-            <TabsContent value="pickup" className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-location">습득 위치</Label>
+                    <Input id="reg-location" value={regLocation} onChange={(e) => setRegLocation(e.target.value)} placeholder="예: 혜당관 1층" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reg-found-at">습득 시간</Label>
+                    <Input id="reg-found-at" type="datetime-local" value={regFoundAt} onChange={(e) => setRegFoundAt(e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="reg-storage">보관 장소</Label>
+                  <Input id="reg-storage" value={regStorage} onChange={(e) => setRegStorage(e.target.value)} placeholder="예: 혜당관 학생팀 425호" />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="reg-memo">추가 메모</Label>
+                  <Textarea id="reg-memo" value={regMemo} onChange={(e) => setRegMemo(e.target.value)} placeholder="특징/인수인계 메모" />
+                </div>
+
+                <div className="grid gap-2 md:grid-cols-2">
+                  <Button onClick={registerItem}>등록 완료</Button>
+                  <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={clearLastRegistered}>
+                    등록 삭제
+                  </Button>
+                </div>
+                {regMessage ? <p className="text-sm font-semibold text-primary">{regMessage}</p> : null}
+              </CardContent>
+            </Card>
+
+            {registeredItems.length > 0 ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>QR 최종 수령 인증</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex gap-2">
-                    <Input
-                      value={pickupToken}
-                      onChange={(e) => setPickupToken(e.target.value)}
-                      placeholder="사용자 QR 코드 입력 (예: DKU-123456)"
-                    />
-                    <Button onClick={onVerifyPickup} disabled={pickupVerifying}>
-                      {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                      수령 인증 완료
-                    </Button>
-                  </div>
-                  {pickupMessage ? <p className="text-sm font-semibold text-primary">{pickupMessage}</p> : null}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>발급된 수령 코드</CardTitle>
+                  <CardTitle>등록된 물품 목록</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {pickupPasses.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">발급된 수령 코드가 없습니다.</p>
-                  ) : (
-                    pickupPasses.map((pass) => (
-                      <div key={pass.id} className="rounded-lg border p-3 text-sm">
-                        <p className="font-semibold">{pass.token}</p>
-                        <p className="text-muted-foreground">
-                          신고 ID: {pass.reportId} / 만료: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
-                        </p>
-                        <p className="mt-1 text-xs font-semibold text-primary">
-                          {pass.usedAt ? `인증 완료 (${pass.usedAt})` : "미사용"}
-                        </p>
-                      </div>
-                    ))
-                  )}
+                  {registeredItems.map((item) => (
+                    <div key={item.id} className="rounded-lg border p-3 text-sm">
+                      <p className="font-semibold">
+                        {item.name} / {item.category}
+                      </p>
+                      <p className="text-muted-foreground">
+                        {item.location} / 보관: {item.storage}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{item.createdAt}</p>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
-            </TabsContent>
+            ) : null}
+          </TabsContent>
 
-            <TabsContent value="audit" className="space-y-2">
-              {adminAuditLogs.map((log) => (
-                <div key={log.id} className="rounded-xl border bg-white p-3 text-sm">
-                  <p className="flex items-center gap-2 font-medium">
-                    <Clock3 className="h-4 w-4 text-primary" />
-                    {log.message}
+          <TabsContent value="pending" className="space-y-3">
+            {pendingReports.length === 0 ? (
+              <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">현재 검수 대기 중인 신고가 없습니다.</p>
+            ) : (
+              pendingReports.map((report) => (
+                <Card key={report.id}>
+                  <CardContent className="space-y-3 p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold">{report.itemName}</p>
+                      <Badge>{report.category}</Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {report.location} / 접수: {report.createdAt}
+                    </p>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <Button
+                        variant="outline"
+                        disabled={statusUpdatingId === report.id}
+                        onClick={async () => {
+                          setStatusUpdatingId(report.id);
+                          setStatusUpdatingType("resolved");
+                          try {
+                            const result = await resolveReport(report.id, "resolved");
+                            setRegMessage(result.message);
+                          } finally {
+                            setStatusUpdatingId(null);
+                            setStatusUpdatingType(null);
+                          }
+                        }}
+                      >
+                        {statusUpdatingId === report.id && statusUpdatingType === "resolved" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                        습득 완료 처리
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={statusUpdatingId === report.id}
+                        onClick={async () => {
+                          setStatusUpdatingId(report.id);
+                          setStatusUpdatingType("unavailable");
+                          try {
+                            const result = await resolveReport(report.id, "unavailable");
+                            setRegMessage(result.message);
+                          } finally {
+                            setStatusUpdatingId(null);
+                            setStatusUpdatingType(null);
+                          }
+                        }}
+                      >
+                        {statusUpdatingId === report.id && statusUpdatingType === "unavailable" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CircleX className="h-4 w-4" />
+                        )}
+                        습득 불가 처리
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="processed" className="space-y-2">
+            {processedReports.length === 0 ? (
+              <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">처리 완료된 신고 이력이 없습니다.</p>
+            ) : (
+              processedReports.map((report) => (
+                <div key={report.id} className="rounded-xl border bg-white p-3 text-sm">
+                  <p className="font-semibold">{report.itemName}</p>
+                  <p className="text-muted-foreground">{report.location}</p>
+                  <p className="mt-1 text-xs font-semibold text-primary">
+                    {report.status === "resolved" ? "습득 완료" : report.status === "picked_up" ? "최종 수령 완료" : "습득 불가"} /{" "}
+                    {report.createdAt}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">{log.createdAt}</p>
                 </div>
-              ))}
-            </TabsContent>
-          </Tabs>
-        </div>
-      )}
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="pickup" className="space-y-3">
+            <Card>
+              <CardHeader>
+                <CardTitle>QR 최종 수령 인증</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex gap-2">
+                  <Input value={pickupToken} onChange={(e) => setPickupToken(e.target.value)} placeholder="사용자 QR 코드 입력 (예: DKU-123456)" />
+                  <Button onClick={onVerifyPickup} disabled={pickupVerifying}>
+                    {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    수령 인증 완료
+                  </Button>
+                </div>
+                {pickupMessage ? <p className="text-sm font-semibold text-primary">{pickupMessage}</p> : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>발급된 수령 코드</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {pickupPasses.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">발급된 수령 코드가 없습니다.</p>
+                ) : (
+                  pickupPasses.map((pass) => (
+                    <div key={pass.id} className="rounded-lg border p-3 text-sm">
+                      <p className="font-semibold">{pass.token}</p>
+                      <p className="text-muted-foreground">
+                        신고 ID: {pass.reportId} / 만료: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
+                      </p>
+                      <p className="mt-1 text-xs font-semibold text-primary">{pass.usedAt ? `인증 완료 (${pass.usedAt})` : "미사용"}</p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="audit" className="space-y-2">
+            {adminAuditLogs.map((log) => (
+              <div key={log.id} className="rounded-xl border bg-white p-3 text-sm">
+                <p className="flex items-center gap-2 font-medium">
+                  <Clock3 className="h-4 w-4 text-primary" />
+                  {log.message}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">{log.createdAt}</p>
+              </div>
+            ))}
+          </TabsContent>
+        </Tabs>
+      </div>
     </AppShell>
   );
 }

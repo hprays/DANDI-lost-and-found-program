@@ -14,11 +14,14 @@ import { Switch } from "@/components/ui/switch";
 import { useDandiState } from "@/lib/dandi-state";
 
 export default function MyPage() {
-  const { notices, reports, pickupPasses, issuePickupPass, markNoticeRead, apiConfigured, apiBaseUrl } = useDandiState();
+  const { notices, reports, pickupPasses, issuePickupPass, markNoticeRead, refreshNotices, noticesLoading, noticesError, apiConfigured, apiBaseUrl } =
+    useDandiState();
   const [keyword, setKeyword] = useState("");
   const [tags, setTags] = useState<string[]>(["에어팟", "검정", "지갑"]);
   const [alertEnabled, setAlertEnabled] = useState(true);
   const [pickupMessage, setPickupMessage] = useState("");
+  const [noticeMessage, setNoticeMessage] = useState("");
+  const [readingNoticeId, setReadingNoticeId] = useState<string | null>(null);
   const [issuingReportId, setIssuingReportId] = useState<string | null>(null);
 
   const addTag = () => {
@@ -188,6 +191,14 @@ export default function MyPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">알림을 클릭하면 읽음 처리됩니다.</p>
+              <Button variant="outline" size="sm" onClick={() => void refreshNotices()} disabled={noticesLoading}>
+                {noticesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                새로고침
+              </Button>
+            </div>
+            {noticesError ? <p className="text-sm font-semibold text-red-600">{noticesError}</p> : null}
             {notices.length === 0 ? (
               <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">도착한 알림이 없습니다.</p>
             ) : (
@@ -195,15 +206,26 @@ export default function MyPage() {
                 <button
                   key={notice.id}
                   type="button"
-                  onClick={() => markNoticeRead(notice.id)}
+                  onClick={async () => {
+                    setReadingNoticeId(notice.id);
+                    const result = await markNoticeRead(notice.id);
+                    setNoticeMessage(result.message);
+                    setReadingNoticeId(null);
+                  }}
                   className={`w-full rounded-xl border p-3 text-left text-sm ${notice.read ? "bg-slate-50" : "bg-primary/5"}`}
                 >
-                  <p className="font-semibold">{notice.title}</p>
+                  <p className="font-semibold">
+                    {notice.title} {!notice.read ? <span className="ml-1 rounded-full bg-primary px-2 py-0.5 text-[10px] text-white">NEW</span> : null}
+                  </p>
                   <p className="text-muted-foreground">{notice.message}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{notice.createdAt}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {notice.createdAt}
+                    {readingNoticeId === notice.id ? " · 읽음 처리 중..." : ""}
+                  </p>
                 </button>
               ))
             )}
+            {noticeMessage ? <p className="text-sm font-semibold text-primary">{noticeMessage}</p> : null}
           </CardContent>
         </Card>
 

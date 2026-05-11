@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import { motion } from "framer-motion";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AppHeader } from "@/components/app-header";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { getAuthSession } from "@/lib/auth-session";
 
 export function AppShell({
   children,
@@ -13,6 +15,26 @@ export function AppShell({
   subtitle?: string;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const session = getAuthSession();
+
+  useEffect(() => {
+    if (!session?.accessToken) {
+      router.replace("/login");
+      return;
+    }
+    if (!session.profileCompleted) {
+      router.replace("/onboarding");
+    }
+  }, [router, session]);
+
+  if (!session?.accessToken || !session.profileCompleted) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <p className="text-sm text-muted-foreground">인증 상태를 확인하고 있습니다...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-transparent">
