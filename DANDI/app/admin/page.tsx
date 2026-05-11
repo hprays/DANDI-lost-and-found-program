@@ -12,8 +12,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { addCustomLostItem } from "@/lib/custom-lost-items";
+import {
+  addCustomLostItem,
+  applyLostItemAdminChanges,
+  deleteCustomLostItem,
+  getCustomLostItems,
+  markLostItemDeleted,
+  setLostItemOverride,
+  updateCustomLostItem,
+} from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
+import { lostItems } from "@/lib/mock-data";
 
 export default function AdminPage() {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
@@ -46,6 +55,10 @@ export default function AdminPage() {
   const [registeredItems, setRegisteredItems] = useState<
     Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
   >([]);
+  const [manageMessage, setManageMessage] = useState("");
+  const [manageDrafts, setManageDrafts] = useState<
+    Record<string, { name: string; category: string; type: string; place: string; time: string; memo: string }>
+  >({});
 
   const rgbToColorName = (rgb?: { r?: number; g?: number; b?: number }) => {
     if (rgb?.r === undefined || rgb.g === undefined || rgb.b === undefined) return "-";
@@ -61,6 +74,8 @@ export default function AdminPage() {
 
   const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
+  const customIdSet = new Set(getCustomLostItems().map((item) => item.id));
+  const managedItems = applyLostItemAdminChanges([...getCustomLostItems(), ...lostItems]);
 
   const registerItem = () => {
     if (!regName.trim() || !regCategory.trim() || !regLocation.trim() || !regFoundAt || !regStorage.trim()) {
@@ -83,7 +98,8 @@ export default function AdminPage() {
       id: `c-${Date.now()}`,
       name: regName.trim(),
       category: regCategory.trim(),
-      type: regMemo.trim() || "관리자 등록",
+      type: "관리자 등록",
+      memo: regMemo.trim(),
       place: regLocation.trim(),
       time: "방금 등록",
     });
@@ -253,6 +269,72 @@ export default function AdminPage() {
     }
   };
 
+  const onSaveManagedItem = (itemId: string) => {
+    const origin = managedItems.find((it) => it.id === itemId);
+    if (!origin) return;
+    const draft = manageDrafts[itemId] ?? {
+      name: origin.name ?? "",
+      category: origin.category ?? "",
+      type: origin.type ?? "",
+      place: origin.place ?? "",
+      time: origin.time ?? "",
+      memo: (origin as { memo?: string }).memo ?? "",
+    };
+
+    if (!draft.name.trim() || !draft.category.trim() || !draft.place.trim() || !draft.time.trim()) {
+      setManageMessage("물품명, 카테고리, 위치, 시간을 입력해 주세요.");
+      return;
+    }
+
+    const patch = {
+      name: draft.name.trim(),
+      category: draft.category.trim(),
+      type: draft.type.trim() || "미지정",
+      place: draft.place.trim(),
+      time: draft.time.trim(),
+      memo: draft.memo.trim(),
+    };
+
+    if (customIdSet.has(itemId)) {
+      updateCustomLostItem(itemId, patch);
+    } else {
+      setLostItemOverride(itemId, patch);
+    }
+    setManageMessage("관리자 수정이 저장되었습니다.");
+  };
+
+  const onDeleteManagedItem = (itemId: string) => {
+    markLostItemDeleted(itemId);
+    if (customIdSet.has(itemId)) {
+      deleteCustomLostItem(itemId);
+    }
+    setManageMessage("해당 물품을 삭제했습니다.");
+  };
+
+  const onManageDraftChange = (
+    itemId: string,
+    field: "name" | "category" | "type" | "place" | "time" | "memo",
+    value: string
+  ) => {
+    const origin = managedItems.find((it) => it.id === itemId);
+    if (!origin) return;
+    const base = manageDrafts[itemId] ?? {
+      name: origin.name ?? "",
+      category: origin.category ?? "",
+      type: origin.type ?? "",
+      place: origin.place ?? "",
+      time: origin.time ?? "",
+      memo: (origin as { memo?: string }).memo ?? "",
+    };
+    setManageDrafts((prev) => ({
+      ...prev,
+      [itemId]: {
+        ...base,
+        [field]: value,
+      },
+    }));
+  };
+
   return (
     <AppShell subtitle="관리자 검수 및 상태 처리">
       <div className="space-y-4">
@@ -288,8 +370,9 @@ export default function AdminPage() {
         </div>
 
         <Tabs defaultValue="register">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="register">물품 등록</TabsTrigger>
+            <TabsTrigger value="manage">물품 관리</TabsTrigger>
             <TabsTrigger value="pending">검수 대기</TabsTrigger>
             <TabsTrigger value="pickup">수령 인증</TabsTrigger>
             <TabsTrigger value="processed">처리 완료</TabsTrigger>
@@ -420,6 +503,58 @@ export default function AdminPage() {
                 </CardContent>
               </Card>
             ) : null}
+          </TabsContent>
+
+          <TabsContent value="manage" className="space-y-3">
+            <Card>
+              <CardHeader>
+                <CardTitle>관리자 물품 수정/삭제</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {manageMessage ? <p className="text-sm font-semibold text-primary">{manageMessage}</p> : null}
+                {managedItems.length === 0 ? (
+                  <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">관리할 물품이 없습니다.</p>
+                ) : (
+                  managedItems.map((item) => {
+                    const draft = manageDrafts[item.id] ?? {
+                      name: item.name ?? "",
+                      category: item.category ?? "",
+                      type: item.type ?? "",
+                      place: item.place ?? "",
+                      time: item.time ?? "",
+                      memo: (item as { memo?: string }).memo ?? "",
+                    };
+                    return (
+                      <div key={item.id} className="space-y-2 rounded-xl border p-3">
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <Input value={draft.name} onChange={(e) => onManageDraftChange(item.id, "name", e.target.value)} />
+                          <Input value={draft.category} onChange={(e) => onManageDraftChange(item.id, "category", e.target.value)} />
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <Input value={draft.type} onChange={(e) => onManageDraftChange(item.id, "type", e.target.value)} placeholder="종류" />
+                          <Input value={draft.time} onChange={(e) => onManageDraftChange(item.id, "time", e.target.value)} placeholder="시간" />
+                        </div>
+                        <Input value={draft.place} onChange={(e) => onManageDraftChange(item.id, "place", e.target.value)} placeholder="위치" />
+                        <Textarea value={draft.memo} onChange={(e) => onManageDraftChange(item.id, "memo", e.target.value)} placeholder="추가 정보" />
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <Button type="button" onClick={() => onSaveManagedItem(item.id)}>
+                            수정 저장
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="border-red-300 text-red-600 hover:bg-red-50"
+                            onClick={() => onDeleteManagedItem(item.id)}
+                          >
+                            삭제
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="pending" className="space-y-3">

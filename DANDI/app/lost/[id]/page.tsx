@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import { AlertCircle, Loader2, MapPinned, Megaphone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ItemImage } from "@/components/item-image";
@@ -12,15 +13,31 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchAIGuidance } from "@/lib/dandi-state";
 import { lostItems } from "@/lib/mock-data";
-import { getCustomLostItems } from "@/lib/custom-lost-items";
+import { applyLostItemAdminChanges, getCustomLostItems } from "@/lib/custom-lost-items";
 
-export default function LostDetailPage({ params }: { params: { id: string } }) {
-  const [customItems] = useState(() => getCustomLostItems());
-  const item = useMemo(() => [...customItems, ...lostItems].find((it) => it.id === params.id) ?? lostItems[0], [customItems, params.id]);
+export default function LostDetailPage() {
+  const params = useParams<{ id: string }>();
+  const itemId = typeof params?.id === "string" ? params.id : "";
+  const [customItems, setCustomItems] = useState(() => getCustomLostItems());
+  const item = useMemo(
+    () => applyLostItemAdminChanges([...customItems, ...lostItems]).find((it) => it.id === itemId) ?? null,
+    [customItems, itemId]
+  );
+  const itemMemo = (item as { memo?: string } | null)?.memo?.trim() ?? "";
   const [aiGuide, setAiGuide] = useState<{ cautionTitle: string; cautions: string[]; chatbotTips: string[] } | null>(null);
-  const loading = aiGuide === null;
+  const loading = item !== null && aiGuide === null;
 
   useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => {
+      setCustomItems(getCustomLostItems());
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!item) return;
     let mounted = true;
     fetchAIGuidance({ name: item.name, category: item.category, type: item.type })
       .then((data) => {
@@ -30,13 +47,29 @@ export default function LostDetailPage({ params }: { params: { id: string } }) {
     return () => {
       mounted = false;
     };
-  }, [item.category, item.name, item.type]);
+  }, [item]);
+
+  if (!item) {
+    return (
+      <AppShell subtitle="분실물 상세 정보 및 수령 안내">
+        <Card>
+          <CardContent className="space-y-4 p-6">
+            <h1 className="text-xl font-bold">해당 분실물을 찾을 수 없습니다.</h1>
+            <p className="text-sm text-muted-foreground">목록이 갱신되었거나 삭제된 항목일 수 있습니다. 홈에서 다시 선택해 주세요.</p>
+            <Button asChild>
+              <Link href="/home">홈으로 이동</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell subtitle="분실물 상세 정보 및 수령 안내">
       <Card className="overflow-hidden">
-        <div className="relative h-52">
-          <ItemImage src={item.image} alt={item.name} category={item.category} sizes="(max-width: 768px) 100vw, 40vw" />
+        <div className="relative h-72 md:h-96">
+          <ItemImage src={item.image} alt={item.name} category={item.category} sizes="(max-width: 768px) 100vw, 60vw" fit="cover" />
         </div>
         <CardContent className="space-y-4 p-5">
           <Badge>{item.category}</Badge>
@@ -53,7 +86,8 @@ export default function LostDetailPage({ params }: { params: { id: string } }) {
               <AccordionContent>
                 <div className="space-y-2">
                   <p>제품 카테고리: {item.category}</p>
-                  <p>종류: {item.type}</p>
+                  <p>종류: {item.type ?? "미지정"}</p>
+                  <p>추가 정보: {itemMemo || "등록된 메모가 없습니다."}</p>
                   <div className="rounded-lg bg-blue-50 p-3">
                     <p className="flex items-center gap-2 text-sm font-semibold text-primary">
                       <AlertCircle className="h-4 w-4" />

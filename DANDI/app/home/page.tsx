@@ -11,12 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { buildings, categories, lostItems } from "@/lib/mock-data";
-import { type CustomLostItem, getCustomLostItems } from "@/lib/custom-lost-items";
+import { applyLostItemAdminChanges, type CustomLostItem, getCustomLostItems } from "@/lib/custom-lost-items";
 
 export default function HomePage() {
   const [customItems] = useState<CustomLostItem[]>(() => getCustomLostItems());
 
-  const mergedItems = useMemo(() => [...customItems, ...lostItems], [customItems]);
+  const mergedItems = useMemo(() => applyLostItemAdminChanges([...customItems, ...lostItems]), [customItems]);
 
   return (
     <AppShell subtitle="분실물 현황을 실시간으로 확인해보세요.">
