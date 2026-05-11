@@ -26,7 +26,8 @@ import { lostItems } from "@/lib/mock-data";
 
 export default function AdminPage() {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
-  const { reports, resolveReport, pickupPasses, verifyPickupPass, adminAuditLogs, apiConfigured, apiBaseUrl } = useDandiState();
+  const { reports, resolveReport, pickupPasses, verifyPickupPass, adminAuditLogs, apiConfigured, apiBaseUrl, submitReport } =
+    useDandiState();
   const [regName, setRegName] = useState("");
   const [regCategory, setRegCategory] = useState("");
   const [regLocation, setRegLocation] = useState("");
@@ -38,6 +39,7 @@ export default function AdminPage() {
   const [pickupMessage, setPickupMessage] = useState("");
   const [visionFile, setVisionFile] = useState<File | null>(null);
   const [visionPreview, setVisionPreview] = useState<string | null>(null);
+  const [visionDataUrl, setVisionDataUrl] = useState<string | null>(null);
   const [visionLoading, setVisionLoading] = useState(false);
   const [visionMessage, setVisionMessage] = useState("");
   const [visionResultId, setVisionResultId] = useState("");
@@ -45,13 +47,13 @@ export default function AdminPage() {
     id?: string;
     category?: string;
     labels?: string[];
-    rgb?: { r?: number; g?: number; b?: number };
+    dominantColor?: string;
     text?: string;
-    colorName?: string;
   } | null>(null);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [statusUpdatingType, setStatusUpdatingType] = useState<"resolved" | "unavailable" | null>(null);
   const [pickupVerifying, setPickupVerifying] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const [registeredItems, setRegisteredItems] = useState<
     Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
   >([]);
@@ -60,28 +62,28 @@ export default function AdminPage() {
     Record<string, { name: string; category: string; type: string; place: string; time: string; memo: string }>
   >({});
 
-  const rgbToColorName = (rgb?: { r?: number; g?: number; b?: number }) => {
-    if (rgb?.r === undefined || rgb.g === undefined || rgb.b === undefined) return "-";
-    const { r, g, b } = rgb;
-    if (r > 200 && g > 200 && b > 200) return "밝은 계열";
-    if (r < 70 && g < 70 && b < 70) return "어두운 계열";
-    if (r > g + 40 && r > b + 40) return "붉은 계열";
-    if (g > r + 40 && g > b + 40) return "초록 계열";
-    if (b > r + 40 && b > g + 40) return "파란 계열";
-    if (r > 170 && g > 140 && b < 90) return "노란/베이지 계열";
-    return "중간톤";
-  };
-
   const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
   const customIdSet = new Set(getCustomLostItems().map((item) => item.id));
   const managedItems = applyLostItemAdminChanges([...getCustomLostItems(), ...lostItems]);
 
-  const registerItem = () => {
+  const registerItem = async () => {
     if (!regName.trim() || !regCategory.trim() || !regLocation.trim() || !regFoundAt || !regStorage.trim()) {
       setRegMessage("물품명, 카테고리, 위치, 습득시간, 보관장소를 입력해 주세요.");
       return;
     }
+
+    setRegistering(true);
+    const foundAtLabel = new Date(regFoundAt).toLocaleString("ko-KR", { hour12: false });
+
+    // 관리자 등록 시에도 검수 대기 목록으로 들어가도록 신고 레코드를 함께 생성합니다.
+    const submitResult = await submitReport({
+      itemName: regName.trim(),
+      category: regCategory.trim(),
+      lostAt: regFoundAt,
+      location: regLocation.trim(),
+      memo: regMemo.trim(),
+    });
 
     setRegisteredItems((prev) => [
       {
@@ -101,7 +103,8 @@ export default function AdminPage() {
       type: "관리자 등록",
       memo: regMemo.trim(),
       place: regLocation.trim(),
-      time: "방금 등록",
+      time: foundAtLabel,
+      image: visionDataUrl ?? undefined,
     });
 
     setRegName("");
@@ -110,7 +113,11 @@ export default function AdminPage() {
     setRegFoundAt("");
     setRegStorage("");
     setRegMemo("");
-    setRegMessage("등록 완료되었습니다.");
+    setVisionDataUrl(null);
+    setVisionPreview(null);
+    setVisionFile(null);
+    setRegMessage(submitResult.ok ? "등록 완료되었습니다. 검수 대기에 반영되었습니다." : "등록은 완료되었지만 검수 대기 연동에 실패했습니다.");
+    setRegistering(false);
   };
 
   const clearLastRegistered = () => {
@@ -139,10 +146,16 @@ export default function AdminPage() {
     setVisionMessage("");
     if (!file) {
       setVisionPreview(null);
+      setVisionDataUrl(null);
       return;
     }
-    const objectUrl = URL.createObjectURL(file);
-    setVisionPreview(objectUrl);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : null;
+      setVisionPreview(result);
+      setVisionDataUrl(result);
+    };
+    reader.readAsDataURL(file);
   };
 
   const onAnalyzeVision = async () => {
@@ -185,21 +198,23 @@ export default function AdminPage() {
         return;
       }
       const data = (await response.json()) as {
-        id?: string;
-        resultId?: string;
+        id?: string | number;
+        resultId?: string | number;
+        documentType?: string;
         category?: string;
+        objectLabels?: string[];
         labels?: string[];
-        rgb?: { r?: number; g?: number; b?: number };
+        dominantColors?: string[];
+        maskedText?: string;
         text?: string;
       };
-      const resultId = data.id ?? data.resultId ?? "";
+      const resultId = String(data.id ?? data.resultId ?? "");
       const normalized = {
         id: resultId,
-        category: data.category,
-        labels: data.labels ?? [],
-        rgb: data.rgb,
-        text: data.text,
-        colorName: rgbToColorName(data.rgb),
+        category: data.documentType ?? data.category,
+        labels: data.objectLabels ?? data.labels ?? [],
+        dominantColor: data.dominantColors?.[0] ?? "-",
+        text: data.maskedText ?? data.text,
       };
       setVisionResult(normalized);
       setVisionResultId(resultId);
@@ -247,19 +262,21 @@ export default function AdminPage() {
         return;
       }
       const data = (await response.json()) as {
-        id?: string;
+        id?: string | number;
+        documentType?: string;
         category?: string;
+        objectLabels?: string[];
         labels?: string[];
-        rgb?: { r?: number; g?: number; b?: number };
+        dominantColors?: string[];
+        maskedText?: string;
         text?: string;
       };
       setVisionResult({
-        id: data.id ?? visionResultId.trim(),
-        category: data.category,
-        labels: data.labels ?? [],
-        rgb: data.rgb,
-        text: data.text,
-        colorName: rgbToColorName(data.rgb),
+        id: String(data.id ?? visionResultId.trim()),
+        category: data.documentType ?? data.category,
+        labels: data.objectLabels ?? data.labels ?? [],
+        dominantColor: data.dominantColors?.[0] ?? "-",
+        text: data.maskedText ?? data.text,
       });
       setVisionMessage("분석 결과를 불러왔습니다.");
     } catch (error) {
@@ -428,11 +445,7 @@ export default function AdminPage() {
                         <span className="font-semibold">라벨:</span> {(visionResult.labels ?? []).join(", ") || "-"}
                       </p>
                       <p>
-                        <span className="font-semibold">색상(RGB):</span>{" "}
-                        {visionResult.rgb ? `${visionResult.rgb.r ?? "-"}, ${visionResult.rgb.g ?? "-"}, ${visionResult.rgb.b ?? "-"}` : "-"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">색상 텍스트:</span> {visionResult.colorName ?? "-"}
+                        <span className="font-semibold">대표 색상:</span> {visionResult.dominantColor ?? "-"}
                       </p>
                       <p>
                         <span className="font-semibold">OCR 텍스트:</span> {visionResult.text?.slice(0, 120) || "-"}
@@ -474,7 +487,10 @@ export default function AdminPage() {
                 </div>
 
                 <div className="grid gap-2 md:grid-cols-2">
-                  <Button onClick={registerItem}>등록 완료</Button>
+                  <Button onClick={registerItem} disabled={registering}>
+                    {registering ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    등록 완료
+                  </Button>
                   <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={clearLastRegistered}>
                     등록 삭제
                   </Button>

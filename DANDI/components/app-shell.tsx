@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { usePathname, useRouter } from "next/navigation";
 import { AppHeader } from "@/components/app-header";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
-import { getAuthSession } from "@/lib/auth-session";
+import { getAuthSession, type AuthSession } from "@/lib/auth-session";
 
 export function AppShell({
   children,
@@ -16,9 +16,21 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const session = getAuthSession();
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
   useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => {
+      setSession(getAuthSession());
+      setCheckingAuth(false);
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (checkingAuth) return;
     if (!session?.accessToken) {
       router.replace("/login");
       return;
@@ -26,9 +38,9 @@ export function AppShell({
     if (!session.profileCompleted) {
       router.replace("/onboarding");
     }
-  }, [router, session]);
+  }, [checkingAuth, router, session]);
 
-  if (!session?.accessToken || !session.profileCompleted) {
+  if (checkingAuth || !session?.accessToken || !session.profileCompleted) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <p className="text-sm text-muted-foreground">인증 상태를 확인하고 있습니다...</p>

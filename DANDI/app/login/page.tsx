@@ -28,12 +28,16 @@ export default function LoginPage() {
     try {
       const credential = await signInWithPopup(firebaseAuth, googleProvider);
       const firebaseIdToken = await credential.user.getIdToken();
+      const userName = credential.user.displayName ?? undefined;
+      const userEmail = credential.user.email ?? undefined;
 
       if (AUTH_DEMO_MODE) {
         setAuthSession({
           accessToken: firebaseIdToken,
           profileCompleted: true,
           provider: "firebase-google",
+          name: userName,
+          email: userEmail,
         });
         router.replace("/home");
         return;
@@ -71,6 +75,8 @@ export default function LoginPage() {
         accessToken,
         profileCompleted,
         provider: "firebase-google",
+        name: userName,
+        email: userEmail,
       });
 
       router.replace(profileCompleted ? "/home" : "/onboarding");

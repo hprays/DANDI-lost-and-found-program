@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { use, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Loader2, MapPinned, Megaphone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ItemImage } from "@/components/item-image";
@@ -15,9 +14,9 @@ import { fetchAIGuidance } from "@/lib/dandi-state";
 import { lostItems } from "@/lib/mock-data";
 import { applyLostItemAdminChanges, getCustomLostItems } from "@/lib/custom-lost-items";
 
-export default function LostDetailPage() {
-  const params = useParams<{ id: string }>();
-  const itemId = typeof params?.id === "string" ? params.id : "";
+export default function LostDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const itemId = id;
   const [customItems, setCustomItems] = useState(() => getCustomLostItems());
   const item = useMemo(
     () => applyLostItemAdminChanges([...customItems, ...lostItems]).find((it) => it.id === itemId) ?? null,

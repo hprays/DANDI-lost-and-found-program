@@ -17,6 +17,8 @@ export default function MapPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let resizeHandler: (() => void) | null = null;
+    const markerMap = osmMarkerRef.current;
 
     const initOsmMap = async () => {
       const L = await import("leaflet");
@@ -46,7 +48,7 @@ export default function MapPage() {
         const marker = L.marker([office.lat, office.lng], { icon: officeIcon }).addTo(map);
         marker.bindPopup(`<strong>${office.name}</strong><br/>${office.location}<br/>${office.hours}`);
         marker.on("click", () => setActiveOffice(office));
-        osmMarkerRef.current.set(office.name, marker);
+        markerMap.set(office.name, marker);
       });
 
       if (navigator.geolocation) {
@@ -70,6 +72,16 @@ export default function MapPage() {
         );
       }
 
+      // 화면 전환 애니메이션 이후에도 타일이 보이도록 강제 리사이즈를 한 번 더 수행합니다.
+      window.setTimeout(() => {
+        map.invalidateSize();
+      }, 120);
+
+      resizeHandler = () => {
+        map.invalidateSize();
+      };
+      window.addEventListener("resize", resizeHandler);
+
       osmMapRef.current = map;
       setMapReady(true);
     };
@@ -78,6 +90,14 @@ export default function MapPage() {
 
     return () => {
       cancelled = true;
+      if (resizeHandler) {
+        window.removeEventListener("resize", resizeHandler);
+      }
+      if (osmMapRef.current) {
+        osmMapRef.current.remove();
+        osmMapRef.current = null;
+      }
+      markerMap.clear();
     };
   }, []);
 

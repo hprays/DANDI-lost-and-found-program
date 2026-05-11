@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { getAuthSession } from "@/lib/auth-session";
 
 export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
 
@@ -90,10 +91,18 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
   }
 
+  const session = getAuthSession();
+  const authHeader = session?.accessToken
+    ? ({
+        Authorization: `Bearer ${session.accessToken}`,
+      } as Record<string, string>)
+    : {};
+
   const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...authHeader,
       ...(init?.headers ?? {}),
     },
   });
@@ -210,7 +219,32 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           ]);
           return { ok: true, message: data.message ?? "신고가 접수되었습니다.", reportId };
         } catch (error) {
-          return { ok: false, message: error instanceof Error ? error.message : "신고 등록에 실패했습니다." };
+          const fallbackReportId = `r-local-${Date.now()}`;
+          const fallbackReport: LostReport = {
+            id: fallbackReportId,
+            ...payload,
+            status: "pending",
+            createdAt: shortDateTime(),
+          };
+          setReports((prev) => [fallbackReport, ...prev.filter((it) => it.id !== fallbackReportId)]);
+          setNotices((prev) => [
+            {
+              id: `n-${Date.now()}`,
+              title: "분실물 신고가 접수되었습니다",
+              message: "백엔드 연동 실패로 임시 대기 목록에 반영되었습니다.",
+              createdAt: shortDateTime(),
+              read: false,
+            },
+            ...prev,
+          ]);
+          return {
+            ok: true,
+            message:
+              error instanceof Error
+                ? `백엔드 연동 실패로 임시 반영되었습니다. (${error.message})`
+                : "백엔드 연동 실패로 임시 반영되었습니다.",
+            reportId: fallbackReportId,
+          };
         }
       },
       resolveReport: async (reportId, status) => {
@@ -243,7 +277,36 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           ]);
           return { ok: true, message: "상태 변경이 완료되었습니다." };
         } catch (error) {
-          return { ok: false, message: error instanceof Error ? error.message : "상태 변경에 실패했습니다." };
+          // 백엔드 실패 시에도 데모/로컬 검증이 가능하도록 상태를 임시 반영합니다.
+          setReports((prev) => prev.map((report) => (report.id === reportId ? { ...report, status } : report)));
+          setAdminAuditLogs((prev) => [
+            {
+              id: `a-${Date.now()}`,
+              message: `${reportId} 신고건을 ${status === "resolved" ? "습득 완료" : "습득 불가"}로 임시 반영했습니다.`,
+              createdAt: shortDateTime(),
+            },
+            ...prev,
+          ]);
+          setNotices((prev) => [
+            {
+              id: `n-${Date.now()}`,
+              title: status === "resolved" ? "습득 완료 알림" : "습득 불가 알림",
+              message:
+                status === "resolved"
+                  ? "신고하신 물품이 확인되었습니다. 지도에서 관리실 위치를 확인해 주세요."
+                  : "신고하신 물품은 아직 습득되지 않았습니다. 알림은 계속 유지됩니다.",
+              createdAt: shortDateTime(),
+              read: false,
+            },
+            ...prev,
+          ]);
+          return {
+            ok: true,
+            message:
+              error instanceof Error
+                ? `백엔드 연동 실패로 임시 반영되었습니다. (${error.message})`
+                : "백엔드 연동 실패로 임시 반영되었습니다.",
+          };
         }
       },
       issuePickupPass: async (reportId) => {

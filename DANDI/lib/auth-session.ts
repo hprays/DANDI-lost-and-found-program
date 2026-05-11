@@ -4,6 +4,8 @@ export type AuthSession = {
   accessToken: string;
   profileCompleted: boolean;
   provider?: "firebase-google";
+  name?: string;
+  email?: string;
 };
 
 const AUTH_SESSION_KEY = "dandi.auth.session";
