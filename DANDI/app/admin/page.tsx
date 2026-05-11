@@ -398,8 +398,8 @@ export default function AdminPage() {
                   <p className="text-xs text-muted-foreground">신분증은 사진 없이 텍스트 정보만 기록합니다.</p>
                   {visionPreview ? (
                     <div className="overflow-hidden rounded-lg border">
-                      <div className="relative h-40 w-full">
-                        <Image src={visionPreview} alt="vision-preview" fill className="object-cover" unoptimized />
+                      <div className="relative h-64 w-full bg-slate-50 md:h-80">
+                        <Image src={visionPreview} alt="vision-preview" fill className="object-contain object-center" unoptimized />
                       </div>
                     </div>
                   ) : null}

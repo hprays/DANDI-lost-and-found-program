@@ -68,8 +68,8 @@ export default function LostDetailPage() {
   return (
     <AppShell subtitle="분실물 상세 정보 및 수령 안내">
       <Card className="overflow-hidden">
-        <div className="relative h-72 md:h-96">
-          <ItemImage src={item.image} alt={item.name} category={item.category} sizes="(max-width: 768px) 100vw, 60vw" fit="cover" />
+        <div className="relative h-80 bg-slate-100 md:h-[32rem]">
+          <ItemImage src={item.image} alt={item.name} category={item.category} sizes="(max-width: 768px) 100vw, 70vw" fit="contain" />
         </div>
         <CardContent className="space-y-4 p-5">
           <Badge>{item.category}</Badge>
