@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { BuildingLocationPicker } from "@/components/building-location-picker";
+import { useBuildingLocationField } from "@/lib/building-location";
 import { useDandiState } from "@/lib/dandi-state";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { categories } from "@/lib/mock-data";
@@ -21,7 +23,8 @@ export default function RegisterItemPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [itemName, setItemName] = useState("");
   const [dateTime, setDateTime] = useState("");
-  const [place, setPlace] = useState("");
+  const foundLocation = useBuildingLocationField();
+  const storageLocation = useBuildingLocationField();
   const [memo, setMemo] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -67,8 +70,8 @@ export default function RegisterItemPage() {
   };
 
   const onSubmit = async () => {
-    if (!itemName.trim() || !dateTime || !place.trim()) {
-      setSavedMessage("물품명, 일시, 장소를 입력해 주세요.");
+    if (!itemName.trim() || !dateTime || !foundLocation.isValid || !storageLocation.isValid) {
+      setSavedMessage("물품명, 일시, 습득 위치, 보관 장소를 입력해 주세요.");
       return;
     }
     setIsSubmitting(true);
@@ -77,7 +80,8 @@ export default function RegisterItemPage() {
         itemName: itemName.trim(),
         category,
         lostAt: dateTime,
-        location: place.trim(),
+        location: foundLocation.composed,
+        storage: storageLocation.composed,
         memo: memo.trim(),
         image: photoPreview ?? undefined,
       });
@@ -87,7 +91,8 @@ export default function RegisterItemPage() {
       }
       setItemName("");
       setDateTime("");
-      setPlace("");
+      foundLocation.reset();
+      storageLocation.reset();
       setMemo("");
       clearPhoto();
       setSavedMessage(result.message || "관리자에게 신고가 전달되었습니다. 처리 상태는 마이페이지에서 확인하세요.");
@@ -164,16 +169,34 @@ export default function RegisterItemPage() {
             </select>
             <p className="text-xs text-muted-foreground">목록을 스크롤해 더 많은 카테고리를 선택할 수 있습니다.</p>
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="date-time">분실/습득 일시</Label>
-              <Input id="date-time" type="datetime-local" value={dateTime} onChange={(e) => setDateTime(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="place">분실/습득 장소</Label>
-              <Input id="place" value={place} onChange={(e) => setPlace(e.target.value)} placeholder="예: 도서관 2층 열람실" />
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="date-time">분실/습득 일시</Label>
+            <Input id="date-time" type="datetime-local" value={dateTime} onChange={(e) => setDateTime(e.target.value)} />
           </div>
+
+          <BuildingLocationPicker
+            idPrefix="found"
+            label="습득 위치"
+            building={foundLocation.building}
+            detail={foundLocation.detail}
+            customText={foundLocation.customText}
+            onBuildingChange={foundLocation.setBuilding}
+            onDetailChange={foundLocation.setDetail}
+            onCustomTextChange={foundLocation.setCustomText}
+            detailPlaceholder="예: 1층 북카페, 2층 열람실"
+          />
+
+          <BuildingLocationPicker
+            idPrefix="storage"
+            label="보관 장소"
+            building={storageLocation.building}
+            detail={storageLocation.detail}
+            customText={storageLocation.customText}
+            onBuildingChange={storageLocation.setBuilding}
+            onDetailChange={storageLocation.setDetail}
+            onCustomTextChange={storageLocation.setCustomText}
+            detailPlaceholder="예: 학생팀 425호, 분실물 보관함"
+          />
           <div className="space-y-2">
             <Label htmlFor="memo">상세 설명</Label>
             <Textarea

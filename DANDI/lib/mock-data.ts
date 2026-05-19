@@ -49,6 +49,9 @@ export const buildings = (() => {
   return Array.from(all);
 })();
 
+/** 홈 건물별 분류와 동일 (전체 제외) */
+export const selectableBuildings = buildings.filter((b) => b !== "전체");
+
 export type OfficeMarker = {
   name: string;
   location: string;

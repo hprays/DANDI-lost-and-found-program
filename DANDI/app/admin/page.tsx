@@ -15,6 +15,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { applyLostItemAdminChanges, markLostItemDeleted, setLostItemOverride } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
+import { BuildingLocationPicker } from "@/components/building-location-picker";
+import { useBuildingLocationField } from "@/lib/building-location";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { categories } from "@/lib/mock-data";
 
@@ -89,9 +91,9 @@ export default function AdminPage() {
   const isAdmin = Boolean(adminCheckSession?.isAdmin);
   const [regName, setRegName] = useState("");
   const [regCategory, setRegCategory] = useState(selectableCategories[0] ?? "기타");
-  const [regLocation, setRegLocation] = useState("");
+  const regFoundLocation = useBuildingLocationField();
+  const regStorageLocation = useBuildingLocationField();
   const [regFoundAt, setRegFoundAt] = useState("");
-  const [regStorage, setRegStorage] = useState("");
   const [regMemo, setRegMemo] = useState("");
   const [regMessage, setRegMessage] = useState("");
   const [pickupToken, setPickupToken] = useState("");
@@ -129,8 +131,8 @@ export default function AdminPage() {
   const managedItems = useMemo(() => applyLostItemAdminChanges(homeLostItems), [homeLostItems]);
 
   const registerItem = async () => {
-    if (!regName.trim() || !regCategory.trim() || !regLocation.trim() || !regFoundAt || !regStorage.trim()) {
-      setRegMessage("물품명, 카테고리, 위치, 습득시간, 보관장소를 입력해 주세요.");
+    if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {
+      setRegMessage("물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.");
       return;
     }
 
@@ -140,8 +142,8 @@ export default function AdminPage() {
       itemName: regName.trim(),
       category: regCategory.trim(),
       lostAt: regFoundAt,
-      location: regLocation.trim(),
-      storage: regStorage.trim(),
+      location: regFoundLocation.composed,
+      storage: regStorageLocation.composed,
       memo: regMemo.trim(),
       image: visionDataUrl ?? undefined,
     });
@@ -157,8 +159,8 @@ export default function AdminPage() {
         id: submitResult.reportId ?? `adm-${Date.now()}`,
         name: regName.trim(),
         category: regCategory.trim(),
-        location: regLocation.trim(),
-        storage: regStorage.trim(),
+        location: regFoundLocation.composed,
+        storage: regStorageLocation.composed,
         createdAt: new Date().toLocaleString("ko-KR", { hour12: false }),
       },
       ...prev,
@@ -166,9 +168,9 @@ export default function AdminPage() {
 
     setRegName("");
     setRegCategory(selectableCategories[0] ?? "기타");
-    setRegLocation("");
+    regFoundLocation.reset();
+    regStorageLocation.reset();
     setRegFoundAt("");
-    setRegStorage("");
     setRegMemo("");
     setVisionDataUrl(null);
     setVisionPreview(null);
@@ -680,21 +682,34 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-location">습득 위치</Label>
-                    <Input id="reg-location" value={regLocation} onChange={(e) => setRegLocation(e.target.value)} placeholder="예: 혜당관 1층" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-found-at">습득 시간</Label>
-                    <Input id="reg-found-at" type="datetime-local" value={regFoundAt} onChange={(e) => setRegFoundAt(e.target.value)} />
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="reg-found-at">습득 시간</Label>
+                  <Input id="reg-found-at" type="datetime-local" value={regFoundAt} onChange={(e) => setRegFoundAt(e.target.value)} />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="reg-storage">보관 장소</Label>
-                  <Input id="reg-storage" value={regStorage} onChange={(e) => setRegStorage(e.target.value)} placeholder="예: 혜당관 학생팀 425호" />
-                </div>
+                <BuildingLocationPicker
+                  idPrefix="reg-found"
+                  label="습득 위치"
+                  building={regFoundLocation.building}
+                  detail={regFoundLocation.detail}
+                  customText={regFoundLocation.customText}
+                  onBuildingChange={regFoundLocation.setBuilding}
+                  onDetailChange={regFoundLocation.setDetail}
+                  onCustomTextChange={regFoundLocation.setCustomText}
+                  detailPlaceholder="예: 1층 북카페, 307호"
+                />
+
+                <BuildingLocationPicker
+                  idPrefix="reg-storage"
+                  label="보관 장소"
+                  building={regStorageLocation.building}
+                  detail={regStorageLocation.detail}
+                  customText={regStorageLocation.customText}
+                  onBuildingChange={regStorageLocation.setBuilding}
+                  onDetailChange={regStorageLocation.setDetail}
+                  onCustomTextChange={regStorageLocation.setCustomText}
+                  detailPlaceholder="예: 학생팀 425호, 분실물 보관함"
+                />
 
                 <div className="space-y-2">
                   <Label htmlFor="reg-memo">추가 메모</Label>
