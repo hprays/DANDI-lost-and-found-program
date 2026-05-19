@@ -61,6 +61,11 @@ export default function MyPage() {
     return pickupPasses.filter((pass) => !pass.claimantEmail || pass.claimantEmail === session.email);
   }, [pickupPasses, session?.email]);
 
+  const myReports = useMemo(() => {
+    if (!session?.email) return reports;
+    return reports.filter((report) => !report.ownerEmail || report.ownerEmail === session.email);
+  }, [reports, session?.email]);
+
   const studentId = session?.studentId ?? extractStudentIdFromEmail(session?.email);
 
   const addTag = () => {
@@ -258,10 +263,10 @@ export default function MyPage() {
             <CardTitle>분실물 처리 기록</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {reports.length === 0 ? (
+            {myReports.length === 0 ? (
               <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">분실물 처리 기록이 없습니다.</p>
             ) : (
-              reports.map((entry) => (
+              myReports.map((entry) => (
                 <div key={entry.id} className="rounded-xl border p-3 text-sm">
                   <p className="font-semibold">{entry.itemName}</p>
                   <p className="text-muted-foreground">
@@ -327,7 +332,7 @@ export default function MyPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="notices">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <BellRing className="h-4 w-4 text-primary" />

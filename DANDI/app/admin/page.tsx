@@ -1,10 +1,11 @@
 "use client";
 
-import { type ChangeEvent, useMemo, useState } from "react";
+import Link from "next/link";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { CheckCircle2, CircleX, Clock3, Loader2 } from "lucide-react";
+import { Camera, CameraOff, CheckCircle2, CircleX, Clock3, Loader2, ShieldAlert } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { getAuthSession } from "@/lib/auth-session";
+import { getAuthSession, type AuthSession } from "@/lib/auth-session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +29,17 @@ export default function AdminPage() {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
   const { reports, resolveReport, pickupPasses, verifyPickupPass, adminAuditLogs, apiConfigured, apiBaseUrl, submitReport } =
     useDandiState();
+
+  const [adminCheckSession, setAdminCheckSession] = useState<AuthSession | null>(null);
+  const [adminChecked, setAdminChecked] = useState(false);
+  useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => {
+      setAdminCheckSession(getAuthSession());
+      setAdminChecked(true);
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, []);
+  const isAdmin = Boolean(adminCheckSession?.isAdmin);
   const [regName, setRegName] = useState("");
   const [regCategory, setRegCategory] = useState("");
   const [regLocation, setRegLocation] = useState("");
@@ -156,6 +168,84 @@ export default function AdminPage() {
     } finally {
       setPickupVerifying(false);
     }
+  };
+
+  // === 카메라 기반 QR 인증 시뮬레이션 ===
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [scanToken, setScanToken] = useState("");
+  const [confirmIdCheck, setConfirmIdCheck] = useState(false);
+  const [confirmCardCheck, setConfirmCardCheck] = useState(false);
+  const [scannedPass, setScannedPass] = useState<typeof lastVerifiedPass>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // 카메라 스트림이 준비되면 video 엘리먼트에 연결
+  useEffect(() => {
+    if (cameraOpen && cameraStream && videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+      void videoRef.current.play().catch(() => {});
+    }
+  }, [cameraOpen, cameraStream]);
+
+  // 페이지 떠날 때 카메라 자원 정리
+  useEffect(() => {
+    return () => {
+      cameraStream?.getTracks().forEach((track) => track.stop());
+    };
+  }, [cameraStream]);
+
+  const openCamera = async () => {
+    setCameraError(null);
+    setScannedPass(null);
+    setConfirmIdCheck(false);
+    setConfirmCardCheck(false);
+    setScanToken("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      setCameraStream(stream);
+      setCameraOpen(true);
+    } catch (err) {
+      setCameraError(err instanceof Error ? err.message : "카메라를 사용할 수 없습니다.");
+      setCameraOpen(true);
+    }
+  };
+
+  const closeCamera = () => {
+    cameraStream?.getTracks().forEach((track) => track.stop());
+    setCameraStream(null);
+    setCameraOpen(false);
+  };
+
+  const onScanFromCamera = () => {
+    // 실제 QR 디코딩 라이브러리 대신 입력값을 인식 결과로 사용 (현장에서는 BarcodeDetector 등을 도입)
+    if (!scanToken.trim()) {
+      setCameraError("스캔된 QR 토큰을 입력해 주세요. (예: DKU-123456)");
+      return;
+    }
+    const target = pickupPasses.find((p) => p.token.toUpperCase() === scanToken.trim().toUpperCase());
+    if (!target) {
+      setCameraError("해당 토큰의 수령 QR이 발견되지 않았습니다. 분실자에게 다시 확인해 주세요.");
+      return;
+    }
+    setScannedPass({
+      itemName: target.itemName,
+      claimantName: target.claimantName,
+      claimantEmail: target.claimantEmail,
+      usedAt: target.usedAt,
+    });
+    setCameraError(null);
+  };
+
+  const onFinalizePickup = async () => {
+    if (!scannedPass) return;
+    if (!confirmIdCheck) {
+      setCameraError("신분증/학생증 확인 체크가 필요합니다.");
+      return;
+    }
+    setCameraError(null);
+    await onVerifyPickup(scanToken);
+    closeCamera();
   };
 
   const pickupSearchResults = useMemo(() => {
@@ -383,6 +473,30 @@ export default function AdminPage() {
       },
     }));
   };
+
+  if (adminChecked && !isAdmin) {
+    return (
+      <AppShell subtitle="관리자 전용 페이지">
+        <Card>
+          <CardContent className="space-y-4 p-6">
+            <div className="flex items-center gap-2 text-amber-700">
+              <ShieldAlert className="h-5 w-5" />
+              <p className="text-base font-semibold">접근 권한이 없습니다</p>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              관리자 페이지는 사전에 등록된 관리자 계정만 접근할 수 있습니다. 권한이 필요하다면 시스템 관리자에게 요청해 주세요.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              현재 로그인 이메일: <b>{adminCheckSession?.email ?? "-"}</b>
+            </p>
+            <Button asChild variant="outline">
+              <Link href="/home">홈으로 이동</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell subtitle="관리자 검수 및 상태 처리">
@@ -616,9 +730,23 @@ export default function AdminPage() {
                       <p className="font-semibold">{report.itemName}</p>
                       <Badge>{report.category}</Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      {report.location} / 접수: {report.createdAt}
-                    </p>
+                    <div className="space-y-1 text-sm text-muted-foreground">
+                      <p>위치: {report.location}</p>
+                      <p>분실/습득 일시: {report.lostAt || "-"}</p>
+                      <p>접수: {report.createdAt}</p>
+                      {report.ownerName || report.ownerEmail ? (
+                        <p>
+                          신고자: {report.ownerName ?? "이름 없음"}{" "}
+                          {report.ownerEmail ? <>({report.ownerEmail})</> : null}
+                        </p>
+                      ) : null}
+                      {report.memo ? (
+                        <div className="mt-2 rounded-lg border bg-slate-50 p-2 text-foreground">
+                          <p className="text-xs font-semibold text-muted-foreground">신고 상세 설명</p>
+                          <p className="whitespace-pre-wrap text-sm">{report.memo}</p>
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="grid gap-2 md:grid-cols-2">
                       <Button
                         variant="outline"
@@ -689,11 +817,119 @@ export default function AdminPage() {
           </TabsContent>
 
           <TabsContent value="pickup" className="space-y-3">
+            <Card className="border-primary/40 bg-primary/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Camera className="h-5 w-5 text-primary" />
+                  카메라로 QR 인증 시작
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  카메라로 분실자의 수령 QR을 스캔하면 인수자 정보가 자동 표시됩니다. 신분증/학생증을 직접 확인한 뒤 최종 인증을 진행하세요.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!cameraOpen ? (
+                  <Button onClick={() => void openCamera()}>
+                    <Camera className="h-4 w-4" />
+                    카메라 열기
+                  </Button>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="relative overflow-hidden rounded-lg border bg-black">
+                      {cameraError && !cameraStream ? (
+                        <div className="flex h-48 items-center justify-center bg-slate-900 px-4 text-center text-xs text-red-200">
+                          {cameraError}
+                        </div>
+                      ) : (
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="h-56 w-full object-cover"
+                        />
+                      )}
+                      <div className="pointer-events-none absolute inset-6 rounded-md border-2 border-white/70" />
+                      <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white">
+                        QR 인식 영역
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label htmlFor="scan-token">스캔된 QR 토큰 (예: DKU-123456)</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="scan-token"
+                          value={scanToken}
+                          onChange={(e) => setScanToken(e.target.value)}
+                          placeholder="QR 토큰을 자동/수동으로 입력"
+                        />
+                        <Button type="button" variant="outline" onClick={onScanFromCamera}>
+                          인식 결과 확인
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        ※ 현장 카메라 스캔 라이브러리(BarcodeDetector 등)는 백엔드/PWA 환경 설정 후 연동 예정. 지금은 인식된 토큰을 입력해 확인합니다.
+                      </p>
+                    </div>
+
+                    {scannedPass ? (
+                      <div className="space-y-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
+                        <p className="font-semibold">인수자/물품 확인</p>
+                        <ul className="space-y-1 text-sm">
+                          <li>물품: {scannedPass.itemName ?? "-"}</li>
+                          <li>인수자: {scannedPass.claimantName ?? "이름 없음"}</li>
+                          <li>이메일: {scannedPass.claimantEmail ?? "이메일 없음"}</li>
+                        </ul>
+
+                        <div className="space-y-2 rounded-md border border-emerald-200 bg-white p-3 text-xs text-slate-800">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={confirmIdCheck}
+                              onChange={(e) => setConfirmIdCheck(e.target.checked)}
+                            />
+                            <span>학생증 또는 신분증 본인 확인 완료 (사진은 저장하지 않으며, 확인 시 즉시 마스킹 처리)</span>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={confirmCardCheck}
+                              onChange={(e) => setConfirmCardCheck(e.target.checked)}
+                            />
+                            <span>실물/카드(체크카드 등) 일치 여부 확인 (선택)</span>
+                          </label>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button onClick={() => void onFinalizePickup()} disabled={pickupVerifying || !confirmIdCheck}>
+                            {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                            최종 수령 인증 완료
+                          </Button>
+                          <Button variant="outline" onClick={closeCamera}>
+                            <CameraOff className="h-4 w-4" />
+                            카메라 종료
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button variant="outline" onClick={closeCamera}>
+                        <CameraOff className="h-4 w-4" />
+                        카메라 종료
+                      </Button>
+                    )}
+
+                    {cameraError ? <p className="text-xs text-red-600">{cameraError}</p> : null}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <CardTitle>분실자가 말한 물품 검색 후 QR 인증</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  분실자가 말한 키워드(물품명/카테고리/위치 등)로 물품을 찾고, 그 카드에서 분실자가 보여주는 QR 토큰을 직접 입력해 수령 인증을 완료합니다.
+                  카메라가 어려울 때는 키워드 검색으로 물품을 찾아 카드별 QR 입력으로도 인증할 수 있습니다.
                 </p>
               </CardHeader>
               <CardContent className="space-y-3">

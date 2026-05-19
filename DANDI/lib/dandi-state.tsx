@@ -16,6 +16,8 @@ export type LostReport = {
   status: ReportStatus;
   createdAt: string;
   pickedUpAt?: string;
+  ownerEmail?: string;
+  ownerName?: string;
 };
 
 export type UserNotice = {
@@ -150,18 +152,8 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function DandiStateProvider({ children }: { children: React.ReactNode }) {
-  const [reports, setReports] = useState<LostReport[]>([
-    {
-      id: "r-1001",
-      itemName: "주황색 텀블러",
-      category: "기타",
-      lostAt: "2026-04-09T09:40",
-      location: "혜당관 1층 카페 앞",
-      memo: "텀블러 옆면에 DKU 스티커가 있어요.",
-      status: "pending",
-      createdAt: shortDateTime(),
-    },
-  ]);
+  // 더미 reports는 제거 — 실제 신고만 노출되도록 함
+  const [reports, setReports] = useState<LostReport[]>([]);
 
   const [notices, setNotices] = useState<UserNotice[]>(() => {
     const stored = getStoredLocalNotices();
@@ -233,12 +225,15 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       adminAuditLogs,
       pickupPasses,
       submitReport: async (payload) => {
+        const session = getAuthSession();
+        const ownerEmail = session?.email;
+        const ownerName = session?.name;
         try {
           const data = await apiJson<{ id?: string; reportId?: string; createdAt?: string; status?: ReportStatus; message?: string }>(
             "/api/reports",
             {
               method: "POST",
-              body: JSON.stringify(payload),
+              body: JSON.stringify({ ...payload, ownerEmail, ownerName }),
             }
           );
           const reportId = data.id ?? data.reportId ?? `r-${Date.now()}`;
@@ -247,6 +242,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             ...payload,
             status: data.status ?? "pending",
             createdAt: data.createdAt ?? shortDateTime(),
+            ownerEmail,
+            ownerName,
           };
           setReports((prev) => [report, ...prev.filter((it) => it.id !== reportId)]);
           setNotices((prev) => [
@@ -267,6 +264,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             ...payload,
             status: "pending",
             createdAt: shortDateTime(),
+            ownerEmail,
+            ownerName,
           };
           setReports((prev) => [fallbackReport, ...prev.filter((it) => it.id !== fallbackReportId)]);
           setNotices((prev) => [
@@ -518,20 +517,38 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         }
       },
       deleteReport: async (reportId) => {
-        try {
-          await apiJson<object>(`/api/reports/${reportId}`, { method: "DELETE" });
+        const removeLocal = () => {
           setReports((prev) => prev.filter((report) => report.id !== reportId));
           setAdminAuditLogs((prev) => [
             {
               id: `a-${Date.now()}`,
-              message: `${reportId} 신고건이 관리자에 의해 삭제되었습니다.`,
+              message: `${reportId} 신고건이 삭제되었습니다.`,
               createdAt: shortDateTime(),
             },
             ...prev,
           ]);
+        };
+
+        // 로컬 임시 신고(r-local-...)는 백엔드 호출 없이 바로 삭제
+        if (!API_BASE_URL || reportId.startsWith("r-local-")) {
+          removeLocal();
+          return { ok: true, message: "신고 항목이 삭제되었습니다." };
+        }
+
+        try {
+          await apiJson<object>(`/api/reports/${reportId}`, { method: "DELETE" });
+          removeLocal();
           return { ok: true, message: "신고 항목이 삭제되었습니다." };
         } catch (error) {
-          return { ok: false, message: error instanceof Error ? error.message : "신고 항목 삭제에 실패했습니다." };
+          // 백엔드 실패해도 사용자 화면에서는 사라지도록 로컬 제거 진행
+          removeLocal();
+          return {
+            ok: true,
+            message:
+              error instanceof Error
+                ? `로컬에서만 삭제되었습니다. (서버 오류: ${error.message})`
+                : "로컬에서만 삭제되었습니다. (서버 오류)",
+          };
         }
       },
       refreshNotices,

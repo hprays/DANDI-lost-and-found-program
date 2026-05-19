@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { signInWithPopup, type AuthError } from "firebase/auth";
 import { firebaseAuth, googleProvider } from "@/lib/firebase-client";
-import { extractStudentIdFromEmail, isDankookEmail, setAuthSession } from "@/lib/auth-session";
+import {
+  extractStudentIdFromEmail,
+  isAdminEmail,
+  isDankookEmail,
+  setAuthSession,
+} from "@/lib/auth-session";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
@@ -61,6 +66,7 @@ export default function LoginPage() {
       const firebaseIdToken = await credential.user.getIdToken();
       const userName = credential.user.displayName ?? undefined;
       const studentId = extractStudentIdFromEmail(userEmail);
+      const adminFlag = isAdminEmail(userEmail);
 
       if (AUTH_DEMO_MODE) {
         setAuthSession({
@@ -70,6 +76,7 @@ export default function LoginPage() {
           name: userName,
           email: userEmail,
           studentId,
+          isAdmin: adminFlag,
         });
         router.replace("/home");
         return;
@@ -112,6 +119,7 @@ export default function LoginPage() {
         email: userEmail,
         studentId,
         department: data.department,
+        isAdmin: adminFlag,
       });
 
       router.replace(profileCompleted ? "/home" : "/onboarding");

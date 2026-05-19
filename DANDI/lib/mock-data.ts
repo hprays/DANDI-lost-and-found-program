@@ -1,5 +1,53 @@
-export const categories = ["전체", "전자기기", "지갑/가방", "신분증", "의류/악세서리", "도서/문구", "기타"];
-export const buildings = ["전체", "소프트웨어ICT관", "인문관", "상경관", "사회관", "도서관"];
+export const categories = [
+  "전체",
+  "전자기기",
+  "지갑/가방",
+  "신분증",
+  "카드/티켓",
+  "의류",
+  "악세서리",
+  "도서/문구",
+  "스포츠/운동",
+  "악기",
+  "텀블러/생활용품",
+  "열쇠/키링",
+  "우산/우비",
+  "화장품",
+  "기타",
+];
+
+// 지도에 등록된 모든 건물 + 사용자 친화 줄임말을 자동 포함
+const additionalBuildings = ["퇴계도서관", "혜당관", "법학관", "음악관"];
+
+export const buildings = (() => {
+  const all = new Set<string>(["전체"]);
+  // officeMarkers는 아래에서 선언되므로 module evaluation 후 push 되도록 lazy 형태로 사용
+  // 아래 즉시 실행 함수 내에서 OFFICE_NAMES를 참고하지 못하므로, 명시적 list로 작성
+  const officeBuildingNames = [
+    "AI 융합대학",
+    "미디어센터",
+    "글로컬산학협력관",
+    "제1공학관",
+    "제2공학관",
+    "제3공학관",
+    "사회과학관",
+    "사범관",
+    "상경관",
+    "인문관",
+    "혜당관",
+    "퇴계도서관",
+    "범정관",
+    "법학관",
+    "국제관",
+    "난파음악관",
+    "미술관",
+    "체육관",
+    "무용관",
+  ];
+  officeBuildingNames.forEach((name) => all.add(name));
+  additionalBuildings.forEach((name) => all.add(name));
+  return Array.from(all);
+})();
 
 export type OfficeMarker = {
   name: string;

@@ -8,7 +8,23 @@ export type AuthSession = {
   email?: string;
   department?: string;
   studentId?: string;
+  isAdmin?: boolean;
 };
+
+/**
+ * NEXT_PUBLIC_ADMIN_EMAILS 환경변수(콤마 구분)에 포함된 이메일만 관리자 권한을 갖는다.
+ * 예) NEXT_PUBLIC_ADMIN_EMAILS=admin@dankook.ac.kr,manager@dankook.ac.kr
+ */
+export function isAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const raw = process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "";
+  if (!raw.trim()) return false;
+  const list = raw
+    .split(",")
+    .map((it) => it.trim().toLowerCase())
+    .filter(Boolean);
+  return list.includes(email.toLowerCase());
+}
 
 const AUTH_SESSION_KEY = "dandi.auth.session";
 
