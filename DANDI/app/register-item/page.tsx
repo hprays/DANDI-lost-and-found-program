@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useDandiState } from "@/lib/dandi-state";
+import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { categories } from "@/lib/mock-data";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -217,7 +218,7 @@ export default function RegisterItemPage() {
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold">{report.itemName}</p>
                     <p className="text-muted-foreground">
-                      {report.category} · {report.location} / {report.createdAt}
+                      {report.category} · {sanitizeLocation(report.location)} / {formatDateTimeLabel(report.lostAt) || report.createdAt}
                     </p>
                     {report.memo ? <p className="mt-1 text-xs text-muted-foreground">메모: {report.memo}</p> : null}
                   </div>

@@ -18,6 +18,7 @@ import {
   updateAuthSession,
   type AuthSession,
 } from "@/lib/auth-session";
+import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
 import { getStoredKeywords, setStoredKeywords } from "@/lib/user-preferences";
 
@@ -270,7 +271,7 @@ export default function MyPage() {
                 <div key={entry.id} className="rounded-xl border p-3 text-sm">
                   <p className="font-semibold">{entry.itemName}</p>
                   <p className="text-muted-foreground">
-                    {entry.createdAt} / {entry.location}
+                    {formatDateTimeLabel(entry.createdAt) || entry.createdAt} / {sanitizeLocation(entry.location)}
                   </p>
                   <p className="mt-1 text-xs font-semibold text-primary">
                     상태:{" "}

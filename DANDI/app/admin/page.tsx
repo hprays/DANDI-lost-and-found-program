@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { applyLostItemAdminChanges, markLostItemDeleted, setLostItemOverride } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
+import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { categories } from "@/lib/mock-data";
 
 const selectableCategories = categories.filter((c) => c !== "전체");
@@ -898,9 +899,9 @@ export default function AdminPage() {
                       <Badge>{report.category}</Badge>
                     </div>
                     <div className="space-y-1 text-sm text-muted-foreground">
-                      <p>위치: {report.location}</p>
-                      {report.storage ? <p>보관 장소: {report.storage}</p> : null}
-                      <p>분실/습득 일시: {report.lostAt || "-"}</p>
+                      <p>위치: {sanitizeLocation(report.location)}</p>
+                      {report.storage ? <p>보관 장소: {sanitizeLocation(report.storage)}</p> : null}
+                      <p>분실/습득 일시: {formatDateTimeLabel(report.lostAt) || "-"}</p>
                       <p>접수: {report.createdAt}</p>
                       {report.ownerName || report.ownerEmail ? (
                         <p>
@@ -974,7 +975,7 @@ export default function AdminPage() {
               processedReports.map((report) => (
                 <div key={report.id} className="rounded-xl border bg-white p-3 text-sm">
                   <p className="font-semibold">{report.itemName}</p>
-                  <p className="text-muted-foreground">{report.location}</p>
+                  <p className="text-muted-foreground">{sanitizeLocation(report.location)}</p>
                   <p className="mt-1 text-xs font-semibold text-primary">
                     {report.status === "resolved" ? "습득 완료" : report.status === "picked_up" ? "최종 수령 완료" : "습득 불가"} /{" "}
                     {report.createdAt}

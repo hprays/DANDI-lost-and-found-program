@@ -11,6 +11,7 @@ import {
   upsertPublishedLostItem,
   type PublishedLostItem,
 } from "@/lib/published-lost-items";
+import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
 
 export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
@@ -178,8 +179,8 @@ function normalizeReport(raw: Record<string, unknown>): LostReport | null {
     id: String(id),
     itemName: String(itemName),
     category: String(raw.category ?? "기타"),
-    lostAt: String(raw.lostAt ?? raw.foundAt ?? ""),
-    location: String(raw.location ?? raw.place ?? ""),
+    lostAt: formatDateTimeLabel(String(raw.lostAt ?? raw.foundAt ?? "")),
+    location: sanitizeLocation(String(raw.location ?? raw.place ?? "")),
     memo: raw.memo != null ? String(raw.memo) : undefined,
     image: raw.image != null ? String(raw.image) : undefined,
     itemType: raw.itemType != null ? String(raw.itemType) : raw.type != null ? String(raw.type) : undefined,
@@ -372,20 +373,26 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         const session = getAuthSession();
         const ownerEmail = session?.email;
         const ownerName = session?.name;
+        const normalizedPayload = {
+          ...payload,
+          location: sanitizeLocation(payload.location),
+          lostAt: formatDateTimeLabel(payload.lostAt) || payload.lostAt,
+          storage: payload.storage ? sanitizeLocation(payload.storage) : payload.storage,
+        };
         try {
           const data = await apiJson<{ id?: string; reportId?: string; createdAt?: string; status?: ReportStatus; message?: string }>(
             "/api/reports",
             {
               method: "POST",
-              body: JSON.stringify({ ...payload, ownerEmail, ownerName }),
+              body: JSON.stringify({ ...normalizedPayload, ownerEmail, ownerName }),
             }
           );
           const reportId = data.id ?? data.reportId ?? `r-${Date.now()}`;
           const report: LostReport = {
             id: reportId,
-            ...payload,
+            ...normalizedPayload,
             status: data.status ?? "pending",
-            createdAt: data.createdAt ?? shortDateTime(),
+            createdAt: formatDateTimeLabel(data.createdAt ?? "") || shortDateTime(),
             ownerEmail,
             ownerName,
           };
@@ -400,7 +407,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           const fallbackReportId = `r-local-${Date.now()}`;
           const fallbackReport: LostReport = {
             id: fallbackReportId,
-            ...payload,
+            ...normalizedPayload,
             status: "pending",
             createdAt: shortDateTime(),
             ownerEmail,
@@ -769,9 +776,7 @@ export async function fetchAIGuidance(payload: { name: string; category: string;
 }
 
 export function toKST(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("ko-KR", { hour12: false });
+  return formatDateTimeLabel(iso) || iso;
 }
 
 export const RUNTIME_TIMESTAMP = nowISO();
