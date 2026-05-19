@@ -24,7 +24,7 @@ export const buildings = (() => {
   // officeMarkers는 아래에서 선언되므로 module evaluation 후 push 되도록 lazy 형태로 사용
   // 아래 즉시 실행 함수 내에서 OFFICE_NAMES를 참고하지 못하므로, 명시적 list로 작성
   const officeBuildingNames = [
-    "AI 융합대학",
+    "소프트웨어 ICT관",
     "미디어센터",
     "글로컬산학협력관",
     "제1공학관",
@@ -182,9 +182,16 @@ export const lostItems = [
   },
 ];
 
+/**
+ * 지도 핀 위치 조정 방법
+ * 1) https://www.openstreetmap.org 에서 건물 위치를 검색한다.
+ * 2) 해당 위치를 우클릭 → "좌표 표시"에서 lat(위도), lng(경도)를 복사한다.
+ * 3) 아래 officeMarkers 항목의 lat, lng 숫자를 붙여넣고 저장한다.
+ * 4) npm run dev 재시작 후 지도 페이지에서 확인한다.
+ */
 export const officeMarkers: OfficeMarker[] = [
   {
-    name: "AI 융합대학 사무실",
+    name: "소프트웨어 ICT관 사무실",
     location: "ICT관 311호",
     address: "경기 용인시 수지구 죽전로 152",
     hours: "평일 09:00-18:00",

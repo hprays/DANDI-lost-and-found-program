@@ -26,6 +26,47 @@ import { useDandiState } from "@/lib/dandi-state";
 import { categories, lostItems } from "@/lib/mock-data";
 
 const selectableCategories = categories.filter((c) => c !== "전체");
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+type ManageDraft = {
+  name: string;
+  category: string;
+  type: string;
+  place: string;
+  foundAt: string;
+  storage: string;
+  memo: string;
+  image: string;
+};
+
+function toDatetimeLocalValue(timeStr: string): string {
+  if (!timeStr) return "";
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(timeStr)) return timeStr.slice(0, 16);
+  const parsed = new Date(timeStr);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+function formatFoundAtLabel(foundAt: string): string {
+  if (!foundAt) return "";
+  const parsed = new Date(foundAt);
+  if (Number.isNaN(parsed.getTime())) return foundAt;
+  return parsed.toLocaleString("ko-KR", { hour12: false });
+}
+
+function buildManageDraft(item: { name?: string; category?: string; type?: string; place?: string; time?: string; memo?: string; image?: string; storage?: string }): ManageDraft {
+  return {
+    name: item.name ?? "",
+    category: item.category ?? selectableCategories[0] ?? "기타",
+    type: item.type ?? "",
+    place: item.place ?? "",
+    foundAt: toDatetimeLocalValue(item.time ?? ""),
+    storage: item.storage ?? "",
+    memo: item.memo ?? "",
+    image: item.image ?? "",
+  };
+}
 
 export default function AdminPage() {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
@@ -77,9 +118,7 @@ export default function AdminPage() {
     Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
   >([]);
   const [manageMessage, setManageMessage] = useState("");
-  const [manageDrafts, setManageDrafts] = useState<
-    Record<string, { name: string; category: string; type: string; place: string; time: string; memo: string }>
-  >({});
+  const [manageDrafts, setManageDrafts] = useState<Record<string, ManageDraft>>({});
 
   const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
@@ -414,17 +453,10 @@ export default function AdminPage() {
   const onSaveManagedItem = (itemId: string) => {
     const origin = managedItems.find((it) => it.id === itemId);
     if (!origin) return;
-    const draft = manageDrafts[itemId] ?? {
-      name: origin.name ?? "",
-      category: origin.category ?? "",
-      type: origin.type ?? "",
-      place: origin.place ?? "",
-      time: origin.time ?? "",
-      memo: (origin as { memo?: string }).memo ?? "",
-    };
+    const draft = manageDrafts[itemId] ?? buildManageDraft(origin);
 
-    if (!draft.name.trim() || !draft.category.trim() || !draft.place.trim() || !draft.time.trim()) {
-      setManageMessage("물품명, 카테고리, 위치, 시간을 입력해 주세요.");
+    if (!draft.name.trim() || !draft.category.trim() || !draft.place.trim() || !draft.foundAt.trim()) {
+      setManageMessage("물품명, 카테고리, 습득 위치, 습득 시간을 입력해 주세요.");
       return;
     }
 
@@ -433,8 +465,10 @@ export default function AdminPage() {
       category: draft.category.trim(),
       type: draft.type.trim() || "미지정",
       place: draft.place.trim(),
-      time: draft.time.trim(),
+      time: formatFoundAtLabel(draft.foundAt) || draft.foundAt.trim(),
+      storage: draft.storage.trim(),
       memo: draft.memo.trim(),
+      image: draft.image || undefined,
     };
 
     if (customIdSet.has(itemId)) {
@@ -453,21 +487,10 @@ export default function AdminPage() {
     setManageMessage("해당 물품을 삭제했습니다.");
   };
 
-  const onManageDraftChange = (
-    itemId: string,
-    field: "name" | "category" | "type" | "place" | "time" | "memo",
-    value: string
-  ) => {
+  const onManageDraftChange = (itemId: string, field: keyof ManageDraft, value: string) => {
     const origin = managedItems.find((it) => it.id === itemId);
     if (!origin) return;
-    const base = manageDrafts[itemId] ?? {
-      name: origin.name ?? "",
-      category: origin.category ?? "",
-      type: origin.type ?? "",
-      place: origin.place ?? "",
-      time: origin.time ?? "",
-      memo: (origin as { memo?: string }).memo ?? "",
-    };
+    const base = manageDrafts[itemId] ?? buildManageDraft(origin);
     setManageDrafts((prev) => ({
       ...prev,
       [itemId]: {
@@ -475,6 +498,26 @@ export default function AdminPage() {
         [field]: value,
       },
     }));
+  };
+
+  const onManagePhotoChange = (itemId: string, event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setManageMessage("이미지 파일만 업로드할 수 있습니다.");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setManageMessage("사진 용량은 5MB 이하만 가능합니다.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      onManageDraftChange(itemId, "image", result);
+      setManageMessage("");
+    };
+    reader.readAsDataURL(file);
   };
 
   if (adminChecked && !isAdmin) {
@@ -702,26 +745,117 @@ export default function AdminPage() {
                   <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">관리할 물품이 없습니다.</p>
                 ) : (
                   managedItems.map((item) => {
-                    const draft = manageDrafts[item.id] ?? {
-                      name: item.name ?? "",
-                      category: item.category ?? "",
-                      type: item.type ?? "",
-                      place: item.place ?? "",
-                      time: item.time ?? "",
-                      memo: (item as { memo?: string }).memo ?? "",
-                    };
+                    const draft = manageDrafts[item.id] ?? buildManageDraft(item);
                     return (
-                      <div key={item.id} className="space-y-2 rounded-xl border p-3">
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <Input value={draft.name} onChange={(e) => onManageDraftChange(item.id, "name", e.target.value)} />
-                          <Input value={draft.category} onChange={(e) => onManageDraftChange(item.id, "category", e.target.value)} />
+                      <div key={item.id} className="space-y-4 rounded-xl border bg-white p-4">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold text-slate-700">물품 ID: {item.id}</p>
+                          <Badge variant="secondary">{item.category}</Badge>
                         </div>
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <Input value={draft.type} onChange={(e) => onManageDraftChange(item.id, "type", e.target.value)} placeholder="종류" />
-                          <Input value={draft.time} onChange={(e) => onManageDraftChange(item.id, "time", e.target.value)} placeholder="시간" />
+
+                        <div className="space-y-2">
+                          <Label>물품 사진</Label>
+                          <div className="relative h-40 w-full overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="absolute inset-0 z-20 h-full w-full cursor-pointer opacity-0"
+                              onChange={(e) => onManagePhotoChange(item.id, e)}
+                              aria-label={`${item.name} 사진 변경`}
+                            />
+                            {draft.image ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={draft.image} alt={draft.name} className="pointer-events-none h-full w-full object-contain" />
+                            ) : (
+                              <div className="pointer-events-none flex h-full items-center justify-center text-sm text-slate-500">
+                                여기를 눌러 사진 업로드/변경
+                              </div>
+                            )}
+                          </div>
+                          {draft.image ? (
+                            <Button type="button" variant="ghost" size="sm" onClick={() => onManageDraftChange(item.id, "image", "")}>
+                              사진 제거
+                            </Button>
+                          ) : null}
                         </div>
-                        <Input value={draft.place} onChange={(e) => onManageDraftChange(item.id, "place", e.target.value)} placeholder="위치" />
-                        <Textarea value={draft.memo} onChange={(e) => onManageDraftChange(item.id, "memo", e.target.value)} placeholder="추가 정보" />
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`manage-name-${item.id}`}>물품명</Label>
+                          <Input
+                            id={`manage-name-${item.id}`}
+                            value={draft.name}
+                            onChange={(e) => onManageDraftChange(item.id, "name", e.target.value)}
+                            placeholder="예: 에어팟"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`manage-category-${item.id}`}>카테고리</Label>
+                          <select
+                            id={`manage-category-${item.id}`}
+                            value={draft.category}
+                            onChange={(e) => onManageDraftChange(item.id, "category", e.target.value)}
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                          >
+                            {selectableCategories.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor={`manage-place-${item.id}`}>습득 위치</Label>
+                            <Input
+                              id={`manage-place-${item.id}`}
+                              value={draft.place}
+                              onChange={(e) => onManageDraftChange(item.id, "place", e.target.value)}
+                              placeholder="예: 혜당관 2층"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`manage-found-at-${item.id}`}>습득 시간</Label>
+                            <Input
+                              id={`manage-found-at-${item.id}`}
+                              type="datetime-local"
+                              value={draft.foundAt}
+                              onChange={(e) => onManageDraftChange(item.id, "foundAt", e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`manage-storage-${item.id}`}>보관 장소</Label>
+                          <Input
+                            id={`manage-storage-${item.id}`}
+                            value={draft.storage}
+                            onChange={(e) => onManageDraftChange(item.id, "storage", e.target.value)}
+                            placeholder="예: 혜당관 학생팀 425호"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`manage-type-${item.id}`}>종류</Label>
+                          <Input
+                            id={`manage-type-${item.id}`}
+                            value={draft.type}
+                            onChange={(e) => onManageDraftChange(item.id, "type", e.target.value)}
+                            placeholder="예: 무선이어폰"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`manage-memo-${item.id}`}>상세 사항</Label>
+                          <Textarea
+                            id={`manage-memo-${item.id}`}
+                            value={draft.memo}
+                            onChange={(e) => onManageDraftChange(item.id, "memo", e.target.value)}
+                            placeholder="특징, 색상, 추가 설명"
+                          />
+                        </div>
+
                         <div className="grid gap-2 md:grid-cols-2">
                           <Button type="button" onClick={() => onSaveManagedItem(item.id)}>
                             수정 저장

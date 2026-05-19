@@ -8,6 +8,7 @@ export type CustomLostItem = {
   memo?: string;
   place: string;
   time: string;
+  storage?: string;
   image?: string;
 };
 
