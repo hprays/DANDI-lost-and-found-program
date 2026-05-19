@@ -23,7 +23,9 @@ import {
   updateCustomLostItem,
 } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
-import { lostItems } from "@/lib/mock-data";
+import { categories, lostItems } from "@/lib/mock-data";
+
+const selectableCategories = categories.filter((c) => c !== "전체");
 
 export default function AdminPage() {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
@@ -41,7 +43,7 @@ export default function AdminPage() {
   }, []);
   const isAdmin = Boolean(adminCheckSession?.isAdmin);
   const [regName, setRegName] = useState("");
-  const [regCategory, setRegCategory] = useState("");
+  const [regCategory, setRegCategory] = useState(selectableCategories[0] ?? "기타");
   const [regLocation, setRegLocation] = useState("");
   const [regFoundAt, setRegFoundAt] = useState("");
   const [regStorage, setRegStorage] = useState("");
@@ -100,6 +102,7 @@ export default function AdminPage() {
       lostAt: regFoundAt,
       location: regLocation.trim(),
       memo: regMemo.trim(),
+      image: visionDataUrl ?? undefined,
     });
 
     setRegisteredItems((prev) => [
@@ -125,7 +128,7 @@ export default function AdminPage() {
     });
 
     setRegName("");
-    setRegCategory("");
+    setRegCategory(selectableCategories[0] ?? "기타");
     setRegLocation("");
     setRegFoundAt("");
     setRegStorage("");
@@ -549,15 +552,24 @@ export default function AdminPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  관리자 계정 권한 기준으로 물품 등록/분석이 진행됩니다.
+                  관리자 계정 권한 기준으로 물품 등록/분석이 진행됩니다. 등록한 물품은 사용자 분실 신고와 동일하게{" "}
+                  <b>검수 대기</b>에 들어가며, 습득 완료/불가 처리 후 홈·마이페이지에 반영됩니다.
                 </div>
 
                 <div className="space-y-2">
                   <Label>사진 업로드</Label>
-                  <label className="flex h-28 cursor-pointer items-center justify-center rounded-xl border border-dashed text-slate-500 hover:bg-slate-50">
-                    {visionFile ? `선택됨: ${visionFile.name}` : "클릭하여 사진 업로드"}
-                    <input type="file" accept="image/*" className="hidden" onChange={onVisionFileChange} />
-                  </label>
+                  <div className="relative h-28 w-full overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="absolute inset-0 z-20 h-full w-full cursor-pointer opacity-0"
+                      onChange={onVisionFileChange}
+                      aria-label="물품 사진 선택"
+                    />
+                    <div className="pointer-events-none flex h-full items-center justify-center px-3 text-center text-sm text-slate-500">
+                      {visionFile ? `선택됨: ${visionFile.name}` : "여기를 눌러 사진 업로드"}
+                    </div>
+                  </div>
                   <p className="text-xs text-muted-foreground">신분증은 사진 없이 텍스트 정보만 기록합니다.</p>
                   {visionPreview ? (
                     <div className="overflow-hidden rounded-lg border">
@@ -607,7 +619,19 @@ export default function AdminPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="reg-category">카테고리</Label>
-                    <Input id="reg-category" value={regCategory} onChange={(e) => setRegCategory(e.target.value)} placeholder="예: 지갑/가방" />
+                    <select
+                      id="reg-category"
+                      value={regCategory}
+                      onChange={(e) => setRegCategory(e.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      {selectableCategories.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">목록을 스크롤해 카테고리를 선택할 수 있습니다.</p>
                   </div>
                 </div>
 
@@ -726,6 +750,12 @@ export default function AdminPage() {
               pendingReports.map((report) => (
                 <Card key={report.id}>
                   <CardContent className="space-y-3 p-4">
+                    {report.image ? (
+                      <div className="overflow-hidden rounded-lg border bg-slate-50">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={report.image} alt={report.itemName} className="mx-auto max-h-56 w-full object-contain" />
+                      </div>
+                    ) : null}
                     <div className="flex items-center justify-between">
                       <p className="font-semibold">{report.itemName}</p>
                       <Badge>{report.category}</Badge>

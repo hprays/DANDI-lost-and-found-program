@@ -69,6 +69,7 @@ export default function LoginPage() {
       const adminFlag = isAdminEmail(userEmail);
 
       if (AUTH_DEMO_MODE) {
+        const demoAdmin = true;
         setAuthSession({
           accessToken: firebaseIdToken,
           profileCompleted: true,
@@ -76,9 +77,9 @@ export default function LoginPage() {
           name: userName,
           email: userEmail,
           studentId,
-          isAdmin: adminFlag,
+          isAdmin: demoAdmin,
         });
-        router.replace("/home");
+        router.replace(demoAdmin ? "/admin" : "/home");
         return;
       }
 
