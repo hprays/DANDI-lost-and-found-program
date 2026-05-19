@@ -53,6 +53,11 @@ export default function AdminPage() {
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [statusUpdatingType, setStatusUpdatingType] = useState<"resolved" | "unavailable" | null>(null);
   const [pickupVerifying, setPickupVerifying] = useState(false);
+  const [pickupSearch, setPickupSearch] = useState("");
+  const [pickupTokens, setPickupTokens] = useState<Record<string, string>>({});
+  const [lastVerifiedPass, setLastVerifiedPass] = useState<
+    { itemName?: string; claimantName?: string; claimantEmail?: string; usedAt: string | null } | null
+  >(null);
   const [registering, setRegistering] = useState(false);
   const [registeredItems, setRegisteredItems] = useState<
     Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
@@ -125,18 +130,45 @@ export default function AdminPage() {
     setRegMessage("최근 등록 항목을 삭제했습니다.");
   };
 
-  const onVerifyPickup = async () => {
+  const onVerifyPickup = async (token: string, itemId?: string) => {
+    if (!token.trim()) {
+      setPickupMessage("QR 코드를 입력해 주세요.");
+      return;
+    }
     setPickupVerifying(true);
     try {
-      const result = await verifyPickupPass(pickupToken);
+      const result = await verifyPickupPass(token);
       setPickupMessage(result.message);
       if (result.ok) {
         setPickupToken("");
+        if (itemId) {
+          setPickupTokens((prev) => ({ ...prev, [itemId]: "" }));
+        }
+        if (result.pass) {
+          setLastVerifiedPass({
+            itemName: result.pass.itemName,
+            claimantName: result.pass.claimantName,
+            claimantEmail: result.pass.claimantEmail,
+            usedAt: result.pass.usedAt,
+          });
+        }
       }
     } finally {
       setPickupVerifying(false);
     }
   };
+
+  const pickupSearchResults = useMemo(() => {
+    const keyword = pickupSearch.trim().toLowerCase();
+    if (!keyword) return managedItems.slice(0, 6);
+    return managedItems.filter((item) => {
+      const haystack = [item.name, item.category, item.type, item.place, (item as { memo?: string }).memo]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [managedItems, pickupSearch]);
 
   const onVisionFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -659,17 +691,77 @@ export default function AdminPage() {
           <TabsContent value="pickup" className="space-y-3">
             <Card>
               <CardHeader>
-                <CardTitle>QR 최종 수령 인증</CardTitle>
+                <CardTitle>분실자가 말한 물품 검색 후 QR 인증</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  분실자가 말한 키워드(물품명/카테고리/위치 등)로 물품을 찾고, 그 카드에서 분실자가 보여주는 QR 토큰을 직접 입력해 수령 인증을 완료합니다.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Input
+                  value={pickupSearch}
+                  onChange={(e) => setPickupSearch(e.target.value)}
+                  placeholder="검색 (예: 에어팟, 검정 지갑, 혜당관)"
+                />
+                {pickupMessage ? <p className="text-sm font-semibold text-primary">{pickupMessage}</p> : null}
+                {pickupSearchResults.length === 0 ? (
+                  <p className="rounded-lg border bg-slate-50 p-3 text-sm text-muted-foreground">검색 결과가 없습니다.</p>
+                ) : (
+                  pickupSearchResults.map((item) => {
+                    const draftToken = pickupTokens[item.id] ?? "";
+                    return (
+                      <div key={item.id} className="rounded-xl border p-3 text-sm">
+                        <div className="flex items-center justify-between">
+                          <p className="font-semibold">{item.name}</p>
+                          <Badge variant="secondary">{item.category}</Badge>
+                        </div>
+                        <p className="text-muted-foreground">{item.place}</p>
+                        <div className="mt-3 flex gap-2">
+                          <Input
+                            value={draftToken}
+                            onChange={(e) => setPickupTokens((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                            placeholder="분실자 QR 코드 입력 (예: DKU-123456)"
+                          />
+                          <Button
+                            type="button"
+                            onClick={() => void onVerifyPickup(draftToken, item.id)}
+                            disabled={pickupVerifying}
+                          >
+                            {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                            인증 완료
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>빠른 QR 인증 (토큰 직접 입력)</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex gap-2">
-                  <Input value={pickupToken} onChange={(e) => setPickupToken(e.target.value)} placeholder="사용자 QR 코드 입력 (예: DKU-123456)" />
-                  <Button onClick={onVerifyPickup} disabled={pickupVerifying}>
+                  <Input
+                    value={pickupToken}
+                    onChange={(e) => setPickupToken(e.target.value)}
+                    placeholder="사용자 QR 코드 입력 (예: DKU-123456)"
+                  />
+                  <Button onClick={() => void onVerifyPickup(pickupToken)} disabled={pickupVerifying}>
                     {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                     수령 인증 완료
                   </Button>
                 </div>
-                {pickupMessage ? <p className="text-sm font-semibold text-primary">{pickupMessage}</p> : null}
+                {lastVerifiedPass ? (
+                  <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
+                    <p className="font-semibold">최근 인증 완료</p>
+                    <p>물품: {lastVerifiedPass.itemName ?? "-"}</p>
+                    <p>인수자: {lastVerifiedPass.claimantName ?? "이름 없음"}</p>
+                    <p>이메일: {lastVerifiedPass.claimantEmail ?? "이메일 없음"}</p>
+                    <p className="text-xs text-emerald-700">{lastVerifiedPass.usedAt ?? ""}</p>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -683,11 +775,22 @@ export default function AdminPage() {
                 ) : (
                   pickupPasses.map((pass) => (
                     <div key={pass.id} className="rounded-lg border p-3 text-sm">
-                      <p className="font-semibold">{pass.token}</p>
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold tracking-wider">{pass.token}</p>
+                        <Badge variant={pass.usedAt ? "secondary" : "default"}>{pass.usedAt ? "인증 완료" : "미사용"}</Badge>
+                      </div>
                       <p className="text-muted-foreground">
-                        신고 ID: {pass.reportId} / 만료: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
+                        물품: {pass.itemName ?? "-"} / 위치: {pass.itemLocation ?? "-"}
                       </p>
-                      <p className="mt-1 text-xs font-semibold text-primary">{pass.usedAt ? `인증 완료 (${pass.usedAt})` : "미사용"}</p>
+                      <p className="text-muted-foreground">
+                        인수자: {pass.claimantName ?? "이름 없음"} ({pass.claimantEmail ?? "이메일 없음"})
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        만료: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
+                      </p>
+                      {pass.usedAt ? (
+                        <p className="mt-1 text-xs font-semibold text-primary">수령 완료: {pass.usedAt}</p>
+                      ) : null}
                     </div>
                   ))
                 )}

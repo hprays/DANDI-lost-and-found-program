@@ -2,21 +2,23 @@
 
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Loader2, MapPinned, Megaphone } from "lucide-react";
+import { AlertCircle, KeyRound, Loader2, MapPinned, Megaphone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ItemImage } from "@/components/item-image";
+import { PickupQr } from "@/components/pickup-qr";
 import { QAChatbot } from "@/components/qa-chatbot";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { fetchAIGuidance } from "@/lib/dandi-state";
+import { fetchAIGuidance, useDandiState } from "@/lib/dandi-state";
 import { lostItems } from "@/lib/mock-data";
 import { applyLostItemAdminChanges, getCustomLostItems } from "@/lib/custom-lost-items";
 
 export default function LostDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const itemId = id;
+  const { issuePickupPass, pickupPasses } = useDandiState();
   const [customItems, setCustomItems] = useState(() => getCustomLostItems());
   const item = useMemo(
     () => applyLostItemAdminChanges([...customItems, ...lostItems]).find((it) => it.id === itemId) ?? null,
@@ -25,6 +27,29 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
   const itemMemo = (item as { memo?: string } | null)?.memo?.trim() ?? "";
   const [aiGuide, setAiGuide] = useState<{ cautionTitle: string; cautions: string[]; chatbotTips: string[] } | null>(null);
   const loading = item !== null && aiGuide === null;
+  const [issuingPickup, setIssuingPickup] = useState(false);
+  const [pickupMessage, setPickupMessage] = useState("");
+  const existingPass = useMemo(
+    () => pickupPasses.find((pass) => pass.lostItemId === itemId && !pass.usedAt) ?? null,
+    [pickupPasses, itemId]
+  );
+
+  const onIssuePickup = async () => {
+    if (!item) return;
+    setIssuingPickup(true);
+    setPickupMessage("");
+    try {
+      const result = await issuePickupPass({
+        lostItemId: item.id,
+        itemName: item.name,
+        itemImage: item.image,
+        itemLocation: item.place,
+      });
+      setPickupMessage(result.message);
+    } finally {
+      setIssuingPickup(false);
+    }
+  };
 
   useEffect(() => {
     const rafId = window.requestAnimationFrame(() => {
@@ -109,6 +134,39 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
               </AccordionContent>
             </AccordionItem>
           </Accordion>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-4 border-primary/30 bg-primary/5">
+        <CardContent className="space-y-3 p-5">
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-primary" />
+            <p className="text-sm font-semibold text-primary">내 물건이 맞나요? 수령 QR 발급</p>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            QR 발급 후 관리실을 방문하면 담당자가 본인 확인을 진행합니다. QR은 발급 시점부터 10분 동안 유효합니다.
+          </p>
+          {existingPass ? (
+            <div className="rounded-lg border bg-white p-3">
+              <p className="text-xs text-muted-foreground">발급된 수령 QR</p>
+              <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-center">
+                <PickupQr value={existingPass.token} />
+                <div className="space-y-1 text-sm">
+                  <p className="text-base font-bold tracking-wider">{existingPass.token}</p>
+                  <p className="text-xs text-muted-foreground">
+                    유효기간: {new Date(existingPass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
+                  </p>
+                  <p className="text-xs font-semibold text-primary">관리실에서 QR 확인 대기 중</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <Button onClick={onIssuePickup} disabled={issuingPickup}>
+              {issuingPickup ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+              내 물건 — 수령 QR 발급받기
+            </Button>
+          )}
+          {pickupMessage ? <p className="text-xs font-medium text-primary">{pickupMessage}</p> : null}
         </CardContent>
       </Card>
 

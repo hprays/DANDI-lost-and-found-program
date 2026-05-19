@@ -33,11 +33,31 @@ export type AdminAuditLog = {
 
 export type PickupPass = {
   id: string;
-  reportId: string;
+  // 새 흐름: 분실물(습득물) 기준으로 QR을 발급한다. 기존 reportId 호환을 위해 둘 다 유지.
+  lostItemId: string;
+  reportId?: string;
+  itemName?: string;
+  itemImage?: string;
+  itemLocation?: string;
+  claimantName?: string;
+  claimantEmail?: string;
   token: string;
   issuedAt: string;
   expiresAt: string;
   usedAt: string | null;
+};
+
+export type PickupIssuePayload = {
+  lostItemId: string;
+  itemName?: string;
+  itemImage?: string;
+  itemLocation?: string;
+};
+
+export type PickupVerifyResult = {
+  ok: boolean;
+  message: string;
+  pass?: PickupPass;
 };
 
 type DandiStateContextValue = {
@@ -54,8 +74,8 @@ type DandiStateContextValue = {
     reportId: string,
     status: Extract<ReportStatus, "resolved" | "unavailable">
   ) => Promise<{ ok: boolean; message: string }>;
-  issuePickupPass: (reportId: string) => Promise<{ ok: boolean; message: string; token?: string }>;
-  verifyPickupPass: (token: string) => Promise<{ ok: boolean; message: string }>;
+  issuePickupPass: (payload: PickupIssuePayload) => Promise<{ ok: boolean; message: string; token?: string; pass?: PickupPass }>;
+  verifyPickupPass: (token: string) => Promise<PickupVerifyResult>;
   deleteReport: (reportId: string) => Promise<{ ok: boolean; message: string }>;
   refreshNotices: () => Promise<void>;
   markNoticeRead: (noticeId: string) => Promise<{ ok: boolean; message: string }>;
@@ -309,47 +329,83 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           };
         }
       },
-      issuePickupPass: async (reportId) => {
-        const target = reports.find((report) => report.id === reportId);
-        if (!target) {
-          return { ok: false, message: "해당 신고 항목을 찾을 수 없습니다.", token: undefined };
-        }
-        if (target.status !== "resolved") {
-          return { ok: false, message: "습득 완료 처리된 항목만 QR 발급이 가능합니다.", token: undefined };
+      issuePickupPass: async (payload) => {
+        if (!payload?.lostItemId) {
+          return { ok: false, message: "발급할 분실물 정보가 없습니다.", token: undefined };
         }
 
-        try {
-          const data = await apiJson<{ id?: string; token?: string; expiresAt?: string; issuedAt?: string; usedAt?: string | null; message?: string }>(
-            "/api/pickup-passes",
-            {
-              method: "POST",
-              body: JSON.stringify({ reportId }),
-            }
-          );
+        const session = getAuthSession();
+        const claimantName = session?.name;
+        const claimantEmail = session?.email;
 
-          const pass: PickupPass = {
-            id: data.id ?? `p-${Date.now()}`,
-            reportId,
-            token: data.token ?? pickupToken(),
-            issuedAt: data.issuedAt ?? shortDateTime(),
-            expiresAt: data.expiresAt ?? minutesLaterISO(10),
-            usedAt: data.usedAt ?? null,
-          };
+        const buildPass = (override?: Partial<PickupPass>): PickupPass => ({
+          id: override?.id ?? `p-${Date.now()}`,
+          lostItemId: payload.lostItemId,
+          itemName: payload.itemName,
+          itemImage: payload.itemImage,
+          itemLocation: payload.itemLocation,
+          claimantName,
+          claimantEmail,
+          token: override?.token ?? pickupToken(),
+          issuedAt: override?.issuedAt ?? shortDateTime(),
+          expiresAt: override?.expiresAt ?? minutesLaterISO(10),
+          usedAt: override?.usedAt ?? null,
+          reportId: override?.reportId,
+        });
 
+        const finalize = (pass: PickupPass, message: string) => {
           setPickupPasses((prev) => [pass, ...prev.filter((it) => it.id !== pass.id)]);
           setNotices((prev) => [
             {
               id: `n-${Date.now()}`,
               title: "수령 QR이 발급되었습니다",
-              message: "관리실 방문 시 QR 코드를 제시해 최종 수령 인증을 진행해 주세요. (10분 유효)",
+              message: `${payload.itemName ? `[${payload.itemName}] ` : ""}관리실에서 QR을 제시해 본인 확인을 진행해 주세요. (10분 유효)`,
               createdAt: shortDateTime(),
               read: false,
             },
             ...prev,
           ]);
-          return { ok: true, message: data.message ?? "수령 QR이 발급되었습니다.", token: pass.token };
+          return { ok: true, message, token: pass.token, pass };
+        };
+
+        try {
+          const data = await apiJson<{
+            id?: string;
+            token?: string;
+            expiresAt?: string;
+            issuedAt?: string;
+            usedAt?: string | null;
+            message?: string;
+            reportId?: string;
+          }>("/api/pickup-passes", {
+            method: "POST",
+            body: JSON.stringify({
+              lostItemId: payload.lostItemId,
+              itemName: payload.itemName,
+              itemImage: payload.itemImage,
+              itemLocation: payload.itemLocation,
+              claimantName,
+              claimantEmail,
+            }),
+          });
+
+          const pass = buildPass({
+            id: data.id,
+            token: data.token,
+            issuedAt: data.issuedAt,
+            expiresAt: data.expiresAt,
+            usedAt: data.usedAt ?? null,
+            reportId: data.reportId,
+          });
+          return finalize(pass, data.message ?? "수령 QR이 발급되었습니다.");
         } catch (error) {
-          return { ok: false, message: error instanceof Error ? error.message : "수령 QR 발급에 실패했습니다.", token: undefined };
+          const pass = buildPass();
+          return finalize(
+            pass,
+            error instanceof Error
+              ? `백엔드 연동 실패로 QR을 임시 발급했습니다. (${error.message})`
+              : "백엔드 연동 실패로 QR을 임시 발급했습니다."
+          );
         }
       },
       verifyPickupPass: async (token) => {
@@ -358,28 +414,21 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           return { ok: false, message: "QR 코드를 입력해 주세요." };
         }
 
-        try {
-          const data = await apiJson<{ reportId?: string; usedAt?: string; message?: string }>("/api/pickup-passes/verify", {
-            method: "POST",
-            body: JSON.stringify({ token: normalized }),
-          });
-
-          const reportId = data.reportId ?? pickupPasses.find((it) => it.token.toUpperCase() === normalized)?.reportId;
-          if (!reportId) {
-            return { ok: false, message: "인증 대상 신고건을 찾지 못했습니다." };
-          }
-
-          const usedAt = data.usedAt ?? shortDateTime();
+        const finalize = (pass: PickupPass, usedAt: string, message: string): PickupVerifyResult => {
           setPickupPasses((prev) =>
             prev.map((it) => (it.token.toUpperCase() === normalized ? { ...it, usedAt } : it))
           );
-          setReports((prev) =>
-            prev.map((report) => (report.id === reportId ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report))
-          );
+          if (pass.reportId) {
+            setReports((prev) =>
+              prev.map((report) =>
+                report.id === pass.reportId ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report
+              )
+            );
+          }
           setAdminAuditLogs((prev) => [
             {
               id: `a-${Date.now()}`,
-              message: `${reportId} 신고건의 QR 수령 인증이 완료되었습니다.`,
+              message: `[${pass.itemName ?? "물품"}] QR 수령 인증 완료 — 인수자: ${pass.claimantName ?? "이름 없음"} (${pass.claimantEmail ?? "이메일 없음"})`,
               createdAt: usedAt,
             },
             ...prev,
@@ -388,15 +437,62 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             {
               id: `n-${Date.now()}`,
               title: "최종 수령 완료",
-              message: "관리실에서 QR 인증이 완료되어 물품 수령이 마무리되었습니다.",
+              message: `${pass.itemName ?? "물품"} 수령이 마무리되었습니다.`,
               createdAt: usedAt,
               read: false,
             },
             ...prev,
           ]);
-          return { ok: true, message: data.message ?? "QR 인증 완료: 최종 수령 처리되었습니다." };
+          return { ok: true, message, pass: { ...pass, usedAt } };
+        };
+
+        const localPass = pickupPasses.find((it) => it.token.toUpperCase() === normalized);
+
+        try {
+          const data = await apiJson<{
+            reportId?: string;
+            usedAt?: string;
+            message?: string;
+            lostItemId?: string;
+            itemName?: string;
+            claimantName?: string;
+            claimantEmail?: string;
+          }>("/api/pickup-passes/verify", {
+            method: "POST",
+            body: JSON.stringify({ token: normalized }),
+          });
+
+          const usedAt = data.usedAt ?? shortDateTime();
+          const merged: PickupPass = {
+            id: localPass?.id ?? `p-${Date.now()}`,
+            lostItemId: data.lostItemId ?? localPass?.lostItemId ?? "",
+            itemName: data.itemName ?? localPass?.itemName,
+            itemImage: localPass?.itemImage,
+            itemLocation: localPass?.itemLocation,
+            claimantName: data.claimantName ?? localPass?.claimantName,
+            claimantEmail: data.claimantEmail ?? localPass?.claimantEmail,
+            token: localPass?.token ?? normalized,
+            issuedAt: localPass?.issuedAt ?? shortDateTime(),
+            expiresAt: localPass?.expiresAt ?? minutesLaterISO(10),
+            usedAt,
+            reportId: data.reportId ?? localPass?.reportId,
+          };
+          return finalize(merged, usedAt, data.message ?? "QR 인증 완료: 최종 수령 처리되었습니다.");
         } catch (error) {
-          return { ok: false, message: error instanceof Error ? error.message : "QR 인증 처리에 실패했습니다." };
+          if (!localPass) {
+            return {
+              ok: false,
+              message: error instanceof Error ? error.message : "QR 인증 처리에 실패했습니다.",
+            };
+          }
+          const usedAt = shortDateTime();
+          return finalize(
+            localPass,
+            usedAt,
+            error instanceof Error
+              ? `백엔드 연동 실패로 로컬 인증만 진행했습니다. (${error.message})`
+              : "백엔드 연동 실패로 로컬 인증만 진행했습니다."
+          );
         }
       },
       deleteReport: async (reportId) => {

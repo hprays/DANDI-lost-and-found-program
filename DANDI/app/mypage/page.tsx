@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import { BellRing, Loader2, Plus, X } from "lucide-react";
 import { AccountMenu } from "@/components/account-menu";
 import { AppShell } from "@/components/app-shell";
@@ -15,32 +16,26 @@ import { getAuthSession } from "@/lib/auth-session";
 import { useDandiState } from "@/lib/dandi-state";
 
 export default function MyPage() {
-  const { notices, reports, pickupPasses, issuePickupPass, markNoticeRead, refreshNotices, noticesLoading, noticesError, apiConfigured, apiBaseUrl } =
+  const { notices, reports, pickupPasses, markNoticeRead, refreshNotices, noticesLoading, noticesError, apiConfigured, apiBaseUrl } =
     useDandiState();
   const session = getAuthSession();
   const [keyword, setKeyword] = useState("");
   const [tags, setTags] = useState<string[]>(["에어팟", "검정", "지갑"]);
   const [alertEnabled, setAlertEnabled] = useState(true);
-  const [pickupMessage, setPickupMessage] = useState("");
   const [noticeMessage, setNoticeMessage] = useState("");
   const [readingNoticeId, setReadingNoticeId] = useState<string | null>(null);
-  const [issuingReportId, setIssuingReportId] = useState<string | null>(null);
+
+  // 내가 발급받은 수령 QR만 노출 (이메일 일치 기준, 세션 없으면 전체 노출)
+  const myPickupPasses = useMemo(() => {
+    if (!session?.email) return pickupPasses;
+    return pickupPasses.filter((pass) => !pass.claimantEmail || pass.claimantEmail === session.email);
+  }, [pickupPasses, session?.email]);
 
   const addTag = () => {
     const trimmed = keyword.trim();
     if (!trimmed || tags.includes(trimmed)) return;
     setTags((prev) => [...prev, trimmed]);
     setKeyword("");
-  };
-
-  const issueQr = async (reportId: string) => {
-    setIssuingReportId(reportId);
-    try {
-      const result = await issuePickupPass(reportId);
-      setPickupMessage(result.message);
-    } finally {
-      setIssuingReportId(null);
-    }
   };
 
   return (
@@ -133,55 +128,48 @@ export default function MyPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>최종 수령 QR 인증</CardTitle>
-            <p className="text-sm text-muted-foreground">습득 완료된 항목은 QR 발급 후 관리실에서 최종 수령 인증을 진행합니다.</p>
+            <CardTitle>내 수령 QR</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              홈/검색에서 분실물을 찾았을 때 발급한 수령 QR이 여기에 모입니다. 관리실 방문 시 QR을 보여주세요.
+            </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            {reports.filter((report) => report.status === "resolved" || report.status === "picked_up").length === 0 ? (
+            {myPickupPasses.length === 0 ? (
               <p className="rounded-lg border bg-slate-50 p-3 text-sm text-muted-foreground">
-                아직 QR 발급 가능한 항목이 없습니다. 관리자 페이지에서 먼저 <b>습득 완료 처리</b>가 되면 여기서 QR이 표시됩니다.
+                아직 발급받은 수령 QR이 없습니다. 홈에서 내 물건을 찾았다면 상세 페이지의 <b>“내 물건 — 수령 QR 발급받기”</b> 버튼을 눌러주세요.
               </p>
             ) : null}
-            {reports
-              .filter((report) => report.status === "resolved" || report.status === "picked_up")
-              .map((report) => {
-                const pass = pickupPasses.find((item) => item.reportId === report.id);
-                return (
-                  <div key={report.id} className="rounded-xl border p-3 text-sm">
-                    <p className="font-semibold">{report.itemName}</p>
-                    <p className="text-muted-foreground">{report.location}</p>
-                    {pass ? (
-                      <div className="mt-2 rounded-lg border bg-slate-50 p-3">
-                        <p className="text-xs text-muted-foreground">수령 코드 (QR)</p>
-                        <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-center">
-                          <PickupQr value={pass.token} />
-                          <div className="space-y-1">
-                            <p className="text-lg font-bold tracking-wider">{pass.token}</p>
-                            <p className="text-xs text-muted-foreground">
-                              유효기간: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
-                            </p>
-                            <p className="text-xs font-semibold text-primary">
-                              {pass.usedAt ? `인증 완료 (${pass.usedAt})` : "관리실에서 QR 확인 대기 중"}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-2">
-                        <Button
-                          size="sm"
-                          onClick={() => void issueQr(report.id)}
-                          disabled={report.status === "picked_up" || issuingReportId === report.id}
-                        >
-                          {issuingReportId === report.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                          수령 QR 발급
-                        </Button>
-                      </div>
-                    )}
+            {myPickupPasses.map((pass) => (
+              <div key={pass.id} className="rounded-xl border p-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold">{pass.itemName ?? "분실물"}</p>
+                  {pass.usedAt ? (
+                    <Badge variant="secondary">수령 완료</Badge>
+                  ) : (
+                    <Badge>대기 중</Badge>
+                  )}
+                </div>
+                {pass.itemLocation ? <p className="text-muted-foreground">{pass.itemLocation}</p> : null}
+                <div className="mt-2 rounded-lg border bg-slate-50 p-3">
+                  <p className="text-xs text-muted-foreground">수령 코드 (QR)</p>
+                  <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-center">
+                    <PickupQr value={pass.token} />
+                    <div className="space-y-1">
+                      <p className="text-lg font-bold tracking-wider">{pass.token}</p>
+                      <p className="text-xs text-muted-foreground">
+                        유효기간: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
+                      </p>
+                      <p className="text-xs font-semibold text-primary">
+                        {pass.usedAt ? `인증 완료 (${pass.usedAt})` : "관리실에서 QR 확인 대기 중"}
+                      </p>
+                    </div>
                   </div>
-                );
-              })}
-            {pickupMessage ? <p className="text-sm font-semibold text-primary">{pickupMessage}</p> : null}
+                </div>
+                <Button asChild variant="outline" size="sm" className="mt-3">
+                  <Link href={`/lost/${pass.lostItemId}`}>해당 분실물 상세 보기</Link>
+                </Button>
+              </div>
+            ))}
           </CardContent>
         </Card>
 
