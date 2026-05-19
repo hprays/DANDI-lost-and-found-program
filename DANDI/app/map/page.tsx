@@ -14,22 +14,42 @@ export default function MapPage() {
   const osmMapRef = useRef<LeafletMap | null>(null);
   const osmMarkerRef = useRef<Map<string, LeafletMarker>>(new Map());
   const [mapReady, setMapReady] = useState(false);
+  const [geoLocation, setGeoLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let resizeHandler: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
     const markerMap = osmMarkerRef.current;
+    const resizeTimers: number[] = [];
 
     const initOsmMap = async () => {
       const L = await import("leaflet");
       if (cancelled || !mapRef.current || osmMapRef.current) return;
 
+      // 컨테이너 사이즈가 0이면 다음 프레임까지 잠깐 기다림 (라우팅 전환 직후 케이스)
+      let waitedFrames = 0;
+      while (
+        !cancelled &&
+        mapRef.current &&
+        (mapRef.current.clientWidth === 0 || mapRef.current.clientHeight === 0) &&
+        waitedFrames < 20
+      ) {
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        waitedFrames += 1;
+      }
+
+      if (cancelled || !mapRef.current || osmMapRef.current) return;
+
       const map = L.map(mapRef.current, {
         zoomControl: true,
+        preferCanvas: true,
       }).setView([37.3219, 127.1264], 16);
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
       }).addTo(map);
 
       const officeIcon = L.divIcon({
@@ -54,11 +74,12 @@ export default function MapPage() {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (position) => {
+            setGeoLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
             const myIcon = L.divIcon({
               className: "",
-              html: '<span style="display:inline-block;width:12px;height:12px;border-radius:9999px;background:#0ea5e9;border:2px solid #fff;box-shadow:0 0 0 1px rgba(15,23,42,.25)"></span>',
-              iconSize: [12, 12],
-              iconAnchor: [6, 6],
+              html: '<span style="display:inline-block;width:14px;height:14px;border-radius:9999px;background:#0ea5e9;border:2px solid #fff;box-shadow:0 0 0 4px rgba(14,165,233,.25)"></span>',
+              iconSize: [14, 14],
+              iconAnchor: [7, 7],
             });
 
             L.marker([position.coords.latitude, position.coords.longitude], {
@@ -67,20 +88,48 @@ export default function MapPage() {
               .addTo(map)
               .bindPopup("현재 위치");
           },
-          () => {},
-          { enableHighAccuracy: true, maximumAge: 60000 }
+          (err) => {
+            // 위치 정보 거부/오류 시 사용자 안내
+            const reason =
+              err.code === err.PERMISSION_DENIED
+                ? "브라우저 위치 권한이 거부되었습니다."
+                : err.code === err.POSITION_UNAVAILABLE
+                  ? "위치 정보를 가져올 수 없습니다."
+                  : err.code === err.TIMEOUT
+                    ? "위치 요청이 시간 초과되었습니다."
+                    : "위치 정보를 사용할 수 없습니다.";
+            setGeoError(reason);
+          },
+          { enableHighAccuracy: true, maximumAge: 60000, timeout: 8000 }
         );
+      } else {
+        setGeoError("이 브라우저에서 위치 정보를 지원하지 않습니다.");
       }
 
-      // 화면 전환 애니메이션 이후에도 타일이 보이도록 강제 리사이즈를 한 번 더 수행합니다.
-      window.setTimeout(() => {
-        map.invalidateSize();
-      }, 120);
+      // 페이지 전환/애니메이션 이후에도 타일이 보이도록 여러 번 invalidateSize 호출
+      [80, 200, 500, 1200].forEach((delay) => {
+        const tid = window.setTimeout(() => {
+          if (!cancelled && osmMapRef.current) {
+            osmMapRef.current.invalidateSize();
+          }
+        }, delay);
+        resizeTimers.push(tid);
+      });
 
       resizeHandler = () => {
         map.invalidateSize();
       };
       window.addEventListener("resize", resizeHandler);
+
+      // 컨테이너 사이즈 변경 감지 (모바일 회전, 브라우저 UI 변경 등)
+      if (typeof ResizeObserver !== "undefined" && mapRef.current) {
+        resizeObserver = new ResizeObserver(() => {
+          if (osmMapRef.current) {
+            osmMapRef.current.invalidateSize();
+          }
+        });
+        resizeObserver.observe(mapRef.current);
+      }
 
       osmMapRef.current = map;
       setMapReady(true);
@@ -90,8 +139,12 @@ export default function MapPage() {
 
     return () => {
       cancelled = true;
+      resizeTimers.forEach((tid) => window.clearTimeout(tid));
       if (resizeHandler) {
         window.removeEventListener("resize", resizeHandler);
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect();
       }
       if (osmMapRef.current) {
         osmMapRef.current.remove();
@@ -107,6 +160,11 @@ export default function MapPage() {
     osmMarkerRef.current.get(activeOffice.name)?.openPopup();
   }, [activeOffice, mapReady]);
 
+  const onMoveToCurrent = () => {
+    if (!osmMapRef.current || !geoLocation) return;
+    osmMapRef.current.setView([geoLocation.lat, geoLocation.lng], 17, { animate: true });
+  };
+
   return (
     <AppShell subtitle="관리실 위치와 운영시간을 확인해보세요.">
       <section className="space-y-4">
@@ -119,7 +177,17 @@ export default function MapPage() {
             <div className="relative h-72 rounded-xl border bg-slate-100">
               <div ref={mapRef} className="h-full w-full rounded-xl" />
               <Badge className="absolute left-3 top-3 bg-emerald-600">OpenStreetMap</Badge>
-              <div className="absolute bottom-3 left-3 rounded-md bg-primary px-3 py-1 text-xs text-white">현재 위치</div>
+              <button
+                type="button"
+                onClick={onMoveToCurrent}
+                disabled={!geoLocation}
+                className="absolute bottom-3 left-3 rounded-md bg-primary px-3 py-1 text-xs text-white shadow disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {geoLocation ? "현재 위치로 이동" : geoError ? "위치 사용 불가" : "위치 확인 중..."}
+              </button>
+              {geoError ? (
+                <Badge className="absolute right-3 top-3 bg-amber-500 text-[10px]">{geoError}</Badge>
+              ) : null}
             </div>
           </CardContent>
         </Card>

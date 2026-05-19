@@ -15,8 +15,29 @@ import { applyLostItemAdminChanges, type CustomLostItem, getCustomLostItems } fr
 
 export default function HomePage() {
   const [customItems] = useState<CustomLostItem[]>(() => getCustomLostItems());
+  const [selectedCategory, setSelectedCategory] = useState<string>("전체");
+  const [selectedBuilding, setSelectedBuilding] = useState<string>("전체");
+  const [searchKeyword, setSearchKeyword] = useState<string>("");
 
   const mergedItems = useMemo(() => applyLostItemAdminChanges([...customItems, ...lostItems]), [customItems]);
+
+  const filteredItems = useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+    return mergedItems.filter((item) => {
+      const categoryOk = selectedCategory === "전체" || item.category === selectedCategory;
+      const buildingOk =
+        selectedBuilding === "전체" ||
+        (item.place ?? "").toLowerCase().includes(selectedBuilding.toLowerCase());
+      const keywordOk =
+        keyword.length === 0 ||
+        [item.name, item.category, item.type, item.place, (item as { memo?: string }).memo]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(keyword);
+      return categoryOk && buildingOk && keywordOk;
+    });
+  }, [mergedItems, selectedCategory, selectedBuilding, searchKeyword]);
 
   return (
     <AppShell subtitle="분실물 현황을 실시간으로 확인해보세요.">
@@ -52,14 +73,24 @@ export default function HomePage() {
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="분실물 키워드 검색 (예: 에어팟, 검정 지갑)" className="pl-9" />
+            <Input
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+              placeholder="분실물 키워드 검색 (예: 에어팟, 검정 지갑)"
+              className="pl-9"
+            />
           </div>
 
           <div className="mt-4 space-y-2">
             <p className="text-xs font-semibold text-muted-foreground">카테고리 분류</p>
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {categories.map((category, idx) => (
-                <Badge key={category} variant={idx === 0 ? "default" : "outline"} className="cursor-pointer whitespace-nowrap px-3 py-1">
+              {categories.map((category) => (
+                <Badge
+                  key={category}
+                  variant={selectedCategory === category ? "default" : "outline"}
+                  className="cursor-pointer whitespace-nowrap px-3 py-1"
+                  onClick={() => setSelectedCategory(category)}
+                >
                   {category}
                 </Badge>
               ))}
@@ -69,17 +100,46 @@ export default function HomePage() {
           <div className="mt-4 space-y-2">
             <p className="text-xs font-semibold text-muted-foreground">건물별 분류</p>
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {buildings.map((building, idx) => (
-                <Badge key={building} variant={idx === 0 ? "default" : "secondary"} className="cursor-pointer whitespace-nowrap px-3 py-1">
+              {buildings.map((building) => (
+                <Badge
+                  key={building}
+                  variant={selectedBuilding === building ? "default" : "secondary"}
+                  className="cursor-pointer whitespace-nowrap px-3 py-1"
+                  onClick={() => setSelectedBuilding(building)}
+                >
                   {building}
                 </Badge>
               ))}
             </div>
           </div>
+
+          <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              총 <b className="text-foreground">{filteredItems.length}</b>건
+              {selectedCategory !== "전체" || selectedBuilding !== "전체" || searchKeyword ? (
+                <button
+                  type="button"
+                  className="ml-2 rounded-md border px-2 py-0.5 text-[11px] hover:bg-slate-50"
+                  onClick={() => {
+                    setSelectedCategory("전체");
+                    setSelectedBuilding("전체");
+                    setSearchKeyword("");
+                  }}
+                >
+                  필터 초기화
+                </button>
+              ) : null}
+            </span>
+          </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          {mergedItems.map((item) => (
+          {filteredItems.length === 0 ? (
+            <div className="md:col-span-2 rounded-xl border bg-white p-6 text-center text-sm text-muted-foreground">
+              조건에 맞는 분실물이 없습니다. 필터를 조정하거나 키워드를 다시 입력해 보세요.
+            </div>
+          ) : null}
+          {filteredItems.map((item) => (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
                 <div className="relative h-64 overflow-hidden bg-slate-100 md:h-72">

@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getAuthSession } from "@/lib/auth-session";
+import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
 
 export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
 
@@ -162,17 +163,27 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     },
   ]);
 
-  const [notices, setNotices] = useState<UserNotice[]>([
-    {
-      id: "n-1001",
-      title: "알림 설정이 활성화되었습니다",
-      message: "관심 키워드와 일치하는 습득물이 등록되면 바로 알려드려요.",
-      createdAt: shortDateTime(),
-      read: false,
-    },
-  ]);
+  const [notices, setNotices] = useState<UserNotice[]>(() => {
+    const stored = getStoredLocalNotices();
+    if (stored.length > 0) return stored;
+    return [
+      {
+        id: "n-1001",
+        title: "알림 설정이 활성화되었습니다",
+        message: "관심 키워드와 일치하는 습득물이 등록되면 바로 알려드려요.",
+        createdAt: shortDateTime(),
+        read: false,
+      },
+    ];
+  });
   const [noticesLoading, setNoticesLoading] = useState(false);
   const [noticesError, setNoticesError] = useState<string | null>(null);
+
+  // 로컬 알림(n- prefix)은 새로고침/세션 사이에 유지되도록 localStorage에 백업합니다.
+  useEffect(() => {
+    const localOnly = notices.filter((it) => it.id.startsWith("n-"));
+    setStoredLocalNotices(localOnly);
+  }, [notices]);
   const [adminAuditLogs, setAdminAuditLogs] = useState<AdminAuditLog[]>([
     {
       id: "a-1001",
@@ -188,7 +199,18 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     setNoticesError(null);
     try {
       const data = await apiJson<UserNotice[]>("/api/notices", { method: "GET" });
-      setNotices(Array.isArray(data) ? data : []);
+      const remote = Array.isArray(data) ? data : [];
+      // 로컬 알림(n- prefix)은 새로고침 후에도 유지되도록 백엔드 응답과 병합
+      setNotices((prev) => {
+        const localOnly = prev.filter((it) => it.id.startsWith("n-"));
+        const merged = [...remote, ...localOnly];
+        // id 중복 제거 (백엔드 우선)
+        const dedup = new Map<string, UserNotice>();
+        merged.forEach((notice) => {
+          if (!dedup.has(notice.id)) dedup.set(notice.id, notice);
+        });
+        return Array.from(dedup.values());
+      });
     } catch (error) {
       setNoticesError(error instanceof Error ? error.message : "알림 목록을 불러오지 못했습니다.");
     } finally {
@@ -519,21 +541,29 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           return { ok: false, message: "대상 알림을 찾을 수 없습니다." };
         }
 
+        // 낙관적 업데이트
         setNotices((prev) => prev.map((notice) => (notice.id === noticeId ? { ...notice, read: true } : notice)));
 
-        if (!API_BASE_URL) {
+        // 프론트 임시 알림(n- prefix)이거나 백엔드 미설정이면 로컬만 처리
+        if (!API_BASE_URL || noticeId.startsWith("n-")) {
           return { ok: true, message: "읽음 처리되었습니다." };
         }
 
         try {
+          // PATCH body 없이 호출 (백엔드 스펙: PATCH /api/notices/{id}/read)
           await apiJson<{ message?: string }>(`/api/notices/${noticeId}/read`, {
             method: "PATCH",
-            body: JSON.stringify({ read: true }),
           });
           return { ok: true, message: "읽음 처리되었습니다." };
         } catch (error) {
-          setNotices((prev) => prev.map((notice) => (notice.id === noticeId ? { ...notice, read: false } : notice)));
-          return { ok: false, message: error instanceof Error ? error.message : "알림 읽음 처리에 실패했습니다." };
+          // 백엔드 실패해도 사용자 경험상 읽음 상태는 유지 (다음 새로고침 때 동기화 시도)
+          return {
+            ok: true,
+            message:
+              error instanceof Error
+                ? `읽음 처리 (서버 연동 실패: ${error.message})`
+                : "읽음 처리 (서버 연동 실패)",
+          };
         }
       },
     }),

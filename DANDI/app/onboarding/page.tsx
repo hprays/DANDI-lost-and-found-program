@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getAuthSession, setAuthSession } from "@/lib/auth-session";
+import { extractStudentIdFromEmail, getAuthSession, setAuthSession } from "@/lib/auth-session";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
@@ -33,10 +33,6 @@ export default function OnboardingPage() {
       setMessage("이름과 학과를 입력해 주세요.");
       return;
     }
-    if (!API_BASE_URL) {
-      setMessage("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
-      return;
-    }
 
     const session = getAuthSession();
     if (!session?.accessToken) {
@@ -45,8 +41,31 @@ export default function OnboardingPage() {
       return;
     }
 
+    const trimmedName = name.trim();
+    const trimmedDepartment = department.trim();
+    const studentId = session.studentId ?? extractStudentIdFromEmail(session.email);
+
+    const persistSession = () => {
+      setAuthSession({
+        ...session,
+        profileCompleted: true,
+        name: trimmedName,
+        department: trimmedDepartment,
+        studentId,
+      });
+    };
+
     setLoading(true);
     setMessage("");
+
+    // 백엔드가 없거나 호출이 실패해도 로컬 세션은 진행되도록 폴백 처리
+    if (!API_BASE_URL) {
+      persistSession();
+      router.replace("/home");
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/users/me/profile`, {
         method: "PATCH",
@@ -55,8 +74,9 @@ export default function OnboardingPage() {
           Authorization: `Bearer ${session.accessToken}`,
         },
         body: JSON.stringify({
-          name: name.trim(),
-          department: department.trim(),
+          name: trimmedName,
+          department: trimmedDepartment,
+          studentId,
         }),
       });
 
@@ -68,17 +88,23 @@ export default function OnboardingPage() {
         } catch {
           // ignore parse error
         }
-        setMessage(serverMessage);
+        // 백엔드 실패해도 로컬에 저장하고 진행 (데모/오프라인 환경 대응)
+        persistSession();
+        setMessage(`${serverMessage} (로컬 세션으로 진행합니다.)`);
+        router.replace("/home");
         return;
       }
 
-      setAuthSession({
-        ...session,
-        profileCompleted: true,
-      });
+      persistSession();
       router.replace("/home");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "프로필 저장 중 오류가 발생했습니다.");
+      persistSession();
+      setMessage(
+        error instanceof Error
+          ? `${error.message} (로컬 세션으로 진행합니다.)`
+          : "프로필 저장 중 오류가 발생했지만 로컬 세션으로 진행합니다."
+      );
+      router.replace("/home");
     } finally {
       setLoading(false);
     }

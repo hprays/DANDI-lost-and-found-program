@@ -3,14 +3,32 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
-import { signInWithPopup } from "firebase/auth";
+import { signInWithPopup, type AuthError } from "firebase/auth";
 import { firebaseAuth, googleProvider } from "@/lib/firebase-client";
-import { setAuthSession } from "@/lib/auth-session";
+import { extractStudentIdFromEmail, isDankookEmail, setAuthSession } from "@/lib/auth-session";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 const AUTH_DEMO_MODE = process.env.NEXT_PUBLIC_AUTH_DEMO_MODE === "true";
+
+function toKoreanFirebaseError(error: unknown): string {
+  const code = (error as AuthError | undefined)?.code;
+  switch (code) {
+    case "auth/popup-closed-by-user":
+      return "로그인 창이 닫혔습니다. 다시 시도해 주세요.";
+    case "auth/cancelled-popup-request":
+    case "auth/popup-blocked":
+      return "팝업이 차단되었습니다. 브라우저 팝업 차단을 해제한 뒤 다시 시도해 주세요.";
+    case "auth/network-request-failed":
+      return "네트워크 연결이 불안정합니다. 잠시 후 다시 시도해 주세요.";
+    case "auth/internal-error":
+      return "내부 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+    default:
+      if (error instanceof Error) return error.message;
+      return "Google 로그인 중 오류가 발생했습니다.";
+  }
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,7 +37,7 @@ export default function LoginPage() {
 
   const onGoogleLogin = async () => {
     if (!AUTH_DEMO_MODE && !API_BASE_URL) {
-      setMessage("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
+      setMessage("백엔드 주소가 설정되지 않았습니다. 관리자에게 문의해 주세요.");
       return;
     }
 
@@ -27,9 +45,22 @@ export default function LoginPage() {
     setMessage("");
     try {
       const credential = await signInWithPopup(firebaseAuth, googleProvider);
+      const userEmail = credential.user.email ?? undefined;
+
+      // 단국대 이메일 도메인만 허용
+      if (!isDankookEmail(userEmail)) {
+        try {
+          await firebaseAuth.signOut();
+        } catch {
+          // ignore sign-out error
+        }
+        setMessage("단국대 이메일(@dankook.ac.kr)만 로그인 가능합니다.");
+        return;
+      }
+
       const firebaseIdToken = await credential.user.getIdToken();
       const userName = credential.user.displayName ?? undefined;
-      const userEmail = credential.user.email ?? undefined;
+      const studentId = extractStudentIdFromEmail(userEmail);
 
       if (AUTH_DEMO_MODE) {
         setAuthSession({
@@ -38,6 +69,7 @@ export default function LoginPage() {
           provider: "firebase-google",
           name: userName,
           email: userEmail,
+          studentId,
         });
         router.replace("/home");
         return;
@@ -67,6 +99,7 @@ export default function LoginPage() {
       const data = (await response.json()) as {
         accessToken?: string;
         profileCompleted?: boolean;
+        department?: string;
       };
 
       const accessToken = data.accessToken ?? firebaseIdToken;
@@ -77,11 +110,13 @@ export default function LoginPage() {
         provider: "firebase-google",
         name: userName,
         email: userEmail,
+        studentId,
+        department: data.department,
       });
 
       router.replace(profileCompleted ? "/home" : "/onboarding");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Google 로그인 중 오류가 발생했습니다.");
+      setMessage(toKoreanFirebaseError(error));
     } finally {
       setLoading(false);
     }
@@ -95,7 +130,7 @@ export default function LoginPage() {
             <Search className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-3xl">단디 로그인</CardTitle>
-          <CardDescription>단국대학교 계정으로 안전하게 로그인하세요.</CardDescription>
+          <CardDescription>단국대학교 계정(@dankook.ac.kr)으로 안전하게 로그인하세요.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Button className="w-full" onClick={onGoogleLogin} disabled={loading}>
