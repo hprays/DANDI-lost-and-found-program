@@ -13,6 +13,7 @@ export type LostReport = {
   lostAt: string;
   location: string;
   memo?: string;
+  image?: string;
   status: ReportStatus;
   createdAt: string;
   pickedUpAt?: string;
