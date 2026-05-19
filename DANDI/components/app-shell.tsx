@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { usePathname, useRouter } from "next/navigation";
 import { AppHeader } from "@/components/app-header";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { QAChatbot } from "@/components/qa-chatbot";
 import { getAuthSession, type AuthSession } from "@/lib/auth-session";
 
 export function AppShell({
@@ -16,6 +17,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const showChatbot = pathname === "/home" || pathname === "/map" || pathname === "/mypage";
   const [session, setSession] = useState<AuthSession | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
 
@@ -61,6 +63,7 @@ export function AppShell({
         {children}
       </motion.main>
       <MobileBottomNav />
+      {showChatbot ? <QAChatbot /> : null}
     </div>
   );
 }

@@ -107,10 +107,13 @@ export default function LoginPage() {
         accessToken?: string;
         profileCompleted?: boolean;
         department?: string;
+        isAdmin?: boolean;
+        role?: string;
       };
 
       const accessToken = data.accessToken ?? firebaseIdToken;
       const profileCompleted = Boolean(data.profileCompleted);
+      const backendAdmin = Boolean(data.isAdmin) || data.role === "ADMIN" || data.role === "ROLE_ADMIN";
       setAuthSession({
         accessToken,
         profileCompleted,
@@ -119,7 +122,7 @@ export default function LoginPage() {
         email: userEmail,
         studentId,
         department: data.department,
-        isAdmin: adminFlag,
+        isAdmin: backendAdmin || adminFlag,
       });
 
       router.replace(profileCompleted ? "/home" : "/onboarding");

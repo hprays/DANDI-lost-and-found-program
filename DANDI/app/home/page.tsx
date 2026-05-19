@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import { CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ItemImage } from "@/components/item-image";
-import { QAChatbot } from "@/components/qa-chatbot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -159,7 +158,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      <QAChatbot />
     </AppShell>
   );
 }
