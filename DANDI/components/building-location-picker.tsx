@@ -5,6 +5,9 @@ import { Label } from "@/components/ui/label";
 import { BUILDING_CUSTOM } from "@/lib/building-location";
 import { selectableBuildings } from "@/lib/mock-data";
 
+const selectClassName =
+  "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
+
 type BuildingLocationPickerProps = {
   idPrefix: string;
   label: string;
@@ -32,23 +35,23 @@ export function BuildingLocationPicker({
 }: BuildingLocationPickerProps) {
   const isCustom = building === BUILDING_CUSTOM;
 
+  const onBuildingSelect = (next: string) => {
+    onBuildingChange(next);
+    if (next === BUILDING_CUSTOM) {
+      onDetailChange("");
+    } else {
+      onCustomTextChange("");
+    }
+  };
+
   return (
     <div className="space-y-2">
       <Label htmlFor={`${idPrefix}-building`}>{label}</Label>
       <select
         id={`${idPrefix}-building`}
         value={building}
-        onChange={(e) => {
-          const next = e.target.value;
-          onBuildingChange(next);
-          if (next === BUILDING_CUSTOM) {
-            onDetailChange("");
-          } else {
-            onCustomTextChange("");
-          }
-        }}
-        size={8}
-        className="flex max-h-48 w-full overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        onChange={(e) => onBuildingSelect(e.target.value)}
+        className={selectClassName}
       >
         <option value="" disabled>
           건물을 선택하세요
@@ -60,7 +63,7 @@ export function BuildingLocationPicker({
         ))}
         <option value={BUILDING_CUSTOM}>직접 작성</option>
       </select>
-      <p className="text-xs text-muted-foreground">목록을 스크롤해 건물을 선택하거나, 맨 아래 직접 작성을 고르세요.</p>
+      <p className="text-xs text-muted-foreground">목록을 펼쳐 건물을 선택하거나, 맨 아래 직접 작성을 고르세요.</p>
 
       {isCustom ? (
         <div className="space-y-2">
