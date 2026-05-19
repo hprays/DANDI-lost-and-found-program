@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { CirclePlus, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ItemImage } from "@/components/item-image";
 import { Badge } from "@/components/ui/badge";
@@ -12,11 +12,30 @@ import { Input } from "@/components/ui/input";
 import { buildings, categories, lostItems } from "@/lib/mock-data";
 import { applyLostItemAdminChanges, type CustomLostItem, getCustomLostItems } from "@/lib/custom-lost-items";
 
+const ITEMS_PER_PAGE = 8;
+
+function getVisiblePages(current: number, total: number): Array<number | "ellipsis"> {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const pages: Array<number | "ellipsis"> = [1];
+  if (current > 3) pages.push("ellipsis");
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+  for (let page = start; page <= end; page += 1) {
+    pages.push(page);
+  }
+  if (current < total - 2) pages.push("ellipsis");
+  pages.push(total);
+  return pages;
+}
+
 export default function HomePage() {
   const [customItems] = useState<CustomLostItem[]>(() => getCustomLostItems());
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [selectedBuilding, setSelectedBuilding] = useState<string>("전체");
   const [searchKeyword, setSearchKeyword] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const mergedItems = useMemo(() => applyLostItemAdminChanges([...customItems, ...lostItems]), [customItems]);
 
@@ -37,6 +56,23 @@ export default function HomePage() {
       return categoryOk && buildingOk && keywordOk;
     });
   }, [mergedItems, selectedCategory, selectedBuilding, searchKeyword]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+
+  const paginatedItems = useMemo(() => {
+    const start = (safePage - 1) * ITEMS_PER_PAGE;
+    return filteredItems.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredItems, safePage]);
+
+  const visiblePages = useMemo(() => getVisiblePages(safePage, totalPages), [safePage, totalPages]);
+
+  const resetFilters = () => {
+    setSelectedCategory("전체");
+    setSelectedBuilding("전체");
+    setSearchKeyword("");
+    setCurrentPage(1);
+  };
 
   return (
     <AppShell subtitle="분실물 현황을 실시간으로 확인해보세요.">
@@ -74,7 +110,10 @@ export default function HomePage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
+              onChange={(e) => {
+                setSearchKeyword(e.target.value);
+                setCurrentPage(1);
+              }}
               placeholder="분실물 키워드 검색 (예: 에어팟, 검정 지갑)"
               className="pl-9"
             />
@@ -88,7 +127,10 @@ export default function HomePage() {
                   key={category}
                   variant={selectedCategory === category ? "default" : "outline"}
                   className="cursor-pointer whitespace-nowrap px-3 py-1"
-                  onClick={() => setSelectedCategory(category)}
+                  onClick={() => {
+                    setSelectedCategory(category);
+                    setCurrentPage(1);
+                  }}
                 >
                   {category}
                 </Badge>
@@ -104,7 +146,10 @@ export default function HomePage() {
                   key={building}
                   variant={selectedBuilding === building ? "default" : "secondary"}
                   className="cursor-pointer whitespace-nowrap px-3 py-1"
-                  onClick={() => setSelectedBuilding(building)}
+                  onClick={() => {
+                    setSelectedBuilding(building);
+                    setCurrentPage(1);
+                  }}
                 >
                   {building}
                 </Badge>
@@ -115,15 +160,16 @@ export default function HomePage() {
           <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
             <span>
               총 <b className="text-foreground">{filteredItems.length}</b>건
+              {filteredItems.length > 0 ? (
+                <span className="ml-1">
+                  · {safePage}/{totalPages}페이지
+                </span>
+              ) : null}
               {selectedCategory !== "전체" || selectedBuilding !== "전체" || searchKeyword ? (
                 <button
                   type="button"
                   className="ml-2 rounded-md border px-2 py-0.5 text-[11px] hover:bg-slate-50"
-                  onClick={() => {
-                    setSelectedCategory("전체");
-                    setSelectedBuilding("전체");
-                    setSearchKeyword("");
-                  }}
+                  onClick={resetFilters}
                 >
                   필터 초기화
                 </button>
@@ -138,7 +184,7 @@ export default function HomePage() {
               조건에 맞는 분실물이 없습니다. 필터를 조정하거나 키워드를 다시 입력해 보세요.
             </div>
           ) : null}
-          {filteredItems.map((item) => (
+          {paginatedItems.map((item) => (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
                 <div className="relative h-64 overflow-hidden bg-slate-100 md:h-72">
@@ -156,6 +202,58 @@ export default function HomePage() {
             </Link>
           ))}
         </div>
+
+        {filteredItems.length > 0 && totalPages > 1 ? (
+          <nav
+            className="flex flex-wrap items-center justify-center gap-1 rounded-2xl border bg-white px-3 py-3 shadow-sm"
+            aria-label="분실물 목록 페이지"
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2"
+              disabled={safePage <= 1}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              aria-label="이전 페이지"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+
+            {visiblePages.map((page, idx) =>
+              page === "ellipsis" ? (
+                <span key={`ellipsis-${idx}`} className="px-1 text-sm text-muted-foreground">
+                  …
+                </span>
+              ) : (
+                <Button
+                  key={page}
+                  type="button"
+                  variant={page === safePage ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 min-w-8 px-2"
+                  onClick={() => setCurrentPage(page)}
+                  aria-label={`${page}페이지`}
+                  aria-current={page === safePage ? "page" : undefined}
+                >
+                  {page}
+                </Button>
+              )
+            )}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-2"
+              disabled={safePage >= totalPages}
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              aria-label="다음 페이지"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </nav>
+        ) : null}
       </section>
 
     </AppShell>
