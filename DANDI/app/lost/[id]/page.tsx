@@ -13,17 +13,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchAIGuidance, useDandiState } from "@/lib/dandi-state";
 import { lostItems } from "@/lib/mock-data";
-import { applyLostItemAdminChanges, getCustomLostItems } from "@/lib/custom-lost-items";
+import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
+
+const USE_MOCK_LOST_ITEMS = process.env.NEXT_PUBLIC_ENABLE_MOCK_LOST_ITEMS === "true";
 
 export default function LostDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const itemId = id;
-  const { issuePickupPass, pickupPasses } = useDandiState();
-  const [customItems, setCustomItems] = useState(() => getCustomLostItems());
-  const item = useMemo(
-    () => applyLostItemAdminChanges([...customItems, ...lostItems]).find((it) => it.id === itemId) ?? null,
-    [customItems, itemId]
-  );
+  const { issuePickupPass, pickupPasses, homeLostItems } = useDandiState();
+  const item = useMemo(() => {
+    const published = applyLostItemAdminChanges(homeLostItems);
+    const merged = USE_MOCK_LOST_ITEMS ? applyLostItemAdminChanges([...published, ...lostItems]) : published;
+    return merged.find((it) => it.id === itemId) ?? null;
+  }, [homeLostItems, itemId]);
   const itemMemo = (item as { memo?: string } | null)?.memo?.trim() ?? "";
   const [aiGuide, setAiGuide] = useState<{ cautionTitle: string; cautions: string[]; chatbotTips: string[] } | null>(null);
   const loading = item !== null && aiGuide === null;
@@ -50,15 +52,6 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
       setIssuingPickup(false);
     }
   };
-
-  useEffect(() => {
-    const rafId = window.requestAnimationFrame(() => {
-      setCustomItems(getCustomLostItems());
-    });
-    return () => {
-      window.cancelAnimationFrame(rafId);
-    };
-  }, []);
 
   useEffect(() => {
     if (!item) return;

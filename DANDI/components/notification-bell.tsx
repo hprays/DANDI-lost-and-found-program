@@ -6,51 +6,37 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  getMockNotificationsWithReadState,
-  markMockNotificationRead,
-  type MockNotification,
-} from "@/lib/mock-notifications";
+import { useDandiState } from "@/lib/dandi-state";
 
 export function NotificationBell() {
+  const { notices, noticesLoading, refreshNotices, markNoticeRead } = useDandiState();
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<MockNotification | null>(null);
-  const [items, setItems] = useState<MockNotification[]>(() => getMockNotificationsWithReadState());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const unreadCount = useMemo(() => items.filter((n) => !n.read).length, [items]);
-
-  const refreshItems = () => setItems(getMockNotificationsWithReadState());
+  const unreadCount = useMemo(() => notices.filter((n) => !n.read).length, [notices]);
+  const selected = useMemo(
+    () => notices.find((notice) => notice.id === selectedId) ?? null,
+    [notices, selectedId]
+  );
 
   const onOpen = () => {
-    setSelected(null);
-    refreshItems();
+    setSelectedId(null);
+    void refreshNotices();
     setOpen(true);
   };
 
   const onClose = () => {
     setOpen(false);
-    setSelected(null);
+    setSelectedId(null);
   };
 
-  const onSelect = (notice: MockNotification) => {
-    if (!notice.read) {
-      markMockNotificationRead(notice.id);
-      setItems((prev) => prev.map((n) => (n.id === notice.id ? { ...n, read: true } : n)));
+  const onSelect = async (noticeId: string) => {
+    const target = notices.find((notice) => notice.id === noticeId);
+    if (!target) return;
+    if (!target.read) {
+      await markNoticeRead(noticeId);
     }
-    setSelected(notice);
-  };
-
-  const typeLabel = (type: MockNotification["type"]) => {
-    switch (type) {
-      case "report":
-        return "신고";
-      case "pickup":
-        return "수령";
-      case "match":
-        return "매칭";
-      default:
-        return "안내";
-    }
+    setSelectedId(noticeId);
   };
 
   return (
@@ -92,56 +78,57 @@ export function NotificationBell() {
             >
               <Card className="max-h-[70vh] overflow-hidden shadow-xl">
                 <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="flex items-center gap-2">
+                  <motion.div className="flex items-center gap-2">
                     {selected ? (
-                      <Button type="button" size="icon" variant="ghost" onClick={() => setSelected(null)} aria-label="목록으로">
+                      <Button type="button" size="icon" variant="ghost" onClick={() => setSelectedId(null)} aria-label="목록으로">
                         <ChevronLeft className="h-4 w-4" />
                       </Button>
                     ) : null}
                     <CardTitle className="text-base">{selected ? "알림 상세" : "알림"}</CardTitle>
-                  </div>
+                  </motion.div>
                   <Button type="button" size="icon" variant="ghost" onClick={onClose} aria-label="닫기">
                     <X className="h-4 w-4" />
                   </Button>
                 </CardHeader>
                 <CardContent className="max-h-[calc(70vh-4rem)] overflow-y-auto">
-                  {selected ? (
+                  {noticesLoading ? (
+                    <p className="py-6 text-center text-sm text-muted-foreground">알림을 불러오는 중…</p>
+                  ) : selected ? (
                     <motion.div
                       key={selected.id}
                       initial={{ opacity: 0, x: 8 }}
                       animate={{ opacity: 1, x: 0 }}
                       className="space-y-3"
                     >
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary">{typeLabel(selected.type)}</Badge>
+                      <motion.div className="flex items-center gap-2">
+                        <Badge variant="secondary">알림</Badge>
                         <span className="text-xs text-muted-foreground">{selected.createdAt}</span>
-                      </div>
+                      </motion.div>
                       <p className="text-sm font-semibold">{selected.title}</p>
-                      <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{selected.detail}</p>
-                      <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                        실제 알림은 백엔드 GET /api/notices 연동 후 마이페이지 알림함과 동기화됩니다.
-                      </p>
+                      <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{selected.message}</p>
                     </motion.div>
+                  ) : notices.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-muted-foreground">새 알림이 없습니다.</p>
                   ) : (
                     <ul className="space-y-2">
-                      {items.map((notice) => (
+                      {notices.map((notice) => (
                         <li key={notice.id}>
                           <button
                             type="button"
-                            onClick={() => onSelect(notice)}
+                            onClick={() => void onSelect(notice.id)}
                             className={`w-full rounded-xl border p-3 text-left transition hover:border-primary/40 ${
                               notice.read ? "bg-white" : "border-primary/30 bg-primary/5"
                             }`}
                           >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
+                            <motion.div className="flex items-start justify-between gap-2">
+                              <motion.div className="min-w-0">
                                 <p className="truncate text-sm font-semibold">{notice.title}</p>
-                                <p className="mt-0.5 truncate text-xs text-muted-foreground">{notice.summary}</p>
-                              </div>
+                                <p className="mt-0.5 truncate text-xs text-muted-foreground">{notice.message}</p>
+                              </motion.div>
                               {!notice.read ? (
                                 <Badge className="shrink-0 bg-red-500 text-[10px]">NEW</Badge>
                               ) : null}
-                            </div>
+                            </motion.div>
                             <p className="mt-1 text-[11px] text-muted-foreground">{notice.createdAt}</p>
                           </button>
                         </li>

@@ -13,17 +13,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  addCustomLostItem,
-  applyLostItemAdminChanges,
-  deleteCustomLostItem,
-  getCustomLostItems,
-  markLostItemDeleted,
-  setLostItemOverride,
-  updateCustomLostItem,
-} from "@/lib/custom-lost-items";
+import { applyLostItemAdminChanges, markLostItemDeleted, setLostItemOverride } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
-import { categories, lostItems } from "@/lib/mock-data";
+import { categories } from "@/lib/mock-data";
 
 const selectableCategories = categories.filter((c) => c !== "전체");
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -70,8 +62,19 @@ function buildManageDraft(item: { name?: string; category?: string; type?: strin
 
 export default function AdminPage() {
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
-  const { reports, resolveReport, pickupPasses, verifyPickupPass, adminAuditLogs, apiConfigured, apiBaseUrl, submitReport } =
-    useDandiState();
+  const {
+    reports,
+    resolveReport,
+    pickupPasses,
+    verifyPickupPass,
+    adminAuditLogs,
+    apiConfigured,
+    apiBaseUrl,
+    submitReport,
+    homeLostItems,
+    updateHomeLostItem,
+    removeHomeLostItem,
+  } = useDandiState();
 
   const [adminCheckSession, setAdminCheckSession] = useState<AuthSession | null>(null);
   const [adminChecked, setAdminChecked] = useState(false);
@@ -122,8 +125,7 @@ export default function AdminPage() {
 
   const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
-  const customIdSet = new Set(getCustomLostItems().map((item) => item.id));
-  const managedItems = applyLostItemAdminChanges([...getCustomLostItems(), ...lostItems]);
+  const managedItems = useMemo(() => applyLostItemAdminChanges(homeLostItems), [homeLostItems]);
 
   const registerItem = async () => {
     if (!regName.trim() || !regCategory.trim() || !regLocation.trim() || !regFoundAt || !regStorage.trim()) {
@@ -132,21 +134,26 @@ export default function AdminPage() {
     }
 
     setRegistering(true);
-    const foundAtLabel = new Date(regFoundAt).toLocaleString("ko-KR", { hour12: false });
-
     // 관리자 등록 시에도 검수 대기 목록으로 들어가도록 신고 레코드를 함께 생성합니다.
     const submitResult = await submitReport({
       itemName: regName.trim(),
       category: regCategory.trim(),
       lostAt: regFoundAt,
       location: regLocation.trim(),
+      storage: regStorage.trim(),
       memo: regMemo.trim(),
       image: visionDataUrl ?? undefined,
     });
 
+    if (!submitResult.ok) {
+      setRegMessage(submitResult.message);
+      setRegistering(false);
+      return;
+    }
+
     setRegisteredItems((prev) => [
       {
-        id: `adm-${Date.now()}`,
+        id: submitResult.reportId ?? `adm-${Date.now()}`,
         name: regName.trim(),
         category: regCategory.trim(),
         location: regLocation.trim(),
@@ -155,16 +162,6 @@ export default function AdminPage() {
       },
       ...prev,
     ]);
-    addCustomLostItem({
-      id: `c-${Date.now()}`,
-      name: regName.trim(),
-      category: regCategory.trim(),
-      type: "관리자 등록",
-      memo: regMemo.trim(),
-      place: regLocation.trim(),
-      time: foundAtLabel,
-      image: visionDataUrl ?? undefined,
-    });
 
     setRegName("");
     setRegCategory(selectableCategories[0] ?? "기타");
@@ -175,7 +172,7 @@ export default function AdminPage() {
     setVisionDataUrl(null);
     setVisionPreview(null);
     setVisionFile(null);
-    setRegMessage(submitResult.ok ? "등록 완료되었습니다. 검수 대기에 반영되었습니다." : "등록은 완료되었지만 검수 대기 연동에 실패했습니다.");
+    setRegMessage("등록 완료되었습니다. 검수 대기에서 습득 완료 처리 후 홈에 노출됩니다.");
     setRegistering(false);
   };
 
@@ -455,35 +452,39 @@ export default function AdminPage() {
     if (!origin) return;
     const draft = manageDrafts[itemId] ?? buildManageDraft(origin);
 
-    if (!draft.name.trim() || !draft.category.trim() || !draft.place.trim() || !draft.foundAt.trim()) {
-      setManageMessage("물품명, 카테고리, 습득 위치, 습득 시간을 입력해 주세요.");
+    const savedTime = draft.foundAt.trim()
+      ? formatFoundAtLabel(draft.foundAt) || draft.foundAt.trim()
+      : (origin.time?.trim() ?? "");
+
+    if (!draft.name.trim() || !draft.category.trim() || !draft.place.trim()) {
+      setManageMessage("물품명, 카테고리, 습득 위치를 입력해 주세요.");
       return;
     }
 
     const patch = {
       name: draft.name.trim(),
       category: draft.category.trim(),
-      type: draft.type.trim() || "미지정",
+      type: draft.type.trim() || undefined,
       place: draft.place.trim(),
-      time: formatFoundAtLabel(draft.foundAt) || draft.foundAt.trim(),
+      time: savedTime,
       storage: draft.storage.trim(),
       memo: draft.memo.trim(),
       image: draft.image || undefined,
     };
 
-    if (customIdSet.has(itemId)) {
-      updateCustomLostItem(itemId, patch);
-    } else {
-      setLostItemOverride(itemId, patch);
-    }
+    updateHomeLostItem(itemId, patch);
+    setLostItemOverride(itemId, patch);
+    setManageDrafts((prev) => {
+      const next = { ...prev };
+      delete next[itemId];
+      return next;
+    });
     setManageMessage("관리자 수정이 저장되었습니다.");
   };
 
   const onDeleteManagedItem = (itemId: string) => {
     markLostItemDeleted(itemId);
-    if (customIdSet.has(itemId)) {
-      deleteCustomLostItem(itemId);
-    }
+    removeHomeLostItem(itemId);
     setManageMessage("해당 물품을 삭제했습니다.");
   };
 
@@ -580,7 +581,7 @@ export default function AdminPage() {
 
         <Tabs defaultValue="register">
           <TabsList className="grid w-full grid-cols-6">
-            <TabsTrigger value="register">물품 등록</TabsTrigger>
+            <TabsTrigger value="register">관리자 분실물 등록</TabsTrigger>
             <TabsTrigger value="manage">물품 관리</TabsTrigger>
             <TabsTrigger value="pending">검수 대기</TabsTrigger>
             <TabsTrigger value="pickup">수령 인증</TabsTrigger>
@@ -591,7 +592,7 @@ export default function AdminPage() {
           <TabsContent value="register" className="space-y-3">
             <Card>
               <CardHeader>
-                <CardTitle>관리자 물품 등록</CardTitle>
+                <CardTitle>관리자 분실물 등록</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -742,7 +743,9 @@ export default function AdminPage() {
               <CardContent className="space-y-3">
                 {manageMessage ? <p className="text-sm font-semibold text-primary">{manageMessage}</p> : null}
                 {managedItems.length === 0 ? (
-                  <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">관리할 물품이 없습니다.</p>
+                  <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
+                    습득 완료 처리된 물품만 관리할 수 있습니다. 검수 대기에서 습득 완료 후 이 목록에 표시됩니다.
+                  </p>
                 ) : (
                   managedItems.map((item) => {
                     const draft = manageDrafts[item.id] ?? buildManageDraft(item);
@@ -837,7 +840,7 @@ export default function AdminPage() {
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor={`manage-type-${item.id}`}>종류</Label>
+                          <Label htmlFor={`manage-type-${item.id}`}>물품 상세종류</Label>
                           <Input
                             id={`manage-type-${item.id}`}
                             value={draft.type}
@@ -896,6 +899,7 @@ export default function AdminPage() {
                     </div>
                     <div className="space-y-1 text-sm text-muted-foreground">
                       <p>위치: {report.location}</p>
+                      {report.storage ? <p>보관 장소: {report.storage}</p> : null}
                       <p>분실/습득 일시: {report.lostAt || "-"}</p>
                       <p>접수: {report.createdAt}</p>
                       {report.ownerName || report.ownerEmail ? (

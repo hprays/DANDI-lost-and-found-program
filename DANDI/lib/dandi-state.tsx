@@ -2,6 +2,15 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getAuthSession } from "@/lib/auth-session";
+import {
+  getPublishedLostItems,
+  mapApiLostItem,
+  removePublishedLostItem,
+  reportToPublishedItem,
+  setPublishedLostItems,
+  upsertPublishedLostItem,
+  type PublishedLostItem,
+} from "@/lib/published-lost-items";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
 
 export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
@@ -14,6 +23,8 @@ export type LostReport = {
   location: string;
   memo?: string;
   image?: string;
+  itemType?: string;
+  storage?: string;
   status: ReportStatus;
   createdAt: string;
   pickedUpAt?: string;
@@ -66,6 +77,8 @@ export type PickupVerifyResult = {
 
 type DandiStateContextValue = {
   reports: LostReport[];
+  homeLostItems: PublishedLostItem[];
+  catalogVersion: number;
   notices: UserNotice[];
   noticesLoading: boolean;
   noticesError: string | null;
@@ -78,10 +91,14 @@ type DandiStateContextValue = {
     reportId: string,
     status: Extract<ReportStatus, "resolved" | "unavailable">
   ) => Promise<{ ok: boolean; message: string }>;
+  updateHomeLostItem: (itemId: string, patch: Partial<PublishedLostItem>) => void;
+  removeHomeLostItem: (itemId: string) => void;
   issuePickupPass: (payload: PickupIssuePayload) => Promise<{ ok: boolean; message: string; token?: string; pass?: PickupPass }>;
   verifyPickupPass: (token: string) => Promise<PickupVerifyResult>;
   deleteReport: (reportId: string) => Promise<{ ok: boolean; message: string }>;
   refreshNotices: () => Promise<void>;
+  refreshReports: () => Promise<void>;
+  refreshHomeCatalog: () => Promise<void>;
   markNoticeRead: (noticeId: string) => Promise<{ ok: boolean; message: string }>;
 };
 
@@ -152,9 +169,82 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function normalizeReport(raw: Record<string, unknown>): LostReport | null {
+  const id = raw.id ?? raw.reportId;
+  const itemName = raw.itemName ?? raw.name;
+  if (id == null || itemName == null) return null;
+  const status = (raw.status as ReportStatus) ?? "pending";
+  return {
+    id: String(id),
+    itemName: String(itemName),
+    category: String(raw.category ?? "기타"),
+    lostAt: String(raw.lostAt ?? raw.foundAt ?? ""),
+    location: String(raw.location ?? raw.place ?? ""),
+    memo: raw.memo != null ? String(raw.memo) : undefined,
+    image: raw.image != null ? String(raw.image) : undefined,
+    itemType: raw.itemType != null ? String(raw.itemType) : raw.type != null ? String(raw.type) : undefined,
+    storage: raw.storage != null ? String(raw.storage) : undefined,
+    status,
+    createdAt: String(raw.createdAt ?? shortDateTime()),
+    pickedUpAt: raw.pickedUpAt != null ? String(raw.pickedUpAt) : undefined,
+    ownerEmail: raw.ownerEmail != null ? String(raw.ownerEmail) : undefined,
+    ownerName: raw.ownerName != null ? String(raw.ownerName) : undefined,
+  };
+}
+
+function extractReportList(payload: unknown): LostReport[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === "object"
+      ? ((payload as { content?: unknown[]; data?: unknown[]; items?: unknown[] }).content ??
+        (payload as { data?: unknown[] }).data ??
+        (payload as { items?: unknown[] }).items ??
+        [])
+      : [];
+  return list
+    .map((row) => normalizeReport(row as Record<string, unknown>))
+    .filter((row): row is LostReport => row !== null);
+}
+
+function extractLostItemList(payload: unknown): PublishedLostItem[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === "object"
+      ? ((payload as { content?: unknown[]; data?: unknown[]; items?: unknown[] }).content ??
+        (payload as { data?: unknown[] }).data ??
+        (payload as { items?: unknown[] }).items ??
+        [])
+      : [];
+  return list
+    .map((row) => mapApiLostItem(row as Record<string, unknown>))
+    .filter((row): row is PublishedLostItem => row !== null);
+}
+
+async function publishLostItemToApi(report: LostReport) {
+  if (!API_BASE_URL) return;
+  await apiJson<{ id?: string; lostItemId?: string; message?: string }>("/api/lost-items", {
+    method: "POST",
+    body: JSON.stringify({
+      reportId: report.id,
+      name: report.itemName,
+      itemName: report.itemName,
+      category: report.category,
+      location: report.location,
+      place: report.location,
+      lostAt: report.lostAt,
+      foundAt: report.lostAt,
+      memo: report.memo,
+      itemType: report.itemType,
+      storage: report.storage,
+      image: report.image,
+    }),
+  });
+}
+
 export function DandiStateProvider({ children }: { children: React.ReactNode }) {
-  // 더미 reports는 제거 — 실제 신고만 노출되도록 함
   const [reports, setReports] = useState<LostReport[]>([]);
+  const [homeLostItems, setHomeLostItems] = useState<PublishedLostItem[]>([]);
+  const [catalogVersion, setCatalogVersion] = useState(0);
 
   const [notices, setNotices] = useState<UserNotice[]>(() => {
     const stored = getStoredLocalNotices();
@@ -186,6 +276,55 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
   ]);
   const [pickupPasses, setPickupPasses] = useState<PickupPass[]>([]);
 
+  const applyCatalogMerge = useCallback((reportList: LostReport[], remoteItems: PublishedLostItem[] = []) => {
+    const resolvedPublished = reportList.filter((r) => r.status === "resolved").map(reportToPublishedItem);
+    const localPublished = getPublishedLostItems();
+    const merged = new Map<string, PublishedLostItem>();
+    remoteItems.forEach((item) => merged.set(item.id, item));
+    localPublished.forEach((item) => merged.set(item.id, item));
+    resolvedPublished.forEach((item) => merged.set(item.id, item));
+    const next = Array.from(merged.values());
+    setPublishedLostItems(next);
+    setHomeLostItems(next);
+    setCatalogVersion((v) => v + 1);
+  }, []);
+
+  const refreshHomeCatalog = useCallback(async () => {
+    let remoteItems: PublishedLostItem[] = [];
+    if (API_BASE_URL) {
+      try {
+        remoteItems = extractLostItemList(await apiJson<unknown>("/api/lost-items", { method: "GET" }));
+      } catch {
+        try {
+          remoteItems = extractLostItemList(await apiJson<unknown>("/lost-items", { method: "GET" }));
+        } catch {
+          remoteItems = [];
+        }
+      }
+    }
+    setReports((current) => {
+      applyCatalogMerge(current, remoteItems);
+      return current;
+    });
+  }, [applyCatalogMerge]);
+
+  const refreshReports = useCallback(async () => {
+    if (!API_BASE_URL) return;
+    try {
+      const remote = extractReportList(await apiJson<unknown>("/api/reports", { method: "GET" }));
+      setReports((prev) => {
+        const map = new Map<string, LostReport>();
+        prev.forEach((r) => map.set(r.id, r));
+        remote.forEach((r) => map.set(r.id, r));
+        const merged = Array.from(map.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        applyCatalogMerge(merged, []);
+        return merged;
+      });
+    } catch {
+      // GET 미지원 백엔드는 로컬 reports 유지
+    }
+  }, [applyCatalogMerge]);
+
   const refreshNotices = useCallback(async () => {
     if (!API_BASE_URL) return;
     setNoticesLoading(true);
@@ -213,11 +352,15 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     void refreshNotices();
-  }, [refreshNotices]);
+    void refreshReports();
+    void refreshHomeCatalog();
+  }, [refreshNotices, refreshReports, refreshHomeCatalog]);
 
   const value = useMemo<DandiStateContextValue>(
     () => ({
       reports,
+      homeLostItems,
+      catalogVersion,
       notices,
       noticesLoading,
       noticesError,
@@ -246,17 +389,12 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             ownerEmail,
             ownerName,
           };
-          setReports((prev) => [report, ...prev.filter((it) => it.id !== reportId)]);
-          setNotices((prev) => [
-            {
-              id: `n-${Date.now()}`,
-              title: "분실물 신고가 접수되었습니다",
-              message: "관리자 확인 후 처리 결과를 알려드릴게요.",
-              createdAt: shortDateTime(),
-              read: false,
-            },
-            ...prev,
-          ]);
+          setReports((prev) => {
+            const next = [report, ...prev.filter((it) => it.id !== reportId)];
+            applyCatalogMerge(next, []);
+            return next;
+          });
+          void refreshNotices();
           return { ok: true, message: data.message ?? "신고가 접수되었습니다.", reportId };
         } catch (error) {
           const fallbackReportId = `r-local-${Date.now()}`;
@@ -268,34 +406,45 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             ownerEmail,
             ownerName,
           };
-          setReports((prev) => [fallbackReport, ...prev.filter((it) => it.id !== fallbackReportId)]);
-          setNotices((prev) => [
-            {
-              id: `n-${Date.now()}`,
-              title: "분실물 신고가 접수되었습니다",
-              message: "백엔드 연동 실패로 임시 대기 목록에 반영되었습니다.",
-              createdAt: shortDateTime(),
-              read: false,
-            },
-            ...prev,
-          ]);
+          setReports((prev) => {
+            const next = [fallbackReport, ...prev.filter((it) => it.id !== fallbackReportId)];
+            applyCatalogMerge(next, []);
+            return next;
+          });
           return {
-            ok: true,
+            ok: false,
             message:
               error instanceof Error
-                ? `백엔드 연동 실패로 임시 반영되었습니다. (${error.message})`
-                : "백엔드 연동 실패로 임시 반영되었습니다.",
+                ? `신고 접수에 실패했습니다. (${error.message})`
+                : "신고 접수에 실패했습니다.",
             reportId: fallbackReportId,
           };
         }
       },
       resolveReport: async (reportId, status) => {
-        try {
-          await apiJson<{ message?: string }>(`/api/reports/${reportId}/status`, {
-            method: "PATCH",
-            body: JSON.stringify({ status }),
+        const applyResolved = async (fromBackend: boolean) => {
+          let updatedReport: LostReport | null = null;
+          setReports((prev) => {
+            const sourceReport = prev.find((report) => report.id === reportId);
+            if (!sourceReport) return prev;
+            updatedReport = { ...sourceReport, status };
+            const next = prev.map((report) => (report.id === reportId ? updatedReport! : report));
+            if (status === "resolved") {
+              upsertPublishedLostItem(reportToPublishedItem(updatedReport));
+            } else {
+              removePublishedLostItem(reportId);
+            }
+            applyCatalogMerge(next, []);
+            return next;
           });
-          setReports((prev) => prev.map((report) => (report.id === reportId ? { ...report, status } : report)));
+          if (status === "resolved" && updatedReport && fromBackend) {
+            try {
+              await publishLostItemToApi(updatedReport);
+              await refreshHomeCatalog();
+            } catch {
+              // 백엔드 lost-items 미구현 시 로컬 카탈로그만 유지
+            }
+          }
           setAdminAuditLogs((prev) => [
             {
               id: `a-${Date.now()}`,
@@ -304,52 +453,57 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             },
             ...prev,
           ]);
-          setNotices((prev) => [
-            {
-              id: `n-${Date.now()}`,
-              title: status === "resolved" ? "습득 완료 알림" : "습득 불가 알림",
-              message:
-                status === "resolved"
-                  ? "신고하신 물품이 확인되었습니다. 지도에서 관리실 위치를 확인해 주세요."
-                  : "신고하신 물품은 아직 습득되지 않았습니다. 알림은 계속 유지됩니다.",
-              createdAt: shortDateTime(),
-              read: false,
-            },
-            ...prev,
-          ]);
-          return { ok: true, message: "상태 변경이 완료되었습니다." };
+          await refreshNotices();
+        };
+
+        try {
+          await apiJson<{ message?: string }>(`/api/reports/${reportId}/status`, {
+            method: "PATCH",
+            body: JSON.stringify({ status }),
+          });
+          await applyResolved(true);
+          return { ok: true, message: "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다." };
         } catch (error) {
-          // 백엔드 실패 시에도 데모/로컬 검증이 가능하도록 상태를 임시 반영합니다.
-          setReports((prev) => prev.map((report) => (report.id === reportId ? { ...report, status } : report)));
-          setAdminAuditLogs((prev) => [
-            {
-              id: `a-${Date.now()}`,
-              message: `${reportId} 신고건을 ${status === "resolved" ? "습득 완료" : "습득 불가"}로 임시 반영했습니다.`,
-              createdAt: shortDateTime(),
-            },
-            ...prev,
-          ]);
-          setNotices((prev) => [
-            {
-              id: `n-${Date.now()}`,
-              title: status === "resolved" ? "습득 완료 알림" : "습득 불가 알림",
-              message:
-                status === "resolved"
-                  ? "신고하신 물품이 확인되었습니다. 지도에서 관리실 위치를 확인해 주세요."
-                  : "신고하신 물품은 아직 습득되지 않았습니다. 알림은 계속 유지됩니다.",
-              createdAt: shortDateTime(),
-              read: false,
-            },
-            ...prev,
-          ]);
+          if (!API_BASE_URL) {
+            await applyResolved(false);
+            return { ok: true, message: "상태 변경이 완료되었습니다." };
+          }
           return {
-            ok: true,
-            message:
-              error instanceof Error
-                ? `백엔드 연동 실패로 임시 반영되었습니다. (${error.message})`
-                : "백엔드 연동 실패로 임시 반영되었습니다.",
+            ok: false,
+            message: error instanceof Error ? error.message : "상태 변경에 실패했습니다.",
           };
         }
+      },
+      updateHomeLostItem: (itemId, patch) => {
+        const current = getPublishedLostItems();
+        const target = current.find((it) => it.id === itemId) ?? homeLostItems.find((it) => it.id === itemId);
+        if (!target) return;
+        const updated = { ...target, ...patch };
+        upsertPublishedLostItem(updated);
+        setHomeLostItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, ...patch } : it)));
+        setCatalogVersion((v) => v + 1);
+        if (API_BASE_URL) {
+          void apiJson(`/api/lost-items/${itemId}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              name: updated.name,
+              itemName: updated.name,
+              category: updated.category,
+              location: updated.place,
+              place: updated.place,
+              foundAt: updated.time,
+              memo: updated.memo,
+              itemType: updated.type,
+              storage: updated.storage,
+              image: updated.image,
+            }),
+          }).catch(() => undefined);
+        }
+      },
+      removeHomeLostItem: (itemId) => {
+        removePublishedLostItem(itemId);
+        setHomeLostItems((prev) => prev.filter((it) => it.id !== itemId));
+        setCatalogVersion((v) => v + 1);
       },
       issuePickupPass: async (payload) => {
         if (!payload?.lostItemId) {
@@ -377,16 +531,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
         const finalize = (pass: PickupPass, message: string) => {
           setPickupPasses((prev) => [pass, ...prev.filter((it) => it.id !== pass.id)]);
-          setNotices((prev) => [
-            {
-              id: `n-${Date.now()}`,
-              title: "수령 QR이 발급되었습니다",
-              message: `${payload.itemName ? `[${payload.itemName}] ` : ""}관리실에서 QR을 제시해 본인 확인을 진행해 주세요. (10분 유효)`,
-              createdAt: shortDateTime(),
-              read: false,
-            },
-            ...prev,
-          ]);
+          void refreshNotices();
           return { ok: true, message, token: pass.token, pass };
         };
 
@@ -441,11 +586,19 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             prev.map((it) => (it.token.toUpperCase() === normalized ? { ...it, usedAt } : it))
           );
           if (pass.reportId) {
-            setReports((prev) =>
-              prev.map((report) =>
+            setReports((prev) => {
+              const next = prev.map((report) =>
                 report.id === pass.reportId ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report
-              )
-            );
+              );
+              removePublishedLostItem(pass.reportId);
+              applyCatalogMerge(next, []);
+              return next;
+            });
+          }
+          if (pass.lostItemId) {
+            removePublishedLostItem(pass.lostItemId);
+            setHomeLostItems((prev) => prev.filter((it) => it.id !== pass.lostItemId));
+            setCatalogVersion((v) => v + 1);
           }
           setAdminAuditLogs((prev) => [
             {
@@ -455,16 +608,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             },
             ...prev,
           ]);
-          setNotices((prev) => [
-            {
-              id: `n-${Date.now()}`,
-              title: "최종 수령 완료",
-              message: `${pass.itemName ?? "물품"} 수령이 마무리되었습니다.`,
-              createdAt: usedAt,
-              read: false,
-            },
-            ...prev,
-          ]);
+          void refreshNotices();
           return { ok: true, message, pass: { ...pass, usedAt } };
         };
 
@@ -553,6 +697,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         }
       },
       refreshNotices,
+      refreshReports,
+      refreshHomeCatalog,
       markNoticeRead: async (noticeId) => {
         const target = notices.find((notice) => notice.id === noticeId);
         if (!target) {
@@ -587,11 +733,16 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     }),
     [
       adminAuditLogs,
+      applyCatalogMerge,
+      catalogVersion,
+      homeLostItems,
       notices,
       noticesError,
       noticesLoading,
       pickupPasses,
+      refreshHomeCatalog,
       refreshNotices,
+      refreshReports,
       reports,
     ]
   );

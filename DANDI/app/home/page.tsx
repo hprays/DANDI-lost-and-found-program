@@ -9,10 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
+import { useDandiState } from "@/lib/dandi-state";
 import { buildings, categories, lostItems } from "@/lib/mock-data";
-import { applyLostItemAdminChanges, type CustomLostItem, getCustomLostItems } from "@/lib/custom-lost-items";
 
 const ITEMS_PER_PAGE = 8;
+const USE_MOCK_LOST_ITEMS = process.env.NEXT_PUBLIC_ENABLE_MOCK_LOST_ITEMS === "true";
 
 function getVisiblePages(current: number, total: number): Array<number | "ellipsis"> {
   if (total <= 7) {
@@ -31,13 +33,17 @@ function getVisiblePages(current: number, total: number): Array<number | "ellips
 }
 
 export default function HomePage() {
-  const [customItems] = useState<CustomLostItem[]>(() => getCustomLostItems());
+  const { homeLostItems } = useDandiState();
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [selectedBuilding, setSelectedBuilding] = useState<string>("전체");
   const [searchKeyword, setSearchKeyword] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
 
-  const mergedItems = useMemo(() => applyLostItemAdminChanges([...customItems, ...lostItems]), [customItems]);
+  const mergedItems = useMemo(() => {
+    const published = applyLostItemAdminChanges(homeLostItems);
+    if (!USE_MOCK_LOST_ITEMS) return published;
+    return applyLostItemAdminChanges([...published, ...lostItems]);
+  }, [homeLostItems]);
 
   const filteredItems = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();
@@ -45,10 +51,11 @@ export default function HomePage() {
       const categoryOk = selectedCategory === "전체" || item.category === selectedCategory;
       const buildingOk =
         selectedBuilding === "전체" ||
-        (item.place ?? "").toLowerCase().includes(selectedBuilding.toLowerCase());
+        (item.place ?? "").toLowerCase().includes(selectedBuilding.toLowerCase()) ||
+        (item.storage ?? "").toLowerCase().includes(selectedBuilding.toLowerCase());
       const keywordOk =
         keyword.length === 0 ||
-        [item.name, item.category, item.type, item.place, (item as { memo?: string }).memo]
+        [item.name, item.category, item.type, item.place, item.storage, (item as { memo?: string }).memo]
           .filter(Boolean)
           .join(" ")
           .toLowerCase()
@@ -181,7 +188,7 @@ export default function HomePage() {
         <div className="grid gap-3 md:grid-cols-2">
           {filteredItems.length === 0 ? (
             <div className="md:col-span-2 rounded-xl border bg-white p-6 text-center text-sm text-muted-foreground">
-              조건에 맞는 분실물이 없습니다. 필터를 조정하거나 키워드를 다시 입력해 보세요.
+              습득 완료 처리된 분실물만 표시됩니다. 관리자 검수 후 목록에 노출됩니다.
             </div>
           ) : null}
           {paginatedItems.map((item) => (
@@ -197,6 +204,7 @@ export default function HomePage() {
                   </div>
                   <h3 className="text-base font-bold">{item.name}</h3>
                   <p className="text-sm text-muted-foreground">{item.place}</p>
+                  {item.storage ? <p className="text-xs text-muted-foreground">보관: {item.storage}</p> : null}
                 </CardContent>
               </Card>
             </Link>
@@ -255,7 +263,6 @@ export default function HomePage() {
           </nav>
         ) : null}
       </section>
-
     </AppShell>
   );
 }
