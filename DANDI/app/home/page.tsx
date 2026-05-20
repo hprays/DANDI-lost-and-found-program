@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { ChevronLeft, ChevronRight, CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ItemImage } from "@/components/item-image";
@@ -33,11 +34,15 @@ function getVisiblePages(current: number, total: number): Array<number | "ellips
 }
 
 export default function HomePage() {
-  const { homeLostItems } = useDandiState();
+  const { homeLostItems, catalogLoading, refreshHomeCatalog } = useDandiState();
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [selectedBuilding, setSelectedBuilding] = useState<string>("전체");
   const [searchKeyword, setSearchKeyword] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    void refreshHomeCatalog();
+  }, [refreshHomeCatalog]);
 
   const mergedItems = useMemo(() => {
     const published = applyLostItemAdminChanges(homeLostItems);
@@ -186,12 +191,19 @@ export default function HomePage() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          {filteredItems.length === 0 ? (
+          {catalogLoading ? (
+            <div className="md:col-span-2 flex items-center justify-center gap-2 rounded-xl border bg-white p-8 text-sm text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              분실물 목록을 불러오는 중…
+            </div>
+          ) : null}
+          {!catalogLoading && filteredItems.length === 0 ? (
             <div className="md:col-span-2 rounded-xl border bg-white p-6 text-center text-sm text-muted-foreground">
               습득 완료 처리된 분실물만 표시됩니다. 관리자 검수 후 목록에 노출됩니다.
             </div>
           ) : null}
-          {paginatedItems.map((item) => (
+          {!catalogLoading
+            ? paginatedItems.map((item) => (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
                 <div className="relative h-64 overflow-hidden bg-slate-100 md:h-72">
@@ -208,7 +220,8 @@ export default function HomePage() {
                 </CardContent>
               </Card>
             </Link>
-          ))}
+              ))
+            : null}
         </div>
 
         {filteredItems.length > 0 && totalPages > 1 ? (

@@ -16,10 +16,12 @@ export type PublishedLostItem = {
   storage?: string;
   image?: string;
   reportId?: string;
+  createdAt?: string;
 };
 
 const PUBLISHED_KEY = "dandi.published.lostItems";
-const MAX_STORED_ITEMS = 40;
+/** localStorage 백업용 — 홈 전체 목록은 API가 기준, 여기는 습득완료 직후 보조만 */
+const MAX_STORED_ITEMS = 200;
 
 function sanitizePublishedForStorage(item: PublishedLostItem): PublishedLostItem {
   return {
@@ -91,6 +93,7 @@ export function reportToPublishedItem(report: LostReport): PublishedLostItem {
     time: lostAtLabel,
     storage: report.storage ? sanitizeLocation(report.storage) : undefined,
     image: resolveMediaUrl(report.image),
+    createdAt: report.createdAt,
   };
 }
 
@@ -119,7 +122,9 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
   const name = raw.name ?? raw.itemName;
   if (id == null || name == null) return null;
   const foundAt = raw.foundAt ?? raw.lostAt ?? raw.time ?? raw.createdAt;
+  const createdAtRaw = raw.createdAt ?? raw.registeredAt ?? raw.storedDate ?? foundAt;
   const time = typeof foundAt === "string" ? formatDateTimeLabel(foundAt) : "";
+  const createdAt = typeof createdAtRaw === "string" ? formatDateTimeLabel(createdAtRaw) || createdAtRaw : undefined;
   return {
     id: String(id),
     reportId: raw.reportId != null ? String(raw.reportId) : undefined,
@@ -129,6 +134,7 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
     memo: raw.memo != null ? String(raw.memo) : raw.description != null ? String(raw.description) : undefined,
     place: sanitizeLocation(String(raw.place ?? raw.location ?? "")),
     time,
+    createdAt,
     storage: raw.storage != null ? String(raw.storage) : undefined,
     image: pickImageFromRaw(raw),
   };

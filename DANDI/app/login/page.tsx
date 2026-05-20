@@ -80,6 +80,7 @@ export default function LoginPage() {
           isAdmin: demoAdmin,
         });
         router.replace(demoAdmin ? "/admin" : "/home");
+        window.dispatchEvent(new CustomEvent("dandi-auth-changed"));
         return;
       }
 
@@ -126,7 +127,12 @@ export default function LoginPage() {
         isAdmin: backendAdmin || adminFlag,
       });
 
-      router.replace(profileCompleted ? "/home" : "/onboarding");
+      const isAdmin = backendAdmin || adminFlag;
+      if (profileCompleted) {
+        router.replace(isAdmin ? "/admin" : "/home");
+      } else {
+        router.replace("/onboarding");
+      }
     } catch (error) {
       setMessage(toKoreanFirebaseError(error));
     } finally {

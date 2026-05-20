@@ -21,6 +21,7 @@ import { useDandiState } from "@/lib/dandi-state";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import { decodeQrFromVideo, isBarcodeDetectorSupported, normalizePickupToken } from "@/lib/qr-scanner";
 import { categories } from "@/lib/mock-data";
 
 const selectableCategories = categories.filter((c) => c !== "전체");
@@ -228,6 +229,7 @@ export default function AdminPage() {
   const [confirmCardCheck, setConfirmCardCheck] = useState(false);
   const [scannedPass, setScannedPass] = useState<typeof lastVerifiedPass>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const scanHandledRef = useRef(false);
 
   // 카메라 스트림이 준비되면 video 엘리먼트에 연결
   useEffect(() => {
@@ -236,6 +238,56 @@ export default function AdminPage() {
       void videoRef.current.play().catch(() => {});
     }
   }, [cameraOpen, cameraStream]);
+
+  useEffect(() => {
+    if (!cameraOpen || !cameraStream || !videoRef.current) return;
+    if (!isBarcodeDetectorSupported()) return;
+
+    let cancelled = false;
+    let rafId = 0;
+
+    const scanFrame = async () => {
+      if (cancelled || scanHandledRef.current || !videoRef.current) return;
+      const raw = await decodeQrFromVideo(videoRef.current);
+      if (!raw) return;
+      const token = normalizePickupToken(raw);
+      if (!/^DKU-\d{6}$/.test(token)) return;
+
+      scanHandledRef.current = true;
+      setScanToken(token);
+      const target = pickupPasses.find((p) => p.token.toUpperCase() === token);
+      if (!target) {
+        setCameraError("발급된 수령 QR이 아닙니다. 마이페이지에서 QR을 발급했는지 확인해 주세요.");
+        scanHandledRef.current = false;
+        return;
+      }
+
+      setScannedPass({
+        itemName: target.itemName,
+        claimantName: target.claimantName,
+        claimantEmail: target.claimantEmail,
+        usedAt: target.usedAt,
+      });
+      setConfirmIdCheck(true);
+      setConfirmCardCheck(true);
+      setCameraError(null);
+      void onVerifyPickup(token).then(() => closeCamera());
+    };
+
+    const loop = () => {
+      if (cancelled) return;
+      void scanFrame().finally(() => {
+        if (!cancelled) rafId = requestAnimationFrame(loop);
+      });
+    };
+    rafId = requestAnimationFrame(loop);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 스캔 성공 시 한 번만 verify/close
+  }, [cameraOpen, cameraStream, pickupPasses]);
 
   // 페이지 떠날 때 카메라 자원 정리
   useEffect(() => {
@@ -250,6 +302,7 @@ export default function AdminPage() {
     setConfirmIdCheck(false);
     setConfirmCardCheck(false);
     setScanToken("");
+    scanHandledRef.current = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       setCameraStream(stream);
@@ -264,6 +317,7 @@ export default function AdminPage() {
     cameraStream?.getTracks().forEach((track) => track.stop());
     setCameraStream(null);
     setCameraOpen(false);
+    scanHandledRef.current = false;
   };
 
   const onScanFromCamera = () => {
@@ -499,10 +553,10 @@ export default function AdminPage() {
     setManageMessage("관리자 수정이 저장되었습니다.");
   };
 
-  const onDeleteManagedItem = (itemId: string) => {
+  const onDeleteManagedItem = async (itemId: string) => {
     markLostItemDeleted(itemId);
-    removeHomeLostItem(itemId);
-    setManageMessage("해당 물품을 삭제했습니다.");
+    await removeHomeLostItem(itemId);
+    setManageMessage("해당 물품을 서버에서 삭제했습니다.");
   };
 
   const onManageDraftChange = (itemId: string, field: keyof ManageDraft, value: string) => {
@@ -1060,7 +1114,7 @@ export default function AdminPage() {
                       )}
                       <div className="pointer-events-none absolute inset-6 rounded-md border-2 border-white/70" />
                       <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white">
-                        QR 인식 영역
+                        {isBarcodeDetectorSupported() ? "자동 스캔 중" : "QR 인식 영역 — 토큰 수동 입력"}
                       </div>
                     </div>
 

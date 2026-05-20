@@ -42,6 +42,7 @@ export function getAuthSession(): AuthSession | null {
 export function setAuthSession(session: AuthSession) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+  window.dispatchEvent(new CustomEvent("dandi-auth-changed"));
 }
 
 export function updateAuthSession(patch: Partial<AuthSession>) {
@@ -53,6 +54,7 @@ export function updateAuthSession(patch: Partial<AuthSession>) {
 export function clearAuthSession() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(AUTH_SESSION_KEY);
+  window.dispatchEvent(new CustomEvent("dandi-auth-changed"));
 }
 
 /**

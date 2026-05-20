@@ -70,7 +70,7 @@ export default function RegisterItemPage() {
 
   const onSubmit = async () => {
     if (!itemName.trim() || !dateTime || !foundLocation.isValid || !storageLocation.isValid) {
-      setSavedMessage("물품명, 일시, 습득 위치, 보관 장소를 입력해 주세요.");
+      setSavedMessage("물품명, 일시, 습득 위치, 신고 장소를 입력해 주세요.");
       return;
     }
     setIsSubmitting(true);
@@ -186,15 +186,15 @@ export default function RegisterItemPage() {
           />
 
           <BuildingLocationPicker
-            idPrefix="storage"
-            label="보관 장소"
+            idPrefix="report-place"
+            label="신고 장소"
             building={storageLocation.building}
             detail={storageLocation.detail}
             customText={storageLocation.customText}
             onBuildingChange={storageLocation.setBuilding}
             onDetailChange={storageLocation.setDetail}
             onCustomTextChange={storageLocation.setCustomText}
-            detailPlaceholder="예: 학생팀 425호, 분실물 보관함"
+            detailPlaceholder="예: 분실한 건물·층·장소 (습득 위치와 다를 수 있음)"
           />
           <div className="space-y-2">
             <Label htmlFor="memo">상세 설명</Label>
