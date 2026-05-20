@@ -35,6 +35,7 @@ import {
   resolveVisionDocumentType,
   resolveVisionPublishImage,
   wantsVisionMask,
+  type NormalizedVisionResult,
 } from "@/lib/vision-utils";
 import { categories } from "@/lib/mock-data";
 
@@ -142,13 +143,7 @@ export default function AdminPage() {
   const [visionLoading, setVisionLoading] = useState(false);
   const [visionMessage, setVisionMessage] = useState("");
   const [visionResultId, setVisionResultId] = useState("");
-  const [visionResult, setVisionResult] = useState<{
-    id?: string;
-    category?: string;
-    labels?: string[];
-    dominantColor?: string;
-    text?: string;
-  } | null>(null);
+  const [visionResult, setVisionResult] = useState<NormalizedVisionResult | null>(null);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [statusUpdatingType, setStatusUpdatingType] = useState<"resolved" | "unavailable" | null>(null);
   const [pickupVerifying, setPickupVerifying] = useState(false);
@@ -554,14 +549,13 @@ export default function AdminPage() {
       const data = await response.json();
       const normalized = normalizeVisionResult(data);
       const resultId = normalized.id;
-      setVisionResult({
-        id: resultId,
-        category: normalized.category,
-        labels: normalized.labels,
-        dominantColor: normalized.dominantColor,
-        text: normalized.text,
-      });
+      setVisionResult(normalized);
       setVisionResultId(resultId);
+      if (normalized.mosaicImageUrl) {
+        setVisionDataUrl(normalized.mosaicImageUrl);
+        setVisionPreview(normalized.mosaicImageUrl);
+        setVisionImageMasked(documentType !== "NONE");
+      }
 
       const applyMessage = await applyVisionToRegistration(data, resultId, documentType);
       setVisionMessage(applyMessage);
@@ -593,13 +587,12 @@ export default function AdminPage() {
     try {
       const data = await fetchVisionResult(API_BASE_URL, session.accessToken, visionResultId.trim());
       const normalized = normalizeVisionResult(data);
-      setVisionResult({
-        id: normalized.id || visionResultId.trim(),
-        category: normalized.category,
-        labels: normalized.labels,
-        dominantColor: normalized.dominantColor,
-        text: normalized.text,
-      });
+      setVisionResult(normalized);
+      if (normalized.mosaicImageUrl) {
+        setVisionDataUrl(normalized.mosaicImageUrl);
+        setVisionPreview(normalized.mosaicImageUrl);
+        setVisionImageMasked(documentType !== "NONE");
+      }
       const applyMessage = await applyVisionToRegistration(
         data,
         normalized.id || visionResultId.trim(),
@@ -800,11 +793,12 @@ export default function AdminPage() {
                         checked={visionMaskCard}
                         onChange={(e) => setVisionMaskCard(e.target.checked)}
                       />
-                      <span>카드·체크카드 (체크 시 번호 등 민감 정보 마스킹 요청)</span>
+                      <span>카드·체크카드 (documentType=BANK_CARD, 모자이크 이미지 생성)</span>
                     </label>
                     <p className="text-muted-foreground">
-                      체크에 따라 <b>documentType</b>이 전송됩니다 (신분증→ID_CARD, 카드→BANK_CARD, 미체크→NONE).
-                      마스킹은 백엔드 Vision이 <b>번호·이름 등만</b> 처리합니다.
+                      체크 시 <b>documentType</b> 전송 (신분증→ID_CARD, 카드→BANK_CARD). 등록·홈·DB에는 백엔드 응답{" "}
+                      <b>mosaicImageUrl</b>만 사용합니다 (originalImageUrl 미사용). BANK_CARD는 카드번호·유효기간·카드명 등
+                      넓게 마스킹됩니다.
                     </p>
                   </div>
                   {visionPreview ? (
@@ -840,8 +834,17 @@ export default function AdminPage() {
                         <span className="font-semibold">분석 ID:</span> {visionResult.id ?? "-"}
                       </p>
                       <p>
-                        <span className="font-semibold">documentType:</span>{" "}
-                        {resolveVisionDocumentType({ maskId: visionMaskId, maskCard: visionMaskCard })}
+                        <span className="font-semibold">documentType:</span> {visionResult.documentType}
+                      </p>
+                      <p>
+                        <span className="font-semibold">ocrApplied:</span> {visionResult.ocrApplied ? "true" : "false"}
+                      </p>
+                      <p className="break-all">
+                        <span className="font-semibold">mosaicImageUrl:</span> {visionResult.mosaicImageUrl ?? "(없음)"}
+                      </p>
+                      <p className="break-all text-muted-foreground">
+                        <span className="font-semibold">originalImageUrl:</span>{" "}
+                        {visionResult.originalImageUrl ?? "(없음)"} — 등록에 사용 안 함
                       </p>
                       <p>
                         <span className="font-semibold">카테고리:</span> {visionResult.category ?? "-"}

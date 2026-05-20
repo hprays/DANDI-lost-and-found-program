@@ -5,19 +5,23 @@ export type VisionDocumentType = "NONE" | "ID_CARD" | "STUDENT_ID" | "BANK_CARD"
 
 export type NormalizedVisionResult = {
   id: string;
-  category?: string;
   documentType: VisionDocumentType;
+  ocrApplied: boolean;
+  category?: string;
   labels: string[];
   dominantColor: string;
   text?: string;
-  maskedImageSrc?: string;
+  /** 등록·홈용 — 백엔드 mosaicImageUrl */
+  mosaicImageUrl?: string;
+  originalImageUrl?: string;
+  createdAt?: string;
 };
 
 function asRecord(data: unknown): Record<string, unknown> {
   return data && typeof data === "object" ? (data as Record<string, unknown>) : {};
 }
 
-/** UI 체크박스 → 백엔드 documentType (PAYMENT_CARD 등 사용 금지) */
+/** UI 체크박스 → 백엔드 documentType */
 export function resolveVisionDocumentType(options: {
   maskId: boolean;
   maskCard: boolean;
@@ -34,7 +38,7 @@ export function wantsVisionMask(options: { maskId: boolean; maskCard: boolean })
 /**
  * POST /api/admin/vision/analyze
  * - image (필수)
- * - documentType (필수 권장): NONE | ID_CARD | STUDENT_ID | BANK_CARD
+ * - documentType: NONE | ID_CARD | STUDENT_ID | BANK_CARD
  */
 export function buildVisionFormData(
   file: File,
@@ -46,37 +50,22 @@ export function buildVisionFormData(
   return formData;
 }
 
-/** Vision API 응답에서 마스킹·모자이크 이미지 URL 추출 */
-export function pickMaskedImageUrl(data: unknown): string | undefined {
+/**
+ * 백엔드 DTO 기준: mosaicImageUrl (마스킹·모자이크 결과물)
+ * originalImageUrl 은 등록에 사용하지 않음
+ */
+export function pickMosaicImageUrl(data: unknown): string | undefined {
   const raw = asRecord(data);
   const nested = [raw.result, raw.data, raw.payload].map(asRecord);
 
   const candidates: unknown[] = [
-    raw.maskedImageUrl,
-    raw.maskedImage,
-    raw.masked_image_url,
-    raw.masked_image,
     raw.mosaicImageUrl,
     raw.mosaic_image_url,
-    raw.blurredImageUrl,
-    raw.blurred_image_url,
-    raw.outputImageUrl,
-    raw.output_image_url,
-    raw.processedImageUrl,
-    raw.processed_image_url,
-    raw.secureImageUrl,
-    raw.secure_image_url,
-    ...nested.flatMap((n) => [
-      n.maskedImageUrl,
-      n.maskedImage,
-      n.masked_image_url,
-      n.mosaicImageUrl,
-      n.mosaic_image_url,
-      n.outputImageUrl,
-      n.processedImageUrl,
-      n.imageUrl,
-      n.image,
-    ]),
+    ...nested.flatMap((n) => [n.mosaicImageUrl, n.mosaic_image_url]),
+    // 구버전·별칭 (백엔드가 masked* 만 줄 때 대비)
+    raw.maskedImageUrl,
+    raw.masked_image_url,
+    ...nested.flatMap((n) => [n.maskedImageUrl, n.masked_image_url]),
   ];
 
   for (const value of candidates) {
@@ -87,10 +76,17 @@ export function pickMaskedImageUrl(data: unknown): string | undefined {
   return undefined;
 }
 
+export function pickOriginalImageUrl(data: unknown): string | undefined {
+  const raw = asRecord(data);
+  const value = raw.originalImageUrl ?? raw.original_image_url;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return resolveMediaUrl(value.trim());
+}
+
 export function normalizeVisionResult(data: unknown): NormalizedVisionResult {
   const raw = asRecord(data);
   const id = String(raw.id ?? raw.resultId ?? "");
-  const docRaw = String(raw.documentType ?? raw.category ?? "NONE").toUpperCase();
+  const docRaw = String(raw.documentType ?? "NONE").toUpperCase();
   const documentType: VisionDocumentType = ["ID_CARD", "STUDENT_ID", "BANK_CARD", "NONE"].includes(
     docRaw
   )
@@ -99,12 +95,15 @@ export function normalizeVisionResult(data: unknown): NormalizedVisionResult {
 
   return {
     id,
-    category: String(raw.category ?? raw.documentType ?? "") || undefined,
     documentType,
+    ocrApplied: Boolean(raw.ocrApplied ?? raw.ocr_applied),
+    category: String(raw.category ?? "") || undefined,
     labels: (raw.objectLabels ?? raw.labels ?? []) as string[],
     dominantColor: ((raw.dominantColors as string[] | undefined)?.[0] ?? "-") as string,
     text: String(raw.maskedText ?? raw.text ?? "") || undefined,
-    maskedImageSrc: pickMaskedImageUrl(raw),
+    mosaicImageUrl: pickMosaicImageUrl(raw),
+    originalImageUrl: pickOriginalImageUrl(raw),
+    createdAt: raw.createdAt != null ? String(raw.createdAt) : undefined,
   };
 }
 
@@ -133,7 +132,7 @@ export async function fetchVisionResult(
   return response.json();
 }
 
-/** 분석 직후 등록용 이미지 — 서버 모자이크 URL만 사용 (전체 블러 폴백 없음) */
+/** 분석 직후 등록용 — mosaicImageUrl 만 사용 (originalImageUrl 제외) */
 export async function resolveVisionPublishImage(options: {
   apiBaseUrl: string;
   accessToken: string;
@@ -144,28 +143,28 @@ export async function resolveVisionPublishImage(options: {
 }): Promise<{ image?: string; notice?: string }> {
   const needsMask = options.documentType !== "NONE";
 
-  let masked = pickMaskedImageUrl(options.analyzePayload);
+  let mosaic = pickMosaicImageUrl(options.analyzePayload);
 
-  if (!masked && options.resultId) {
+  if (!mosaic && options.resultId) {
     try {
       const detail = await fetchVisionResult(options.apiBaseUrl, options.accessToken, options.resultId);
-      masked = pickMaskedImageUrl(detail);
+      mosaic = pickMosaicImageUrl(detail);
     } catch {
       // analyze 응답만으로 진행
     }
   }
 
-  if (masked) {
+  if (mosaic) {
     return {
-      image: masked,
-      notice: "서버 Vision 마스킹(모자이크) 이미지가 적용되었습니다.",
+      image: mosaic,
+      notice: "서버 mosaicImageUrl이 등록·홈 미리보기에 적용되었습니다.",
     };
   }
 
   if (needsMask) {
     return {
       notice:
-        "마스킹 이미지 URL(maskedImageUrl)이 응답에 없습니다. documentType·백엔드 Vision 처리 결과를 확인해 주세요.",
+        "mosaicImageUrl이 응답에 없습니다. Postman에서 analyze/results JSON에 mosaicImageUrl 포함 여부를 확인해 주세요.",
     };
   }
 
