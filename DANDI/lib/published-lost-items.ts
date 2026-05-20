@@ -3,6 +3,7 @@
 import type { LostReport } from "@/lib/dandi-state";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { pickImageFromRaw, resolveMediaUrl } from "@/lib/media-url";
+import { imageForLocalStorage, safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
 export type PublishedLostItem = {
   id: string;
@@ -18,6 +19,15 @@ export type PublishedLostItem = {
 };
 
 const PUBLISHED_KEY = "dandi.published.lostItems";
+const MAX_STORED_ITEMS = 40;
+
+function sanitizePublishedForStorage(item: PublishedLostItem): PublishedLostItem {
+  return {
+    ...item,
+    image: imageForLocalStorage(item.image),
+    memo: item.memo && item.memo.length > 500 ? `${item.memo.slice(0, 500)}…` : item.memo,
+  };
+}
 
 export function getPublishedLostItems(): PublishedLostItem[] {
   if (typeof window === "undefined") return [];
@@ -25,15 +35,34 @@ export function getPublishedLostItems(): PublishedLostItem[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as PublishedLostItem[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.map(sanitizePublishedForStorage) : [];
   } catch {
+    safeRemoveLocalStorage(PUBLISHED_KEY);
     return [];
   }
 }
 
 export function setPublishedLostItems(items: PublishedLostItem[]) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(PUBLISHED_KEY, JSON.stringify(items));
+
+  const slim = items.slice(0, MAX_STORED_ITEMS).map(sanitizePublishedForStorage);
+  const payload = JSON.stringify(slim);
+
+  if (safeSetLocalStorage(PUBLISHED_KEY, payload)) return;
+
+  // 용량 초과 시 키를 비우고 메타데이터만 다시 저장 (UI 크래시 방지)
+  safeRemoveLocalStorage(PUBLISHED_KEY);
+  const minimal = slim.map(({ id, name, category, place, time, reportId, storage, type }) => ({
+    id,
+    name,
+    category,
+    place,
+    time,
+    reportId,
+    storage,
+    type,
+  }));
+  safeSetLocalStorage(PUBLISHED_KEY, JSON.stringify(minimal));
 }
 
 export function upsertPublishedLostItem(item: PublishedLostItem) {
@@ -72,11 +101,16 @@ export function enrichPublishedItemsWithReports(
   const byId = new Map(reports.map((r) => [String(r.id), r]));
   return items.map((item) => {
     const resolvedImage = resolveMediaUrl(item.image);
-    if (resolvedImage) return { ...item, image: resolvedImage };
+    if (resolvedImage && !resolvedImage.startsWith("data:")) {
+      return { ...item, image: resolvedImage };
+    }
     const linked =
       (item.reportId ? byId.get(String(item.reportId)) : undefined) ?? byId.get(String(item.id));
-    if (linked?.image) return { ...item, image: resolveMediaUrl(linked.image) };
-    return item;
+    if (linked?.image) {
+      const fromReport = resolveMediaUrl(linked.image);
+      if (fromReport) return { ...item, image: fromReport };
+    }
+    return { ...item, image: resolvedImage?.startsWith("data:") ? resolvedImage : item.image };
   });
 }
 

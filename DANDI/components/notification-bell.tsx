@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Bell, ChevronLeft, X } from "lucide-react";
+import { Bell, ChevronLeft, Trash2, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,9 +10,10 @@ import { formatDateTimeLabel } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
 
 export function NotificationBell() {
-  const { notices, noticesLoading, refreshNotices, markNoticeRead } = useDandiState();
+  const { notices, noticesLoading, refreshNotices, markNoticeRead, deleteNotice, deleteAllNotices } = useDandiState();
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const unreadCount = useMemo(() => notices.filter((n) => !n.read).length, [notices]);
   const selected = useMemo(
@@ -38,6 +39,27 @@ export function NotificationBell() {
       await markNoticeRead(noticeId);
     }
     setSelectedId(noticeId);
+  };
+
+  const onDelete = async (noticeId: string) => {
+    setBusyId(noticeId);
+    try {
+      await deleteNotice(noticeId);
+      if (selectedId === noticeId) setSelectedId(null);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onDeleteAll = async () => {
+    if (!window.confirm("모든 알림을 삭제할까요?")) return;
+    setBusyId("all");
+    try {
+      await deleteAllNotices();
+      setSelectedId(null);
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -87,9 +109,35 @@ export function NotificationBell() {
                     ) : null}
                     <CardTitle className="text-base">{selected ? "알림 상세" : "알림"}</CardTitle>
                   </motion.div>
-                  <Button type="button" size="icon" variant="ghost" onClick={onClose} aria-label="닫기">
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {!selected && notices.length > 0 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-xs text-muted-foreground"
+                        disabled={busyId === "all"}
+                        onClick={() => void onDeleteAll()}
+                      >
+                        전체 삭제
+                      </Button>
+                    ) : null}
+                    {selected ? (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        aria-label="알림 삭제"
+                        disabled={busyId === selected.id}
+                        onClick={() => void onDelete(selected.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    ) : null}
+                    <Button type="button" size="icon" variant="ghost" onClick={onClose} aria-label="닫기">
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="max-h-[calc(70vh-4rem)] overflow-y-auto">
                   {noticesLoading ? (

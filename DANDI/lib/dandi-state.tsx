@@ -15,6 +15,7 @@ import {
 import { apiJson, getApiBaseUrl, patchReportStatus } from "@/lib/api-json";
 import { formatDateTimeLabel, normalizeReportStatus, sanitizeLocation } from "@/lib/format-display";
 import { pickImageFromRaw, resolveMediaUrl } from "@/lib/media-url";
+import { compactDandiLocalStorage } from "@/lib/safe-local-storage";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
 
 export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
@@ -104,6 +105,8 @@ type DandiStateContextValue = {
   refreshReports: () => Promise<void>;
   refreshHomeCatalog: () => Promise<void>;
   markNoticeRead: (noticeId: string) => Promise<{ ok: boolean; message: string }>;
+  deleteNotice: (noticeId: string) => Promise<{ ok: boolean; message: string }>;
+  deleteAllNotices: () => Promise<{ ok: boolean; message: string }>;
 };
 
 const DandiStateContext = createContext<DandiStateContextValue | null>(null);
@@ -261,6 +264,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
   ]);
   const [pickupPasses, setPickupPasses] = useState<PickupPass[]>([]);
 
+  useEffect(() => {
+    compactDandiLocalStorage();
+  }, []);
+
   const applyCatalogMerge = useCallback((reportList: LostReport[], remoteItems: PublishedLostItem[] = []) => {
     const resolvedPublished = reportList.filter((r) => r.status === "resolved").map(reportToPublishedItem);
     const localPublished = getPublishedLostItems();
@@ -269,7 +276,11 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     localPublished.forEach((item) => merged.set(String(item.id), { ...item, image: resolveMediaUrl(item.image) }));
     resolvedPublished.forEach((item) => merged.set(String(item.id), item));
     const next = enrichPublishedItemsWithReports(Array.from(merged.values()), reportList);
-    setPublishedLostItems(next);
+    try {
+      setPublishedLostItems(next);
+    } catch {
+      // localStorage 용량 초과 등 — 메모리 카탈로그만 유지
+    }
     setHomeLostItems(next);
     setCatalogVersion((v) => v + 1);
   }, []);
@@ -404,7 +415,11 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           };
           setReports((prev) => {
             const next = [report, ...prev.filter((it) => String(it.id) !== reportId)];
-            applyCatalogMerge(next, []);
+            try {
+              applyCatalogMerge(next, []);
+            } catch {
+              setHomeLostItems((items) => enrichPublishedItemsWithReports(items, next));
+            }
             return next;
           });
           appendLocalNotice("분실물 신고 접수", `${report.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`);
@@ -416,6 +431,36 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             reportId,
           };
         } catch (error) {
+          if (API_BASE_URL) {
+            try {
+              const remote = extractReportList(await apiJson<unknown>("/api/reports", { method: "GET" }));
+              const matched = remote.find(
+                (r) =>
+                  r.itemName === payload.itemName &&
+                  r.location === sanitizeLocation(payload.location) &&
+                  r.status === "pending"
+              );
+              if (matched) {
+                setReports((prev) => {
+                  const next = [matched, ...prev.filter((it) => String(it.id) !== matched.id)];
+                  try {
+                    applyCatalogMerge(next, []);
+                  } catch {
+                    /* ignore storage */
+                  }
+                  return next;
+                });
+                appendLocalNotice("분실물 신고 접수", `${matched.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`);
+                return {
+                  ok: true,
+                  message: "신고가 접수되었습니다. (서버 응답 형식이 달라 목록을 다시 불러왔습니다.)",
+                  reportId: matched.id,
+                };
+              }
+            } catch {
+              // ignore recovery attempt
+            }
+          }
           return {
             ok: false,
             message:
@@ -440,7 +485,11 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             } else {
               removePublishedLostItem(normalizedId);
             }
-            applyCatalogMerge(next, []);
+            try {
+              applyCatalogMerge(next, []);
+            } catch {
+              /* ignore storage quota */
+            }
             return next;
           });
           if (status === "resolved" && updatedReport) {
@@ -730,6 +779,43 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       refreshNotices,
       refreshReports,
       refreshHomeCatalog,
+      deleteNotice: async (noticeId) => {
+        const target = notices.find((notice) => notice.id === noticeId);
+        if (!target) {
+          return { ok: false, message: "삭제할 알림을 찾을 수 없습니다." };
+        }
+
+        setNotices((prev) => prev.filter((notice) => notice.id !== noticeId));
+
+        if (!API_BASE_URL || noticeId.startsWith("n-")) {
+          return { ok: true, message: "알림이 삭제되었습니다." };
+        }
+
+        try {
+          await apiJson<object>(`/api/notices/${encodeURIComponent(noticeId)}`, { method: "DELETE" });
+          return { ok: true, message: "알림이 삭제되었습니다." };
+        } catch (error) {
+          return {
+            ok: true,
+            message:
+              error instanceof Error
+                ? `화면에서 삭제했습니다. (서버: ${error.message})`
+                : "화면에서 삭제했습니다.",
+          };
+        }
+      },
+      deleteAllNotices: async () => {
+        setNotices([]);
+        if (!API_BASE_URL) {
+          return { ok: true, message: "모든 알림을 삭제했습니다." };
+        }
+        try {
+          await apiJson<object>("/api/notices", { method: "DELETE" });
+        } catch {
+          // 백엔드 일괄 삭제 미지원 시 로컬만 비움
+        }
+        return { ok: true, message: "모든 알림을 삭제했습니다." };
+      },
       markNoticeRead: async (noticeId) => {
         const target = notices.find((notice) => notice.id === noticeId);
         if (!target) {

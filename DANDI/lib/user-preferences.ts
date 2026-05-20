@@ -1,5 +1,7 @@
 "use client";
 
+import { safeSetLocalStorage } from "@/lib/safe-local-storage";
+
 const KEYWORDS_STORAGE_KEY = "dandi.userPrefs.keywords";
 const LOCAL_NOTICES_KEY = "dandi.userPrefs.localNotices";
 
@@ -19,7 +21,7 @@ export function getStoredKeywords(): string[] {
 
 export function setStoredKeywords(keywords: string[]) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(KEYWORDS_STORAGE_KEY, JSON.stringify(keywords));
+  safeSetLocalStorage(KEYWORDS_STORAGE_KEY, JSON.stringify(keywords));
 }
 
 export type StoredNotice = {
@@ -44,5 +46,5 @@ export function getStoredLocalNotices(): StoredNotice[] {
 
 export function setStoredLocalNotices(notices: StoredNotice[]) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(LOCAL_NOTICES_KEY, JSON.stringify(notices.slice(0, 50)));
+  safeSetLocalStorage(LOCAL_NOTICES_KEY, JSON.stringify(notices.slice(0, 50)));
 }

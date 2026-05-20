@@ -1,5 +1,7 @@
 "use client";
 
+import { imageForLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
+
 export type CustomLostItem = {
   id: string;
   name: string;
@@ -16,6 +18,29 @@ const CUSTOM_LOST_ITEMS_KEY = "dandi.custom.lostItems";
 const LOST_ITEM_OVERRIDES_KEY = "dandi.lostItem.overrides";
 const LOST_ITEM_DELETED_IDS_KEY = "dandi.lostItem.deletedIds";
 
+function sanitizeCustomItem(item: CustomLostItem): CustomLostItem {
+  return {
+    ...item,
+    image: imageForLocalStorage(item.image),
+  };
+}
+
+function persistCustomItems(items: CustomLostItem[]) {
+  const slim = items.slice(0, 40).map(sanitizeCustomItem);
+  safeSetLocalStorage(CUSTOM_LOST_ITEMS_KEY, JSON.stringify(slim));
+}
+
+function persistOverrides(overrides: Record<string, Partial<CustomLostItem>>) {
+  const slim: Record<string, Partial<CustomLostItem>> = {};
+  for (const [id, patch] of Object.entries(overrides)) {
+    slim[id] = {
+      ...patch,
+      image: imageForLocalStorage(patch.image),
+    };
+  }
+  safeSetLocalStorage(LOST_ITEM_OVERRIDES_KEY, JSON.stringify(slim));
+}
+
 export function getCustomLostItems(): CustomLostItem[] {
   if (typeof window === "undefined") return [];
   const raw = window.localStorage.getItem(CUSTOM_LOST_ITEMS_KEY);
@@ -31,21 +56,21 @@ export function getCustomLostItems(): CustomLostItem[] {
 export function addCustomLostItem(item: CustomLostItem) {
   if (typeof window === "undefined") return;
   const current = getCustomLostItems();
-  window.localStorage.setItem(CUSTOM_LOST_ITEMS_KEY, JSON.stringify([item, ...current]));
+  persistCustomItems([sanitizeCustomItem(item), ...current]);
 }
 
 export function updateCustomLostItem(id: string, patch: Partial<CustomLostItem>) {
   if (typeof window === "undefined") return;
   const current = getCustomLostItems();
-  const updated = current.map((item) => (item.id === id ? { ...item, ...patch } : item));
-  window.localStorage.setItem(CUSTOM_LOST_ITEMS_KEY, JSON.stringify(updated));
+  const updated = current.map((item) => (item.id === id ? sanitizeCustomItem({ ...item, ...patch }) : item));
+  persistCustomItems(updated);
 }
 
 export function deleteCustomLostItem(id: string) {
   if (typeof window === "undefined") return;
   const current = getCustomLostItems();
   const filtered = current.filter((item) => item.id !== id);
-  window.localStorage.setItem(CUSTOM_LOST_ITEMS_KEY, JSON.stringify(filtered));
+  persistCustomItems(filtered);
 }
 
 function getLostItemOverridesRaw(): Record<string, Partial<CustomLostItem>> {
@@ -66,8 +91,9 @@ export function setLostItemOverride(id: string, patch: Partial<CustomLostItem>) 
   current[id] = {
     ...(current[id] ?? {}),
     ...patch,
+    image: imageForLocalStorage(patch.image) ?? current[id]?.image,
   };
-  window.localStorage.setItem(LOST_ITEM_OVERRIDES_KEY, JSON.stringify(current));
+  persistOverrides(current);
 }
 
 export function getDeletedLostItemIds(): string[] {
@@ -86,7 +112,7 @@ export function markLostItemDeleted(id: string) {
   if (typeof window === "undefined") return;
   const current = new Set(getDeletedLostItemIds());
   current.add(id);
-  window.localStorage.setItem(LOST_ITEM_DELETED_IDS_KEY, JSON.stringify(Array.from(current)));
+  safeSetLocalStorage(LOST_ITEM_DELETED_IDS_KEY, JSON.stringify(Array.from(current).slice(0, 200)));
 }
 
 export function applyLostItemAdminChanges<T extends { id: string }>(items: T[]): Array<T & Partial<CustomLostItem>> {
