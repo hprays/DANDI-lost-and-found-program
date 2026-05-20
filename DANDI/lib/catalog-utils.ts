@@ -4,6 +4,27 @@ import { apiJson } from "@/lib/api-json";
 import { getApiBaseUrl } from "@/lib/api-json";
 import { parseDateTimeMs } from "@/lib/format-display";
 
+export async function fetchLostItemById(id: string): Promise<PublishedLostItem | null> {
+  const base = getApiBaseUrl();
+  if (!base || !id.trim()) return null;
+  const encoded = encodeURIComponent(id.trim());
+  const paths = [`/api/lost-items/${encoded}`, `/lost-items/${encoded}`];
+  for (const path of paths) {
+    try {
+      const data = await apiJson<unknown>(path, { method: "GET" });
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        const row = data as Record<string, unknown>;
+        return mapApiLostItem({ ...row, id: row.id ?? row.lostItemId ?? id });
+      }
+      const fromList = extractLostItemList(data)[0];
+      if (fromList) return fromList;
+    } catch {
+      // try next path
+    }
+  }
+  return null;
+}
+
 export async function fetchRemoteLostItems(): Promise<PublishedLostItem[]> {
   const base = getApiBaseUrl();
   if (!base) return [];

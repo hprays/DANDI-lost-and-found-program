@@ -233,10 +233,15 @@ export default function AdminPage() {
       return;
     }
     setPendingSaveLoading(true);
+    setRegMessage("");
     try {
       const result = await updatePendingReport(editingPendingReportId, buildPendingPatchFromRegisterForm());
-      setRegMessage(result.message);
-      if (result.ok) setActionMessage(result.message);
+      if (result.ok) {
+        setActionMessage(result.message);
+        setAdminTab("pending");
+      } else {
+        setRegMessage(result.message);
+      }
     } finally {
       setPendingSaveLoading(false);
     }
@@ -263,8 +268,12 @@ export default function AdminPage() {
           setEditingPendingReportId(null);
           resetRegisterFormForAdmin();
         }
-        await refreshReports();
-        if (status === "resolved") await refreshHomeCatalog();
+        setAdminTab(status === "resolved" ? "processed" : "pending");
+        if (status === "resolved") {
+          await refreshHomeCatalog();
+        } else {
+          await refreshReportsList();
+        }
       }
     } finally {
       setStatusUpdatingId(null);

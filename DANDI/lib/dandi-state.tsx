@@ -3,7 +3,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { extractStudentIdFromEmail, getAuthSession } from "@/lib/auth-session";
 import { markLostItemDeleted } from "@/lib/custom-lost-items";
-import { safeSetLocalStorage } from "@/lib/safe-local-storage";
 import {
   enrichPublishedItemsWithReports,
   getPublishedLostItems,
@@ -24,7 +23,7 @@ import {
 } from "@/lib/format-display";
 import { normalizePickupToken } from "@/lib/pickup-token";
 import { apiImageFields, pickImageFromRaw, resolveItemImageUrl, resolveMediaUrl } from "@/lib/media-url";
-import { compactDandiLocalStorage } from "@/lib/safe-local-storage";
+import { compactDandiLocalStorage, imageForLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
 
 export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
@@ -133,7 +132,58 @@ const DandiStateContext = createContext<DandiStateContextValue | null>(null);
 const API_BASE_URL = getApiBaseUrl();
 export const REPORTS_CHANGED_EVENT = "dandi-reports-changed";
 const PICKUP_PASSES_KEY = "dandi.pickupPasses";
+const REPORTS_LOCAL_KEY = "dandi.reports.local";
 const SYNC_CHANNEL = "dandi-sync";
+
+function reportStatusRank(status: ReportStatus): number {
+  switch (status) {
+    case "picked_up":
+      return 4;
+    case "resolved":
+      return 3;
+    case "unavailable":
+      return 2;
+    case "pending":
+    default:
+      return 1;
+  }
+}
+
+/** 서버가 아직 pending 인데 로컬에서 습득완료한 경우 — 로컬 상태·수정 내용 유지 */
+function mergeReportRecords(existing: LostReport, incoming: LostReport): LostReport {
+  const keepExistingStatus = reportStatusRank(existing.status) >= reportStatusRank(incoming.status);
+  const primary = keepExistingStatus ? existing : incoming;
+  const secondary = keepExistingStatus ? incoming : existing;
+  return {
+    ...secondary,
+    ...primary,
+    status: keepExistingStatus ? existing.status : incoming.status,
+    image: primary.image ?? secondary.image,
+    ownerName: primary.ownerName ?? secondary.ownerName,
+    ownerEmail: primary.ownerEmail ?? secondary.ownerEmail,
+  };
+}
+
+function persistReportsLocal(reports: LostReport[]) {
+  if (typeof window === "undefined") return;
+  const slim = reports.slice(0, 120).map((r) => ({
+    ...r,
+    image: imageForLocalStorage(r.image),
+  }));
+  safeSetLocalStorage(REPORTS_LOCAL_KEY, JSON.stringify(slim));
+}
+
+function loadReportsLocal(): LostReport[] {
+  if (typeof window === "undefined") return [];
+  const raw = window.localStorage.getItem(REPORTS_LOCAL_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as LostReport[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 function notifyReportsChanged() {
   if (typeof window === "undefined") return;
@@ -321,11 +371,15 @@ function normalizePendingPatch(patch: PendingReportPatch): PendingReportPatch {
 
 export function DandiStateProvider({ children }: { children: React.ReactNode }) {
   const [reports, setReports] = useState<LostReport[]>([]);
+  const [homeLostItems, setHomeLostItems] = useState<PublishedLostItem[]>([]);
   const reportsRef = useRef(reports);
+  const homeLostItemsRef = useRef(homeLostItems);
   useEffect(() => {
     reportsRef.current = reports;
   }, [reports]);
-  const [homeLostItems, setHomeLostItems] = useState<PublishedLostItem[]>([]);
+  useEffect(() => {
+    homeLostItemsRef.current = homeLostItems;
+  }, [homeLostItems]);
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [catalogLoading, setCatalogLoading] = useState(false);
 
@@ -382,7 +436,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     }
   }, []);
 
-  const applyCatalogMerge = useCallback((reportList: LostReport[], remoteItems: PublishedLostItem[]) => {
+  const applyCatalogMerge = useCallback(
+    (reportList: LostReport[], remoteItems: PublishedLostItem[], stickyHome: PublishedLostItem[] = []) => {
     const merged = new Map<string, PublishedLostItem>();
     const pendingIds = new Set(
       reportList.filter((r) => r.status === "pending").map((r) => String(r.id))
@@ -408,6 +463,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       .forEach((item) => putMerged(item));
 
     getPublishedLostItems().forEach((item) => putMerged(item));
+    stickyHome.forEach((item) => putMerged(item));
 
     reportList
       .filter((r) => r.status === "resolved")
@@ -424,15 +480,23 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     const next = sortLostItemsNewestFirst(enrichPublishedItemsWithReports(Array.from(merged.values()), reportList));
     setHomeLostItems(next);
     setCatalogVersion((v) => v + 1);
-  }, []);
+  },
+    []
+  );
 
   const refreshHomeCatalog = useCallback(async () => {
     if (!API_BASE_URL || !getAuthSession()?.accessToken) return;
     setCatalogLoading(true);
     try {
-      const remoteItems = await fetchRemoteLostItems();
+      let remoteItems: PublishedLostItem[] = [];
+      try {
+        remoteItems = await fetchRemoteLostItems();
+      } catch {
+        remoteItems = [];
+      }
+      const sticky = homeLostItemsRef.current;
       setReports((current) => {
-        applyCatalogMerge(current, remoteItems);
+        applyCatalogMerge(current, remoteItems, sticky);
         return current;
       });
     } finally {
@@ -446,20 +510,35 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       const remote = extractReportList(await apiJson<unknown>("/api/reports", { method: "GET" }));
       setReports((prev) => {
         const map = new Map<string, LostReport>();
-        prev.forEach((r) => map.set(r.id, r));
-        remote.forEach((r) => {
-          const existing = map.get(r.id);
-          map.set(r.id, {
-            ...r,
-            image: r.image ?? existing?.image,
-            ownerName: r.ownerName ?? existing?.ownerName,
-            ownerEmail: r.ownerEmail ?? existing?.ownerEmail,
-          });
+        loadReportsLocal().forEach((r) => map.set(String(r.id), r));
+        prev.forEach((r) => {
+          const key = String(r.id);
+          const existing = map.get(key);
+          map.set(key, existing ? mergeReportRecords(existing, r) : r);
         });
-        return Array.from(map.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        remote.forEach((r) => {
+          const key = String(r.id);
+          const existing = map.get(key);
+          map.set(key, existing ? mergeReportRecords(existing, r) : r);
+        });
+        const next = Array.from(map.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+        persistReportsLocal(next);
+        return next;
       });
     } catch {
-      // GET 미지원 백엔드는 로컬 reports 유지
+      const local = loadReportsLocal();
+      if (local.length > 0) {
+        setReports((prev) => {
+          const map = new Map<string, LostReport>();
+          local.forEach((r) => map.set(String(r.id), r));
+          prev.forEach((r) => {
+            const key = String(r.id);
+            const existing = map.get(key);
+            map.set(key, existing ? mergeReportRecords(existing, r) : r);
+          });
+          return Array.from(map.values());
+        });
+      }
     }
   }, []);
 
@@ -753,13 +832,17 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           }
         }
 
-        setReports((prev) =>
-          prev.map((report) => (String(report.id) === normalizedId ? updated : report))
-        );
+        setReports((prev) => {
+          const next = prev.map((report) => (String(report.id) === normalizedId ? updated : report));
+          persistReportsLocal(next);
+          return next;
+        });
 
         return {
           ok: true,
-          message: "검수 대기 내용이 저장되었습니다.",
+          message: serverSynced
+            ? "검수 대기 내용이 저장되었습니다."
+            : "검수 대기 내용이 이 기기에 저장되었습니다. (서버 연결 실패 시 습득 완료 때 다시 반영됩니다.)",
         };
       },
       resolveReport: async (reportId, status, overrides) => {
@@ -813,9 +896,11 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           }
         }
 
-        setReports((prev) =>
-          prev.map((report) => (String(report.id) === normalizedId ? resolvedReport : report))
-        );
+        setReports((prev) => {
+          const next = prev.map((report) => (String(report.id) === normalizedId ? resolvedReport : report));
+          persistReportsLocal(next);
+          return next;
+        });
 
         if (status === "resolved") {
           const published = reportToPublishedItem(resolvedReport);

@@ -15,6 +15,8 @@ import { fetchAIGuidance, useDandiState } from "@/lib/dandi-state";
 import { lostItems } from "@/lib/mock-data";
 import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
 import { displayDateTimeLabels } from "@/lib/format-display";
+import { fetchLostItemById } from "@/lib/catalog-utils";
+import { getPublishedLostItems, type PublishedLostItem } from "@/lib/published-lost-items";
 
 const USE_MOCK_LOST_ITEMS = process.env.NEXT_PUBLIC_ENABLE_MOCK_LOST_ITEMS === "true";
 
@@ -22,11 +24,38 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const itemId = id;
   const { issuePickupPass, pickupPasses, homeLostItems } = useDandiState();
+  const [fetchedItem, setFetchedItem] = useState<PublishedLostItem | null>(null);
+  const [fetchingItem, setFetchingItem] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFetchingItem(true);
+    void fetchLostItemById(itemId).then((row) => {
+      if (!cancelled) {
+        setFetchedItem(row);
+        setFetchingItem(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId]);
+
   const item = useMemo(() => {
     const published = applyLostItemAdminChanges(homeLostItems);
-    const merged = USE_MOCK_LOST_ITEMS ? applyLostItemAdminChanges([...published, ...lostItems]) : published;
-    return merged.find((it) => it.id === itemId) ?? null;
-  }, [homeLostItems, itemId]);
+    const stored = getPublishedLostItems();
+    const merged = USE_MOCK_LOST_ITEMS
+      ? applyLostItemAdminChanges([...published, ...stored, ...lostItems])
+      : applyLostItemAdminChanges([...published, ...stored]);
+    return (
+      merged.find((it) => String(it.id) === itemId) ??
+      merged.find((it) => {
+        const reportId = (it as PublishedLostItem).reportId;
+        return reportId != null && String(reportId) === itemId;
+      }) ??
+      (fetchedItem ? applyLostItemAdminChanges([fetchedItem])[0] : null)
+    );
+  }, [homeLostItems, itemId, fetchedItem]);
   const itemMemo = (item as { memo?: string } | null)?.memo?.trim() ?? "";
   const [aiGuide, setAiGuide] = useState<{ cautionTitle: string; cautions: string[]; chatbotTips: string[] } | null>(null);
   const loading = item !== null && aiGuide === null;
@@ -66,6 +95,19 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
       mounted = false;
     };
   }, [item]);
+
+  if (!item && fetchingItem) {
+    return (
+      <AppShell subtitle="분실물 상세 정보 및 수령 안내">
+        <Card>
+          <CardContent className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            분실물 정보를 불러오는 중입니다...
+          </CardContent>
+        </Card>
+      </AppShell>
+    );
+  }
 
   if (!item) {
     return (
