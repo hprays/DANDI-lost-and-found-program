@@ -94,26 +94,41 @@ export type ReportPatchPayload = {
   imageUrl?: string;
 };
 
-export async function patchReportDetails(reportId: string, payload: ReportPatchPayload): Promise<void> {
+export async function patchReportDetails(
+  reportId: string,
+  payload: ReportPatchPayload,
+  options?: { keepStatus?: string }
+): Promise<void> {
   const id = encodeURIComponent(String(reportId));
   const foundAtIso = payload.foundAt ?? payload.lostAt;
-  const body = JSON.stringify({
+  const bodyObj: Record<string, unknown> = {
     ...payload,
     name: payload.itemName,
+    itemName: payload.itemName,
     ...(foundAtIso ? { lostAt: foundAtIso, foundAt: foundAtIso } : {}),
-  });
-  const attempts: Array<{ method: string; path: string }> = [
-    { method: "PATCH", path: `/api/reports/${id}` },
-    { method: "PUT", path: `/api/reports/${id}` },
+    ...(options?.keepStatus
+      ? { status: options.keepStatus, reportStatus: options.keepStatus }
+      : {}),
+  };
+  const body = JSON.stringify(bodyObj);
+  const attempts: Array<{ method: string; path: string; body?: string }> = [
+    { method: "PATCH", path: `/api/reports/${id}`, body },
+    { method: "PUT", path: `/api/reports/${id}`, body },
+    { method: "POST", path: `/api/reports/${id}`, body },
+    { method: "POST", path: `/api/reports/${id}/update`, body },
+    { method: "PATCH", path: `/api/reports/${id}/status`, body },
+    { method: "PUT", path: `/api/reports/${id}/status`, body },
   ];
 
   let lastError: Error | null = null;
   for (const attempt of attempts) {
     try {
-      await apiJson<object>(attempt.path, { method: attempt.method, body });
+      await apiJson<object>(attempt.path, { method: attempt.method, body: attempt.body });
       return;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      const msg = lastError.message.toLowerCase();
+      if (msg.includes("method not allowed") || msg.includes("405")) continue;
     }
   }
   throw lastError ?? new Error("신고 수정에 실패했습니다.");

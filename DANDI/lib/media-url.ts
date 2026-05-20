@@ -64,11 +64,15 @@ function pickImageValue(value: unknown): string | undefined {
 export function apiImageFields(image?: string | null): Record<string, string> {
   if (!isValidItemImageUrl(image)) return {};
   const url = resolveMediaUrl(image)!;
-  return { image: url, imageUrl: url, photoUrl: url };
+  return { image: url, imageUrl: url, photoUrl: url, mosaicImageUrl: url };
 }
 
 export function pickImageFromRaw(raw: Record<string, unknown>): string | undefined {
   const candidates = [
+    raw.mosaicImageUrl,
+    raw.mosaic_image_url,
+    raw.maskedImageUrl,
+    raw.masked_image_url,
     raw.image,
     raw.imageUrl,
     raw.imageURL,

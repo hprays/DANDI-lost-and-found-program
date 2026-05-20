@@ -81,6 +81,34 @@ export function removePublishedLostItem(id: string) {
   return next;
 }
 
+/** 원격·로컬·검수 병합 시 사진·메타 누락 방지 */
+export function mergePublishedItems(
+  primary: PublishedLostItem,
+  secondary?: PublishedLostItem | null
+): PublishedLostItem {
+  if (!secondary) return primary;
+  const image =
+    resolveItemImageUrl(primary.image) ??
+    resolveItemImageUrl(secondary.image) ??
+    primary.image ??
+    secondary.image;
+  return {
+    ...secondary,
+    ...primary,
+    image,
+    name: primary.name || secondary.name,
+    category: primary.category || secondary.category,
+    place: primary.place || secondary.place,
+    storage: primary.storage ?? secondary.storage,
+    memo: primary.memo ?? secondary.memo,
+    type: primary.type ?? secondary.type,
+    time: primary.time || secondary.time,
+    foundAt: primary.foundAt ?? secondary.foundAt,
+    createdAt: primary.createdAt ?? secondary.createdAt,
+    reportId: primary.reportId ?? secondary.reportId,
+  };
+}
+
 export function reportToPublishedItem(report: LostReport): PublishedLostItem {
   const lostAtLabel = formatDateTimeLabel(report.lostAt) || report.lostAt;
   const createdLabel = formatDateTimeLabel(report.createdAt) || report.createdAt;

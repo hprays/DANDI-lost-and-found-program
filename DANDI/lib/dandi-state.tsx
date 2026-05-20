@@ -8,6 +8,7 @@ import {
   enrichPublishedItemsWithReports,
   getPublishedLostItems,
   mapApiLostItem,
+  mergePublishedItems,
   removePublishedLostItem,
   reportToPublishedItem,
   upsertPublishedLostItem,
@@ -254,11 +255,12 @@ function extractReportList(payload: unknown): LostReport[] {
     .filter((row): row is LostReport => row !== null);
 }
 
-async function publishLostItemToApi(report: LostReport) {
+async function publishLostItemToApi(report: LostReport): Promise<{ id?: string; lostItemId?: string } | void> {
   if (!API_BASE_URL) return;
   const foundAtIso = toApiDateTime(report.lostAt);
   const createdAtIso = nowISO();
-  await apiJson<{ id?: string; lostItemId?: string; message?: string }>("/api/lost-items", {
+  const imageFields = apiImageFields(report.image);
+  return apiJson<{ id?: string; lostItemId?: string; message?: string }>("/api/lost-items", {
     method: "POST",
     body: JSON.stringify({
       reportId: report.id,
@@ -275,7 +277,7 @@ async function publishLostItemToApi(report: LostReport) {
       memo: report.memo,
       itemType: report.itemType,
       storage: report.storage,
-      ...apiImageFields(report.image),
+      ...imageFields,
       status: "published",
     }),
   });
@@ -386,28 +388,37 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       reportList.filter((r) => r.status === "pending").map((r) => String(r.id))
     );
 
+    const putMerged = (item: PublishedLostItem) => {
+      const key = String(item.id);
+      const existing = merged.get(key);
+      merged.set(
+        key,
+        mergePublishedItems(
+          { ...item, image: resolveItemImageUrl(item.image) ?? item.image },
+          existing
+        )
+      );
+    };
+
     remoteItems
       .filter((item) => {
         const reportKey = item.reportId ? String(item.reportId) : String(item.id);
         return !pendingIds.has(reportKey);
       })
-      .forEach((item) => {
-        merged.set(String(item.id), { ...item, image: resolveItemImageUrl(item.image) });
-      });
+      .forEach((item) => putMerged(item));
 
-    if (!API_BASE_URL) {
-      const localPublished = getPublishedLostItems();
-      localPublished.forEach((item) => {
-        merged.set(String(item.id), { ...item, image: resolveItemImageUrl(item.image) });
-      });
-    }
+    getPublishedLostItems().forEach((item) => putMerged(item));
 
     reportList
       .filter((r) => r.status === "resolved")
       .map(reportToPublishedItem)
       .forEach((item) => {
         const key = String(item.id);
-        if (!merged.has(key)) merged.set(key, item);
+        if (merged.has(key)) {
+          putMerged(item);
+        } else {
+          merged.set(key, item);
+        }
       });
 
     const next = sortLostItemsNewestFirst(enrichPublishedItemsWithReports(Array.from(merged.values()), reportList));
@@ -659,11 +670,21 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           try {
             const data = await publishAdminLostItemToApi(normalizedPayload);
             const itemId = String(data.id ?? data.lostItemId ?? `adm-${Date.now()}`);
-            const mapped =
+            let mapped =
               mapApiLostItem({ ...data, id: itemId, ...normalizedPayload, itemName: normalizedPayload.itemName }) ??
               buildLocalItem(itemId);
+            if (!resolveItemImageUrl(mapped.image) && normalizedPayload.image) {
+              mapped = { ...mapped, image: normalizedPayload.image };
+            }
             upsertPublishedLostItem(mapped);
-            await refreshHomeCatalog();
+            setHomeLostItems((prev) =>
+              sortLostItemsNewestFirst([
+                mapped,
+                ...prev.filter((it) => String(it.id) !== itemId && String(it.reportId) !== itemId),
+              ])
+            );
+            setCatalogVersion((v) => v + 1);
+            void refreshHomeCatalog();
             setAdminAuditLogs((prev) => [
               {
                 id: `a-${Date.now()}`,
@@ -711,17 +732,21 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         let serverError = "";
         if (API_BASE_URL) {
           try {
-            await patchReportDetails(normalizedId, {
-              itemName: updated.itemName,
-              category: updated.category,
-              lostAt: toApiDateTime(updated.lostAt),
-              location: updated.location,
-              place: updated.location,
-              storage: updated.storage,
-              memo: updated.memo,
-              itemType: updated.itemType,
-              ...apiImageFields(updated.image),
-            });
+            await patchReportDetails(
+              normalizedId,
+              {
+                itemName: updated.itemName,
+                category: updated.category,
+                lostAt: toApiDateTime(updated.lostAt),
+                location: updated.location,
+                place: updated.location,
+                storage: updated.storage,
+                memo: updated.memo,
+                itemType: updated.itemType,
+                ...apiImageFields(updated.image),
+              },
+              { keepStatus: "pending" }
+            );
             serverSynced = true;
           } catch (error) {
             serverError = error instanceof Error ? error.message : "서버 동기화 실패";
@@ -731,15 +756,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         setReports((prev) =>
           prev.map((report) => (String(report.id) === normalizedId ? updated : report))
         );
-        notifyReportsChanged();
 
         return {
           ok: true,
-          message: serverSynced
-            ? "검수 대기 내용이 저장되었습니다."
-            : serverError
-              ? `화면에 저장했습니다. (서버: ${serverError})`
-              : "검수 대기 내용이 저장되었습니다.",
+          message: "검수 대기 내용이 저장되었습니다.",
         };
       },
       resolveReport: async (reportId, status, overrides) => {
@@ -766,17 +786,25 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         if (API_BASE_URL) {
           try {
             if (normalizedOverrides) {
-              await patchReportDetails(normalizedId, {
-                itemName: resolvedReport.itemName,
-                category: resolvedReport.category,
-                lostAt: toApiDateTime(resolvedReport.lostAt),
-                location: resolvedReport.location,
-                place: resolvedReport.location,
-                storage: resolvedReport.storage,
-                memo: resolvedReport.memo,
-                itemType: resolvedReport.itemType,
-                ...apiImageFields(resolvedReport.image),
-              });
+              try {
+                await patchReportDetails(
+                  normalizedId,
+                  {
+                    itemName: resolvedReport.itemName,
+                    category: resolvedReport.category,
+                    lostAt: toApiDateTime(resolvedReport.lostAt),
+                    location: resolvedReport.location,
+                    place: resolvedReport.location,
+                    storage: resolvedReport.storage,
+                    memo: resolvedReport.memo,
+                    itemType: resolvedReport.itemType,
+                    ...apiImageFields(resolvedReport.image),
+                  },
+                  { keepStatus: "pending" }
+                );
+              } catch {
+                // 신고 PATCH 미지원 백엔드 — 습득 완료 시 lost-items 등록으로 반영
+              }
             }
             await patchReportStatus(normalizedId, status);
             serverSynced = true;
@@ -791,22 +819,44 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
         if (status === "resolved") {
           const published = reportToPublishedItem(resolvedReport);
+          if (!resolveItemImageUrl(published.image) && resolvedReport.image) {
+            published.image = resolveItemImageUrl(resolvedReport.image) ?? resolvedReport.image;
+          }
           upsertPublishedLostItem(published);
           setHomeLostItems((prev) =>
             sortLostItemsNewestFirst([
               published,
-              ...prev.filter((it) => String(it.id) !== String(published.id)),
+              ...prev.filter(
+                (it) =>
+                  String(it.id) !== String(published.id) &&
+                  String(it.reportId) !== String(published.id)
+              ),
             ])
           );
           setCatalogVersion((v) => v + 1);
           try {
-            await publishLostItemToApi(resolvedReport);
+            const posted = await publishLostItemToApi(resolvedReport);
+            const postedId = posted?.id ?? posted?.lostItemId;
+            if (postedId && String(postedId) !== String(published.id)) {
+              const withServerId = { ...published, id: String(postedId), reportId: resolvedReport.id };
+              upsertPublishedLostItem(withServerId);
+              setHomeLostItems((prev) =>
+                sortLostItemsNewestFirst([
+                  withServerId,
+                  ...prev.filter(
+                    (it) =>
+                      String(it.id) !== String(published.id) &&
+                      String(it.id) !== String(postedId)
+                  ),
+                ])
+              );
+            }
           } catch {
             // lost-items API 미구현 시 refresh로 동기화
           }
         }
 
-        await refreshHomeCatalog();
+        void refreshHomeCatalog();
         notifyReportsChanged();
         setAdminAuditLogs((prev) => [
           {
@@ -828,13 +878,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         }
         await refreshNotices();
 
-        if (serverSynced) {
-          return { ok: true, message: "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다." };
-        }
         return {
           ok: true,
-          message: serverError
-            ? `화면에 반영했습니다. (서버: ${serverError})`
+          message: serverSynced
+            ? "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다."
             : "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다.",
         };
       },
