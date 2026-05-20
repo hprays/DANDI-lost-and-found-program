@@ -401,7 +401,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     }
   }, [applyCatalogMerge]);
 
-  const refreshReports = useCallback(async () => {
+  const refreshReportsList = useCallback(async () => {
     if (!API_BASE_URL || !getAuthSession()?.accessToken) return;
     try {
       const remote = extractReportList(await apiJson<unknown>("/api/reports", { method: "GET" }));
@@ -422,8 +422,12 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     } catch {
       // GET 미지원 백엔드는 로컬 reports 유지
     }
+  }, []);
+
+  const refreshReports = useCallback(async () => {
+    await refreshReportsList();
     await refreshHomeCatalog();
-  }, [refreshHomeCatalog]);
+  }, [refreshHomeCatalog, refreshReportsList]);
 
   const appendLocalNotice = useCallback((title: string, message: string) => {
     const notice: UserNotice = {
@@ -477,35 +481,30 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
   }, [bootstrapAfterAuth]);
 
   useEffect(() => {
-    const syncReports = () => {
+    const syncReportsFull = () => {
       if (getAuthSession()?.accessToken) void refreshReports();
     };
-    const interval = window.setInterval(syncReports, 12_000);
-    window.addEventListener("focus", syncReports);
-    window.addEventListener(REPORTS_CHANGED_EVENT, syncReports);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") syncReports();
+    const syncReportsListOnly = () => {
+      if (getAuthSession()?.accessToken) void refreshReportsList();
     };
-    document.addEventListener("visibilitychange", onVisible);
+
+    window.addEventListener(REPORTS_CHANGED_EVENT, syncReportsFull);
 
     let channel: BroadcastChannel | null = null;
     try {
       channel = new BroadcastChannel(SYNC_CHANNEL);
       channel.onmessage = (event) => {
-        if (event.data?.type === "reports") syncReports();
+        if (event.data?.type === "reports") syncReportsFull();
       };
     } catch {
       // ignore
     }
 
     return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("focus", syncReports);
-      window.removeEventListener(REPORTS_CHANGED_EVENT, syncReports);
-      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener(REPORTS_CHANGED_EVENT, syncReportsFull);
       channel?.close();
     };
-  }, [refreshReports]);
+  }, [refreshReports, refreshReportsList]);
 
   const value = useMemo<DandiStateContextValue>(
     () => ({
