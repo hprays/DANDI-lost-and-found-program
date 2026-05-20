@@ -115,6 +115,7 @@ type DandiStateContextValue = {
   deleteReport: (reportId: string) => Promise<{ ok: boolean; message: string }>;
   refreshNotices: () => Promise<void>;
   refreshReports: () => Promise<void>;
+  refreshReportsList: () => Promise<void>;
   refreshHomeCatalog: () => Promise<void>;
   markNoticeRead: (noticeId: string) => Promise<{ ok: boolean; message: string }>;
   deleteNotice: (noticeId: string) => Promise<{ ok: boolean; message: string }>;
@@ -995,6 +996,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       },
       refreshNotices,
       refreshReports,
+      refreshReportsList,
       refreshHomeCatalog,
       deleteNotice: async (noticeId) => {
         const target = notices.find((notice) => notice.id === noticeId);

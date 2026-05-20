@@ -31,7 +31,9 @@ import {
   buildVisionFormData,
   fetchVisionResult,
   normalizeVisionResult,
+  resolveVisionDocumentType,
   resolveVisionPublishImage,
+  wantsVisionMask,
 } from "@/lib/vision-utils";
 import { categories } from "@/lib/mock-data";
 
@@ -101,6 +103,7 @@ export default function AdminPage() {
     updateHomeLostItem,
     removeHomeLostItem,
     refreshReports,
+    refreshReportsList,
     refreshHomeCatalog,
   } = useDandiState();
 
@@ -118,9 +121,10 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (isAdmin && apiConfigured) {
-      void refreshReports();
+      void refreshReportsList();
     }
-  }, [isAdmin, apiConfigured, refreshReports]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 관리자 탭: 검수 목록만 조용히 동기화(홈 카탈로그·스크롤 튐 방지)
+  }, [isAdmin, apiConfigured]);
   const [regName, setRegName] = useState("");
   const [regCategory, setRegCategory] = useState(selectableCategories[0] ?? "기타");
   const regFoundLocation = useBuildingLocationField();
@@ -171,8 +175,14 @@ export default function AdminPage() {
       setRegMessage("물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.");
       return;
     }
-    if ((visionMaskId || visionMaskCard) && visionFile && !visionImageMasked) {
-      setRegMessage("신분증/카드 사진은 Vision 분석 후 마스킹된 이미지가 적용된 뒤 등록해 주세요.");
+    if (
+      wantsVisionMask({ maskId: visionMaskId, maskCard: visionMaskCard }) &&
+      visionFile &&
+      !visionImageMasked
+    ) {
+      setRegMessage(
+        "신분증/카드는 체크 후 Vision 분석이 성공하고 마스킹 이미지가 적용된 뒤 등록해 주세요."
+      );
       return;
     }
 
@@ -446,37 +456,35 @@ export default function AdminPage() {
   const applyVisionToRegistration = async (
     analyzePayload: unknown,
     resultId: string,
-    wantsMask: boolean
+    documentType: ReturnType<typeof resolveVisionDocumentType>
   ): Promise<string> => {
     const session = getAuthSession();
     if (!session?.accessToken || !API_BASE_URL) {
       return "로그인이 필요합니다.";
     }
 
+    const needsMask = documentType !== "NONE";
     const { image, notice } = await resolveVisionPublishImage({
       apiBaseUrl: API_BASE_URL,
       accessToken: session.accessToken,
       analyzePayload,
       resultId,
-      wantsMask,
+      documentType,
       originalDataUrl: visionPreview,
     });
 
     if (image) {
       setVisionDataUrl(image);
       setVisionPreview(image);
-      setVisionImageMasked(wantsMask);
-    } else if (wantsMask) {
+      setVisionImageMasked(needsMask && Boolean(image));
+    } else if (needsMask) {
       setVisionDataUrl(null);
+      setVisionImageMasked(false);
+    } else {
       setVisionImageMasked(false);
     }
 
-    return (
-      notice ??
-      (wantsMask && image
-        ? "마스킹된 이미지가 미리보기·등록에 적용되었습니다."
-        : "Vision 분석이 완료되었습니다.")
-    );
+    return notice ?? "Vision 분석이 완료되었습니다.";
   };
 
   const onAnalyzeVision = async () => {
@@ -494,7 +502,7 @@ export default function AdminPage() {
       return;
     }
 
-    const wantsMask = visionMaskId || visionMaskCard;
+    const documentType = resolveVisionDocumentType({ maskId: visionMaskId, maskCard: visionMaskCard });
     const formData = buildVisionFormData(visionFile, { maskId: visionMaskId, maskCard: visionMaskCard });
 
     setVisionLoading(true);
@@ -513,7 +521,8 @@ export default function AdminPage() {
           const err = (await response.json()) as { message?: string; error?: string };
           serverMessage = err.message || err.error || serverMessage;
         } catch {
-          // ignore
+          const text = await response.text().catch(() => "");
+          if (text) serverMessage = text.slice(0, 300);
         }
         setVisionMessage(serverMessage);
         return;
@@ -530,7 +539,7 @@ export default function AdminPage() {
       });
       setVisionResultId(resultId);
 
-      const applyMessage = await applyVisionToRegistration(data, resultId, wantsMask);
+      const applyMessage = await applyVisionToRegistration(data, resultId, documentType);
       setVisionMessage(applyMessage);
     } catch (error) {
       setVisionMessage(error instanceof Error ? error.message : "Vision 분석 중 오류가 발생했습니다.");
@@ -554,7 +563,7 @@ export default function AdminPage() {
       return;
     }
 
-    const wantsMask = visionMaskId || visionMaskCard;
+    const documentType = resolveVisionDocumentType({ maskId: visionMaskId, maskCard: visionMaskCard });
     setVisionLoading(true);
     setVisionMessage("");
     try {
@@ -570,7 +579,7 @@ export default function AdminPage() {
       const applyMessage = await applyVisionToRegistration(
         data,
         normalized.id || visionResultId.trim(),
-        wantsMask
+        documentType
       );
       setVisionMessage(applyMessage || "분석 결과를 불러와 등록용 이미지에 반영했습니다.");
     } catch (error) {
@@ -770,8 +779,8 @@ export default function AdminPage() {
                       <span>카드·체크카드 (체크 시 번호 등 민감 정보 마스킹 요청)</span>
                     </label>
                     <p className="text-muted-foreground">
-                      신분증·카드는 해당 항목만 체크해도 분석됩니다. 분석 후 <b>마스킹된 이미지</b>가 미리보기·홈 등록에
-                      적용됩니다.
+                      체크에 따라 <b>documentType</b>이 전송됩니다 (신분증→ID_CARD, 카드→BANK_CARD, 미체크→NONE).
+                      마스킹은 백엔드 Vision이 <b>번호·이름 등만</b> 처리합니다.
                     </p>
                   </div>
                   {visionPreview ? (
@@ -782,7 +791,7 @@ export default function AdminPage() {
                       {visionMaskId || visionMaskCard ? (
                         <p className="bg-slate-50 px-2 py-1 text-center text-[11px] text-muted-foreground">
                           {visionImageMasked
-                            ? "등록·홈·DB에 올라갈 이미지 (마스킹/블러 적용됨)"
+                            ? "등록·홈·DB에 올라갈 이미지 (서버 모자이크)"
                             : "「Vision 분석」 후 마스킹 이미지가 여기에 표시됩니다"}
                         </p>
                       ) : null}
@@ -805,6 +814,10 @@ export default function AdminPage() {
                     <div className="space-y-1 rounded-lg border bg-slate-50 p-3 text-xs">
                       <p>
                         <span className="font-semibold">분석 ID:</span> {visionResult.id ?? "-"}
+                      </p>
+                      <p>
+                        <span className="font-semibold">documentType:</span>{" "}
+                        {resolveVisionDocumentType({ maskId: visionMaskId, maskCard: visionMaskCard })}
                       </p>
                       <p>
                         <span className="font-semibold">카테고리:</span> {visionResult.category ?? "-"}
@@ -1119,8 +1132,8 @@ export default function AdminPage() {
                             const result = await resolveReport(report.id, "resolved");
                             setActionMessage(result.message);
                             if (result.ok) {
-                              await refreshHomeCatalog();
                               await refreshReports();
+                              await refreshHomeCatalog();
                             }
                           } finally {
                             setStatusUpdatingId(null);

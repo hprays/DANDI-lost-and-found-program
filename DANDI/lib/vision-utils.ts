@@ -1,29 +1,12 @@
 import { resolveMediaUrl } from "@/lib/media-url";
 
-export type VisionResultPayload = {
-  id?: string | number;
-  resultId?: string | number;
-  documentType?: string;
-  category?: string;
-  objectLabels?: string[];
-  labels?: string[];
-  dominantColors?: string[];
-  maskedText?: string;
-  text?: string;
-  maskedImageUrl?: string;
-  maskedImage?: string;
-  blurredImageUrl?: string;
-  outputImageUrl?: string;
-  processedImageUrl?: string;
-  imageUrl?: string;
-  image?: string;
-  result?: Record<string, unknown>;
-  data?: Record<string, unknown>;
-};
+/** 백엔드 org.example.vision.DocumentType 과 동일 */
+export type VisionDocumentType = "NONE" | "ID_CARD" | "STUDENT_ID" | "BANK_CARD";
 
 export type NormalizedVisionResult = {
   id: string;
   category?: string;
+  documentType: VisionDocumentType;
   labels: string[];
   dominantColor: string;
   text?: string;
@@ -34,7 +17,36 @@ function asRecord(data: unknown): Record<string, unknown> {
   return data && typeof data === "object" ? (data as Record<string, unknown>) : {};
 }
 
-/** Vision API 응답에서 마스킹·블러 처리된 이미지 URL 추출 */
+/** UI 체크박스 → 백엔드 documentType (PAYMENT_CARD 등 사용 금지) */
+export function resolveVisionDocumentType(options: {
+  maskId: boolean;
+  maskCard: boolean;
+}): VisionDocumentType {
+  if (options.maskCard) return "BANK_CARD";
+  if (options.maskId) return "ID_CARD";
+  return "NONE";
+}
+
+export function wantsVisionMask(options: { maskId: boolean; maskCard: boolean }): boolean {
+  return resolveVisionDocumentType(options) !== "NONE";
+}
+
+/**
+ * POST /api/admin/vision/analyze
+ * - image (필수)
+ * - documentType (필수 권장): NONE | ID_CARD | STUDENT_ID | BANK_CARD
+ */
+export function buildVisionFormData(
+  file: File,
+  options: { maskId: boolean; maskCard: boolean }
+): FormData {
+  const formData = new FormData();
+  formData.append("image", file);
+  formData.append("documentType", resolveVisionDocumentType(options));
+  return formData;
+}
+
+/** Vision API 응답에서 마스킹·모자이크 이미지 URL 추출 */
 export function pickMaskedImageUrl(data: unknown): string | undefined {
   const raw = asRecord(data);
   const nested = [raw.result, raw.data, raw.payload].map(asRecord);
@@ -44,6 +56,8 @@ export function pickMaskedImageUrl(data: unknown): string | undefined {
     raw.maskedImage,
     raw.masked_image_url,
     raw.masked_image,
+    raw.mosaicImageUrl,
+    raw.mosaic_image_url,
     raw.blurredImageUrl,
     raw.blurred_image_url,
     raw.outputImageUrl,
@@ -52,15 +66,12 @@ export function pickMaskedImageUrl(data: unknown): string | undefined {
     raw.processed_image_url,
     raw.secureImageUrl,
     raw.secure_image_url,
-    raw.imageUrl,
-    raw.image,
-    raw.photoUrl,
-    raw.photo_url,
     ...nested.flatMap((n) => [
       n.maskedImageUrl,
       n.maskedImage,
       n.masked_image_url,
-      n.blurredImageUrl,
+      n.mosaicImageUrl,
+      n.mosaic_image_url,
       n.outputImageUrl,
       n.processedImageUrl,
       n.imageUrl,
@@ -79,64 +90,22 @@ export function pickMaskedImageUrl(data: unknown): string | undefined {
 export function normalizeVisionResult(data: unknown): NormalizedVisionResult {
   const raw = asRecord(data);
   const id = String(raw.id ?? raw.resultId ?? "");
+  const docRaw = String(raw.documentType ?? raw.category ?? "NONE").toUpperCase();
+  const documentType: VisionDocumentType = ["ID_CARD", "STUDENT_ID", "BANK_CARD", "NONE"].includes(
+    docRaw
+  )
+    ? (docRaw as VisionDocumentType)
+    : "NONE";
+
   return {
     id,
-    category: String(raw.documentType ?? raw.category ?? "") || undefined,
+    category: String(raw.category ?? raw.documentType ?? "") || undefined,
+    documentType,
     labels: (raw.objectLabels ?? raw.labels ?? []) as string[],
     dominantColor: ((raw.dominantColors as string[] | undefined)?.[0] ?? "-") as string,
     text: String(raw.maskedText ?? raw.text ?? "") || undefined,
     maskedImageSrc: pickMaskedImageUrl(raw),
   };
-}
-
-export function buildVisionFormData(
-  file: File,
-  options: { maskId: boolean; maskCard: boolean }
-): FormData {
-  const formData = new FormData();
-  formData.append("image", file);
-  if (options.maskId) {
-    formData.append("maskIdCard", "true");
-    formData.append("documentType", "ID_CARD");
-    formData.append("sensitiveContent", "true");
-    formData.append("maskSensitive", "true");
-  }
-  if (options.maskCard) {
-    formData.append("maskPaymentCard", "true");
-    formData.append("maskCard", "true");
-    formData.append("documentType", options.maskId ? "ID_AND_PAYMENT_CARD" : "PAYMENT_CARD");
-    formData.append("sensitiveContent", "true");
-    formData.append("maskSensitive", "true");
-  }
-  return formData;
-}
-
-/** 서버 마스킹 URL이 없을 때 등록용 클라이언트 블러 (최후 수단) */
-export async function blurImageDataUrl(dataUrl: string, blurPx = 14): Promise<string> {
-  if (typeof document === "undefined") return dataUrl;
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const maxSide = 1280;
-      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
-      const w = Math.max(1, Math.round(img.width * scale));
-      const h = Math.max(1, Math.round(img.height * scale));
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("canvas unavailable"));
-        return;
-      }
-      ctx.filter = `blur(${blurPx}px)`;
-      ctx.drawImage(img, 0, 0, w, h);
-      resolve(canvas.toDataURL("image/jpeg", 0.88));
-    };
-    img.onerror = () => reject(new Error("image load failed"));
-    img.src = dataUrl;
-  });
 }
 
 export async function fetchVisionResult(
@@ -164,15 +133,17 @@ export async function fetchVisionResult(
   return response.json();
 }
 
-/** 분석 직후·조회 시 등록/미리보기에 쓸 이미지 URL (마스킹 우선) */
+/** 분석 직후 등록용 이미지 — 서버 모자이크 URL만 사용 (전체 블러 폴백 없음) */
 export async function resolveVisionPublishImage(options: {
   apiBaseUrl: string;
   accessToken: string;
   analyzePayload: unknown;
   resultId: string;
-  wantsMask: boolean;
+  documentType: VisionDocumentType;
   originalDataUrl: string | null;
 }): Promise<{ image?: string; notice?: string }> {
+  const needsMask = options.documentType !== "NONE";
+
   let masked = pickMaskedImageUrl(options.analyzePayload);
 
   if (!masked && options.resultId) {
@@ -185,26 +156,21 @@ export async function resolveVisionPublishImage(options: {
   }
 
   if (masked) {
-    return { image: masked, notice: "마스킹된 이미지가 적용되었습니다." };
+    return {
+      image: masked,
+      notice: "서버 Vision 마스킹(모자이크) 이미지가 적용되었습니다.",
+    };
   }
 
-  if (options.wantsMask && options.originalDataUrl) {
-    try {
-      const blurred = await blurImageDataUrl(options.originalDataUrl);
-      return {
-        image: blurred,
-        notice: "서버 마스킹 URL이 없어 블러 처리한 이미지로 등록합니다. (백엔드 maskedImageUrl 확인 권장)",
-      };
-    } catch {
-      return {
-        notice: "민감정보 마스킹 이미지를 받지 못했습니다. Vision API maskedImageUrl 응답을 확인해 주세요.",
-      };
-    }
+  if (needsMask) {
+    return {
+      notice:
+        "마스킹 이미지 URL(maskedImageUrl)이 응답에 없습니다. documentType·백엔드 Vision 처리 결과를 확인해 주세요.",
+    };
   }
 
-  if (options.wantsMask) {
-    return { notice: "민감정보 마스킹 이미지를 받지 못했습니다." };
-  }
-
-  return { image: options.originalDataUrl ?? undefined };
+  return {
+    image: options.originalDataUrl ?? undefined,
+    notice: "일반 물품 분석입니다. (documentType=NONE)",
+  };
 }

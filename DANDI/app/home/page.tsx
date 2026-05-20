@@ -43,7 +43,8 @@ export default function HomePage() {
 
   useEffect(() => {
     void refreshHomeCatalog();
-  }, [refreshHomeCatalog]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 홈 진입 시 1회만 목록 로드
+  }, []);
 
   const mergedItems = useMemo(() => {
     const published = applyLostItemAdminChanges(homeLostItems);
