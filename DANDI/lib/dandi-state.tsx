@@ -5,6 +5,7 @@ import { getAuthSession } from "@/lib/auth-session";
 import {
   enrichPublishedItemsWithReports,
   getPublishedLostItems,
+  mapApiLostItem,
   removePublishedLostItem,
   reportToPublishedItem,
   upsertPublishedLostItem,
@@ -12,7 +13,12 @@ import {
 } from "@/lib/published-lost-items";
 import { fetchRemoteLostItems, sortLostItemsNewestFirst } from "@/lib/catalog-utils";
 import { apiJson, getApiBaseUrl, patchReportStatus } from "@/lib/api-json";
-import { formatDateTimeLabel, normalizeReportStatus, sanitizeLocation } from "@/lib/format-display";
+import {
+  formatDateTimeLabel,
+  normalizeReportStatus,
+  sanitizeLocation,
+  toApiDateTime,
+} from "@/lib/format-display";
 import { pickImageFromRaw, resolveMediaUrl } from "@/lib/media-url";
 import { compactDandiLocalStorage } from "@/lib/safe-local-storage";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
@@ -92,6 +98,9 @@ type DandiStateContextValue = {
   adminAuditLogs: AdminAuditLog[];
   pickupPasses: PickupPass[];
   submitReport: (payload: Omit<LostReport, "id" | "status" | "createdAt">) => Promise<{ ok: boolean; message: string; reportId?: string }>;
+  publishAdminLostItem: (
+    payload: Omit<LostReport, "id" | "status" | "createdAt">
+  ) => Promise<{ ok: boolean; message: string; itemId?: string }>;
   resolveReport: (
     reportId: string,
     status: Extract<ReportStatus, "resolved" | "unavailable">
@@ -194,6 +203,8 @@ function extractReportList(payload: unknown): LostReport[] {
 
 async function publishLostItemToApi(report: LostReport) {
   if (!API_BASE_URL) return;
+  const foundAtIso = toApiDateTime(report.lostAt);
+  const createdAtIso = nowISO();
   await apiJson<{ id?: string; lostItemId?: string; message?: string }>("/api/lost-items", {
     method: "POST",
     body: JSON.stringify({
@@ -203,14 +214,47 @@ async function publishLostItemToApi(report: LostReport) {
       category: report.category,
       location: report.location,
       place: report.location,
-      lostAt: report.lostAt,
-      foundAt: report.lostAt,
+      lostAt: foundAtIso,
+      foundAt: foundAtIso,
+      acquiredAt: foundAtIso,
+      createdAt: createdAtIso,
+      registeredAt: createdAtIso,
       memo: report.memo,
       itemType: report.itemType,
       storage: report.storage,
       image: report.image,
       imageUrl: report.image,
       photoUrl: report.image,
+      status: "published",
+    }),
+  });
+}
+
+async function publishAdminLostItemToApi(
+  payload: Omit<LostReport, "id" | "status" | "createdAt">
+): Promise<{ id?: string; lostItemId?: string; message?: string } & Record<string, unknown>> {
+  const foundAtIso = toApiDateTime(payload.lostAt);
+  const createdAtIso = nowISO();
+  return apiJson("/api/lost-items", {
+    method: "POST",
+    body: JSON.stringify({
+      name: payload.itemName,
+      itemName: payload.itemName,
+      category: payload.category,
+      location: payload.location,
+      place: payload.location,
+      lostAt: foundAtIso,
+      foundAt: foundAtIso,
+      acquiredAt: foundAtIso,
+      createdAt: createdAtIso,
+      registeredAt: createdAtIso,
+      memo: payload.memo,
+      itemType: payload.itemType,
+      storage: payload.storage,
+      image: payload.image,
+      imageUrl: payload.image,
+      photoUrl: payload.image,
+      status: "published",
     }),
   });
 }
@@ -387,10 +431,12 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         const session = getAuthSession();
         const ownerEmail = session?.email;
         const ownerName = session?.name;
+        const lostAtDisplay = formatDateTimeLabel(payload.lostAt) || payload.lostAt;
+        const lostAtIso = toApiDateTime(payload.lostAt);
         const normalizedPayload = {
           ...payload,
           location: sanitizeLocation(payload.location),
-          lostAt: formatDateTimeLabel(payload.lostAt) || payload.lostAt,
+          lostAt: lostAtDisplay,
           storage: payload.storage ? sanitizeLocation(payload.storage) : payload.storage,
           image: resolveMediaUrl(payload.image) ?? payload.image,
         };
@@ -399,6 +445,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             method: "POST",
             body: JSON.stringify({
               ...normalizedPayload,
+              lostAt: lostAtIso,
+              foundAt: lostAtIso,
               ownerEmail,
               ownerName,
               imageUrl: normalizedPayload.image,
@@ -458,21 +506,80 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           };
         }
       },
+      publishAdminLostItem: async (payload) => {
+        const lostAtDisplay = formatDateTimeLabel(payload.lostAt) || payload.lostAt;
+        const createdAtDisplay = shortDateTime();
+        const normalizedPayload = {
+          ...payload,
+          location: sanitizeLocation(payload.location),
+          lostAt: lostAtDisplay,
+          storage: payload.storage ? sanitizeLocation(payload.storage) : payload.storage,
+          image: resolveMediaUrl(payload.image) ?? payload.image,
+        };
+
+        const buildLocalItem = (id: string): PublishedLostItem => ({
+          id,
+          name: normalizedPayload.itemName,
+          category: normalizedPayload.category,
+          type: normalizedPayload.itemType,
+          memo: normalizedPayload.memo,
+          place: normalizedPayload.location,
+          storage: normalizedPayload.storage,
+          time: lostAtDisplay || createdAtDisplay,
+          foundAt: lostAtDisplay,
+          createdAt: createdAtDisplay,
+          image: normalizedPayload.image,
+        });
+
+        if (API_BASE_URL && getAuthSession()?.accessToken) {
+          try {
+            const data = await publishAdminLostItemToApi(normalizedPayload);
+            const itemId = String(data.id ?? data.lostItemId ?? `adm-${Date.now()}`);
+            const mapped =
+              mapApiLostItem({ ...data, id: itemId, ...normalizedPayload, itemName: normalizedPayload.itemName }) ??
+              buildLocalItem(itemId);
+            upsertPublishedLostItem(mapped);
+            await refreshHomeCatalog();
+            setAdminAuditLogs((prev) => [
+              {
+                id: `a-${Date.now()}`,
+                message: `관리자 직접 등록: ${normalizedPayload.itemName} (홈 즉시 노출)`,
+                createdAt: shortDateTime(),
+              },
+              ...prev,
+            ]);
+            return { ok: true, message: "홈·검색에 바로 등록되었습니다.", itemId };
+          } catch (error) {
+            return {
+              ok: false,
+              message:
+                error instanceof Error
+                  ? `등록에 실패했습니다. (${error.message})`
+                  : "등록에 실패했습니다.",
+            };
+          }
+        }
+
+        const localId = `adm-${Date.now()}`;
+        const localItem = buildLocalItem(localId);
+        upsertPublishedLostItem(localItem);
+        setHomeLostItems((prev) => sortLostItemsNewestFirst([localItem, ...prev]));
+        setCatalogVersion((v) => v + 1);
+        return { ok: true, message: "홈·검색에 바로 등록되었습니다.", itemId: localId };
+      },
       resolveReport: async (reportId, status) => {
         const normalizedId = String(reportId);
 
         const applyResolved = async () => {
-          let updatedReport: LostReport | null = null;
-          setReports((prev) => {
-            const sourceReport = prev.find((report) => String(report.id) === normalizedId);
-            if (!sourceReport) return prev;
-            updatedReport = { ...sourceReport, status };
-            const next = prev.map((report) => (String(report.id) === normalizedId ? updatedReport! : report));
-            return next;
-          });
-          if (status === "resolved" && updatedReport) {
+          const sourceReport = reports.find((report) => String(report.id) === normalizedId);
+          if (!sourceReport) return;
+          const resolvedReport: LostReport = { ...sourceReport, status };
+          setReports((prev) =>
+            prev.map((report) => (String(report.id) === normalizedId ? resolvedReport : report))
+          );
+          if (status === "resolved") {
             try {
-              await publishLostItemToApi(updatedReport);
+              await publishLostItemToApi(resolvedReport);
             } catch {
               // lost-items API 미구현 시 refresh로 동기화
             }
@@ -490,9 +597,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             if (status === "resolved") {
               appendLocalNotice(
                 "습득 완료 알림",
-                updatedReport
-                  ? `[${updatedReport.itemName}] 습득이 확인되어 홈 목록에 공개되었습니다.`
-                  : "신고하신 물품이 습득 완료 처리되었습니다."
+                `[${sourceReport.itemName}] 습득이 확인되어 홈 목록에 공개되었습니다.`
               );
             } else {
               appendLocalNotice("습득 불가 알림", "신고하신 물품은 아직 습득되지 않은 것으로 처리되었습니다.");
@@ -537,9 +642,19 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         const current = getPublishedLostItems();
         const target = current.find((it) => it.id === itemId) ?? homeLostItems.find((it) => it.id === itemId);
         if (!target) return;
-        const updated = { ...target, ...patch };
+        const foundAtLabel = patch.foundAt ?? patch.time ?? target.foundAt ?? target.time;
+        const createdAtLabel = patch.createdAt ?? target.createdAt;
+        const updated = {
+          ...target,
+          ...patch,
+          time: formatDateTimeLabel(foundAtLabel) || foundAtLabel || target.time,
+          foundAt: formatDateTimeLabel(foundAtLabel) || foundAtLabel,
+          createdAt: formatDateTimeLabel(createdAtLabel) || createdAtLabel,
+        };
         upsertPublishedLostItem(updated);
-        setHomeLostItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, ...patch } : it)));
+        setHomeLostItems((prev) =>
+          sortLostItemsNewestFirst(prev.map((it) => (it.id === itemId ? updated : it)))
+        );
         setCatalogVersion((v) => v + 1);
         if (API_BASE_URL) {
           void apiJson(`/api/lost-items/${itemId}`, {
@@ -550,7 +665,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               category: updated.category,
               location: updated.place,
               place: updated.place,
-              foundAt: updated.time,
+              foundAt: toApiDateTime(updated.foundAt ?? updated.time),
+              lostAt: toApiDateTime(updated.foundAt ?? updated.time),
+              createdAt: updated.createdAt ? toApiDateTime(updated.createdAt) : undefined,
+              registeredAt: updated.createdAt ? toApiDateTime(updated.createdAt) : undefined,
               memo: updated.memo,
               itemType: updated.type,
               storage: updated.storage,

@@ -17,6 +17,7 @@ export type PublishedLostItem = {
   image?: string;
   reportId?: string;
   createdAt?: string;
+  foundAt?: string;
 };
 
 const PUBLISHED_KEY = "dandi.published.lostItems";
@@ -81,7 +82,8 @@ export function removePublishedLostItem(id: string) {
 }
 
 export function reportToPublishedItem(report: LostReport): PublishedLostItem {
-  const lostAtLabel = formatDateTimeLabel(report.lostAt) || report.createdAt;
+  const lostAtLabel = formatDateTimeLabel(report.lostAt) || report.lostAt;
+  const createdLabel = formatDateTimeLabel(report.createdAt) || report.createdAt;
   return {
     id: report.id,
     reportId: report.id,
@@ -90,10 +92,11 @@ export function reportToPublishedItem(report: LostReport): PublishedLostItem {
     type: report.itemType,
     memo: report.memo,
     place: sanitizeLocation(report.location),
-    time: lostAtLabel,
+    time: lostAtLabel || createdLabel,
+    foundAt: lostAtLabel,
     storage: report.storage ? sanitizeLocation(report.storage) : undefined,
     image: resolveMediaUrl(report.image),
-    createdAt: report.createdAt,
+    createdAt: createdLabel,
   };
 }
 
@@ -121,10 +124,15 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
   const id = raw.id ?? raw.lostItemId ?? raw.reportId;
   const name = raw.name ?? raw.itemName;
   if (id == null || name == null) return null;
-  const foundAt = raw.foundAt ?? raw.lostAt ?? raw.time ?? raw.createdAt;
-  const createdAtRaw = raw.createdAt ?? raw.registeredAt ?? raw.storedDate ?? foundAt;
-  const time = typeof foundAt === "string" ? formatDateTimeLabel(foundAt) : "";
-  const createdAt = typeof createdAtRaw === "string" ? formatDateTimeLabel(createdAtRaw) || createdAtRaw : undefined;
+  const foundAtRaw = raw.foundAt ?? raw.lostAt ?? raw.acquiredAt ?? raw.time;
+  const createdAtRaw = raw.createdAt ?? raw.registeredAt ?? raw.storedDate ?? raw.updatedAt;
+  const foundAt =
+    typeof foundAtRaw === "string" ? formatDateTimeLabel(foundAtRaw) || foundAtRaw.trim() : "";
+  const createdAt =
+    typeof createdAtRaw === "string"
+      ? formatDateTimeLabel(createdAtRaw) || createdAtRaw.trim()
+      : foundAt || undefined;
+  const time = foundAt || createdAt || "";
   return {
     id: String(id),
     reportId: raw.reportId != null ? String(raw.reportId) : undefined,
@@ -134,6 +142,7 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
     memo: raw.memo != null ? String(raw.memo) : raw.description != null ? String(raw.description) : undefined,
     place: sanitizeLocation(String(raw.place ?? raw.location ?? "")),
     time,
+    foundAt: foundAt || undefined,
     createdAt,
     storage: raw.storage != null ? String(raw.storage) : undefined,
     image: pickImageFromRaw(raw),

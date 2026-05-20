@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
+import { displayDateTimeLabels } from "@/lib/format-display";
 import { buildings, categories, lostItems } from "@/lib/mock-data";
 
 const ITEMS_PER_PAGE = 8;
@@ -203,16 +204,22 @@ export default function HomePage() {
             </div>
           ) : null}
           {!catalogLoading
-            ? paginatedItems.map((item) => (
+            ? paginatedItems.map((item) => {
+            const { registered, found } = displayDateTimeLabels(item);
+            const timeLabel =
+              registered && found && registered !== found
+                ? `등록 ${registered}`
+                : registered || found || "시간 정보 없음";
+            return (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
                 <div className="relative h-64 overflow-hidden bg-slate-100 md:h-72">
                   <ItemImage src={item.image} alt={item.name} category={item.category} fit="contain" />
                 </div>
                 <CardContent className="space-y-2 p-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <Badge>{item.category}</Badge>
-                    <span className="text-xs text-muted-foreground">{item.time}</span>
+                    <span className="text-right text-xs text-muted-foreground">{timeLabel}</span>
                   </div>
                   <h3 className="text-base font-bold">{item.name}</h3>
                   <p className="text-sm text-muted-foreground">{item.place}</p>
@@ -220,7 +227,8 @@ export default function HomePage() {
                 </CardContent>
               </Card>
             </Link>
-              ))
+            );
+              })
             : null}
         </div>
 

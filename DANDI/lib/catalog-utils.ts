@@ -2,6 +2,7 @@ import type { PublishedLostItem } from "@/lib/published-lost-items";
 import { mapApiLostItem } from "@/lib/published-lost-items";
 import { apiJson } from "@/lib/api-json";
 import { getApiBaseUrl } from "@/lib/api-json";
+import { parseDateTimeMs } from "@/lib/format-display";
 
 export async function fetchRemoteLostItems(): Promise<PublishedLostItem[]> {
   const base = getApiBaseUrl();
@@ -32,11 +33,10 @@ function extractLostItemList(payload: unknown): PublishedLostItem[] {
 }
 
 function parseSortTimestamp(item: PublishedLostItem): number {
-  const candidates = [item.createdAt, item.time].filter(Boolean) as string[];
+  const candidates = [item.createdAt, item.foundAt, item.time].filter(Boolean) as string[];
   for (const raw of candidates) {
-    const isoLike = raw.includes("T") ? raw : raw.replace(/\./g, "/").replace(/\s*시/g, ":").replace(/분/g, ":").replace(/초/g, "");
-    const parsed = Date.parse(isoLike);
-    if (!Number.isNaN(parsed)) return parsed;
+    const ms = parseDateTimeMs(raw);
+    if (ms > 0) return ms;
   }
   const idNum = Number(item.id);
   return Number.isNaN(idNum) ? 0 : idNum;

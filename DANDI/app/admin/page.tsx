@@ -20,7 +20,7 @@ import { resolveMediaUrl } from "@/lib/media-url";
 import { useDandiState } from "@/lib/dandi-state";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
-import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import { displayDateTimeLabels, formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { decodeQrFromVideo, isBarcodeDetectorSupported, normalizePickupToken } from "@/lib/qr-scanner";
 import { categories } from "@/lib/mock-data";
 
@@ -58,7 +58,7 @@ function buildManageDraft(item: { name?: string; category?: string; type?: strin
     category: item.category ?? selectableCategories[0] ?? "기타",
     type: item.type ?? "",
     place: item.place ?? "",
-    foundAt: toDatetimeLocalValue(item.time ?? ""),
+    foundAt: toDatetimeLocalValue(item.foundAt ?? item.time ?? ""),
     storage: item.storage ?? "",
     memo: item.memo ?? "",
     image: resolveMediaUrl(item.image) ?? "",
@@ -75,7 +75,7 @@ export default function AdminPage() {
     adminAuditLogs,
     apiConfigured,
     apiBaseUrl,
-    submitReport,
+    publishAdminLostItem,
     homeLostItems,
     updateHomeLostItem,
     removeHomeLostItem,
@@ -145,8 +145,7 @@ export default function AdminPage() {
     }
 
     setRegistering(true);
-    // 관리자 등록 시에도 검수 대기 목록으로 들어가도록 신고 레코드를 함께 생성합니다.
-    const submitResult = await submitReport({
+    const publishResult = await publishAdminLostItem({
       itemName: regName.trim(),
       category: regCategory.trim(),
       lostAt: regFoundAt,
@@ -156,20 +155,21 @@ export default function AdminPage() {
       image: visionDataUrl ?? undefined,
     });
 
-    if (!submitResult.ok) {
-      setRegMessage(submitResult.message);
+    if (!publishResult.ok) {
+      setRegMessage(publishResult.message);
       setRegistering(false);
       return;
     }
 
+    const registeredAt = new Date().toLocaleString("ko-KR", { hour12: false });
     setRegisteredItems((prev) => [
       {
-        id: submitResult.reportId ?? `adm-${Date.now()}`,
+        id: publishResult.itemId ?? `adm-${Date.now()}`,
         name: regName.trim(),
         category: regCategory.trim(),
         location: regFoundLocation.composed,
         storage: regStorageLocation.composed,
-        createdAt: new Date().toLocaleString("ko-KR", { hour12: false }),
+        createdAt: `${registeredAt} · 습득 ${formatFoundAtLabel(regFoundAt)}`,
       },
       ...prev,
     ]);
@@ -183,7 +183,7 @@ export default function AdminPage() {
     setVisionDataUrl(null);
     setVisionPreview(null);
     setVisionFile(null);
-    setRegMessage("등록 완료되었습니다. 검수 대기에서 습득 완료 처리 후 홈에 노출됩니다.");
+    setRegMessage("등록 완료. 홈·검색에 바로 반영되었습니다.");
     setRegistering(false);
   };
 
@@ -538,6 +538,7 @@ export default function AdminPage() {
       type: draft.type.trim() || undefined,
       place: draft.place.trim(),
       time: savedTime,
+      foundAt: savedTime,
       storage: draft.storage.trim(),
       memo: draft.memo.trim(),
       image: draft.image || undefined,
@@ -839,8 +840,21 @@ export default function AdminPage() {
                     const draft = manageDrafts[item.id] ?? buildManageDraft(item);
                     return (
                       <div key={item.id} className="space-y-4 rounded-xl border bg-white p-4">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-semibold text-slate-700">물품 ID: {item.id}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-700">물품 ID: {item.id}</p>
+                            {(() => {
+                              const { registered, found } = displayDateTimeLabels(item);
+                              return (
+                                <p className="text-xs text-muted-foreground">
+                                  {registered ? `등록 ${registered}` : null}
+                                  {registered && found && registered !== found ? " · " : null}
+                                  {found && registered !== found ? `습득 ${found}` : null}
+                                  {!registered && !found ? "시간 정보 없음" : null}
+                                </p>
+                              );
+                            })()}
+                          </div>
                           <Badge variant="secondary">{item.category}</Badge>
                         </div>
 

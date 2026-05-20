@@ -14,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { fetchAIGuidance, useDandiState } from "@/lib/dandi-state";
 import { lostItems } from "@/lib/mock-data";
 import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
+import { displayDateTimeLabels } from "@/lib/format-display";
 
 const USE_MOCK_LOST_ITEMS = process.env.NEXT_PUBLIC_ENABLE_MOCK_LOST_ITEMS === "true";
 
@@ -93,8 +94,17 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
           <h1 className="text-2xl font-bold">{item.name}</h1>
           <div className="grid gap-2 text-sm text-muted-foreground">
             <p>습득 위치: {item.place}</p>
-            <p>습득 시간: {item.time}</p>
-            <p>보관 장소: 혜당관 학생팀 425호</p>
+            {(() => {
+              const { registered, found } = displayDateTimeLabels(item);
+              return (
+                <>
+                  {registered ? <p>등록 일시: {registered}</p> : null}
+                  {found ? <p>습득 일시: {found}</p> : null}
+                  {!registered && !found ? <p>습득 시간: 시간 정보 없음</p> : null}
+                </>
+              );
+            })()}
+            {item.storage ? <p>보관 장소: {item.storage}</p> : <p>보관 장소: 혜당관 학생팀 425호</p>}
           </div>
 
           <Accordion type="single" collapsible className="rounded-xl border px-4">
