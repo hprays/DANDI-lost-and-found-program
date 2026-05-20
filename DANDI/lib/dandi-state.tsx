@@ -1,7 +1,9 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { getAuthSession } from "@/lib/auth-session";
+import { extractStudentIdFromEmail, getAuthSession } from "@/lib/auth-session";
+import { markLostItemDeleted } from "@/lib/custom-lost-items";
+import { safeSetLocalStorage } from "@/lib/safe-local-storage";
 import {
   enrichPublishedItemsWithReports,
   getPublishedLostItems,
@@ -19,6 +21,7 @@ import {
   sanitizeLocation,
   toApiDateTime,
 } from "@/lib/format-display";
+import { normalizePickupToken } from "@/lib/qr-scanner";
 import { pickImageFromRaw, resolveMediaUrl } from "@/lib/media-url";
 import { compactDandiLocalStorage } from "@/lib/safe-local-storage";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
@@ -120,6 +123,31 @@ type DandiStateContextValue = {
 
 const DandiStateContext = createContext<DandiStateContextValue | null>(null);
 const API_BASE_URL = getApiBaseUrl();
+export const REPORTS_CHANGED_EVENT = "dandi-reports-changed";
+const PICKUP_PASSES_KEY = "dandi.pickupPasses";
+const SYNC_CHANNEL = "dandi-sync";
+
+function notifyReportsChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(REPORTS_CHANGED_EVENT));
+  try {
+    new BroadcastChannel(SYNC_CHANNEL).postMessage({ type: "reports" });
+  } catch {
+    // BroadcastChannel 미지원 환경
+  }
+}
+
+function getStoredPickupPasses(): PickupPass[] {
+  if (typeof window === "undefined") return [];
+  const raw = window.localStorage.getItem(PICKUP_PASSES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as PickupPass[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 function nowISO() {
   return new Date().toISOString();
@@ -182,8 +210,26 @@ function normalizeReport(raw: Record<string, unknown>): LostReport | null {
     status,
     createdAt: formatDateTimeLabel(String(raw.createdAt ?? "")) || shortDateTime(),
     pickedUpAt: raw.pickedUpAt != null ? formatDateTimeLabel(String(raw.pickedUpAt)) || String(raw.pickedUpAt) : undefined,
-    ownerEmail: raw.ownerEmail != null ? String(raw.ownerEmail) : undefined,
-    ownerName: raw.ownerName != null ? String(raw.ownerName) : undefined,
+    ownerEmail:
+      raw.ownerEmail != null
+        ? String(raw.ownerEmail)
+        : raw.reporterEmail != null
+          ? String(raw.reporterEmail)
+          : raw.userEmail != null
+            ? String(raw.userEmail)
+            : raw.email != null
+              ? String(raw.email)
+              : undefined,
+    ownerName:
+      raw.ownerName != null
+        ? String(raw.ownerName)
+        : raw.reporterName != null
+          ? String(raw.reporterName)
+          : raw.userName != null
+            ? String(raw.userName)
+            : raw.claimantName != null
+              ? String(raw.claimantName)
+              : undefined,
   };
 }
 
@@ -293,10 +339,29 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       createdAt: shortDateTime(),
     },
   ]);
-  const [pickupPasses, setPickupPasses] = useState<PickupPass[]>([]);
+  const [pickupPasses, setPickupPasses] = useState<PickupPass[]>(() => getStoredPickupPasses());
 
   useEffect(() => {
     compactDandiLocalStorage();
+  }, []);
+
+  useEffect(() => {
+    safeSetLocalStorage(PICKUP_PASSES_KEY, JSON.stringify(pickupPasses.slice(0, 80)));
+  }, [pickupPasses]);
+
+  const removeLostItemAfterPickup = useCallback(async (lostItemId: string) => {
+    if (!lostItemId) return;
+    markLostItemDeleted(lostItemId);
+    removePublishedLostItem(lostItemId);
+    setHomeLostItems((prev) => prev.filter((it) => String(it.id) !== String(lostItemId)));
+    setCatalogVersion((v) => v + 1);
+    if (API_BASE_URL && getAuthSession()?.accessToken) {
+      try {
+        await apiJson<object>(`/api/lost-items/${encodeURIComponent(lostItemId)}`, { method: "DELETE" });
+      } catch {
+        // 삭제 API 미구현 시 화면만 반영
+      }
+    }
   }, []);
 
   const applyCatalogMerge = useCallback((reportList: LostReport[], remoteItems: PublishedLostItem[]) => {
@@ -349,11 +414,12 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         prev.forEach((r) => map.set(r.id, r));
         remote.forEach((r) => {
           const existing = map.get(r.id);
-          if (existing?.image && !r.image) {
-            map.set(r.id, { ...r, image: existing.image });
-          } else {
-            map.set(r.id, r);
-          }
+          map.set(r.id, {
+            ...r,
+            image: r.image ?? existing?.image,
+            ownerName: r.ownerName ?? existing?.ownerName,
+            ownerEmail: r.ownerEmail ?? existing?.ownerEmail,
+          });
         });
         return Array.from(map.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
       });
@@ -414,6 +480,37 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     return () => window.removeEventListener("dandi-auth-changed", onAuthChanged);
   }, [bootstrapAfterAuth]);
 
+  useEffect(() => {
+    const syncReports = () => {
+      if (getAuthSession()?.accessToken) void refreshReports();
+    };
+    const interval = window.setInterval(syncReports, 12_000);
+    window.addEventListener("focus", syncReports);
+    window.addEventListener(REPORTS_CHANGED_EVENT, syncReports);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") syncReports();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(SYNC_CHANNEL);
+      channel.onmessage = (event) => {
+        if (event.data?.type === "reports") syncReports();
+      };
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", syncReports);
+      window.removeEventListener(REPORTS_CHANGED_EVENT, syncReports);
+      document.removeEventListener("visibilitychange", onVisible);
+      channel?.close();
+    };
+  }, [refreshReports]);
+
   const value = useMemo<DandiStateContextValue>(
     () => ({
       reports,
@@ -430,7 +527,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       submitReport: async (payload) => {
         const session = getAuthSession();
         const ownerEmail = session?.email;
-        const ownerName = session?.name;
+        const ownerName =
+          session?.name?.trim() ||
+          extractStudentIdFromEmail(session?.email) ||
+          undefined;
         const lostAtDisplay = formatDateTimeLabel(payload.lostAt) || payload.lostAt;
         const lostAtIso = toApiDateTime(payload.lostAt);
         const normalizedPayload = {
@@ -449,6 +549,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               foundAt: lostAtIso,
               ownerEmail,
               ownerName,
+              reporterName: ownerName,
+              reporterEmail: ownerEmail,
               imageUrl: normalizedPayload.image,
               photoUrl: normalizedPayload.image,
               image: normalizedPayload.image,
@@ -468,6 +570,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           appendLocalNotice("분실물 신고 접수", `${report.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`);
           void refreshNotices();
           await refreshReports();
+          notifyReportsChanged();
           return {
             ok: true,
             message: data.message ? String(data.message) : "신고가 접수되었습니다.",
@@ -578,6 +681,15 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             prev.map((report) => (String(report.id) === normalizedId ? resolvedReport : report))
           );
           if (status === "resolved") {
+            const published = reportToPublishedItem(resolvedReport);
+            upsertPublishedLostItem(published);
+            setHomeLostItems((prev) =>
+              sortLostItemsNewestFirst([
+                published,
+                ...prev.filter((it) => String(it.id) !== String(published.id)),
+              ])
+            );
+            setCatalogVersion((v) => v + 1);
             try {
               await publishLostItemToApi(resolvedReport);
             } catch {
@@ -585,6 +697,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             }
           }
           await refreshHomeCatalog();
+          notifyReportsChanged();
           setAdminAuditLogs((prev) => [
             {
               id: `a-${Date.now()}`,
@@ -761,12 +874,24 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         }
       },
       verifyPickupPass: async (token) => {
-        const normalized = token.trim().toUpperCase();
+        const normalized = normalizePickupToken(token);
         if (!normalized) {
           return { ok: false, message: "QR 코드를 입력해 주세요." };
         }
+        if (!/^DKU-[A-Z0-9]{6,}$/.test(normalized)) {
+          return { ok: false, message: "올바른 수령 코드 형식이 아닙니다. (DKU-로 시작)" };
+        }
 
-        const finalize = (pass: PickupPass, usedAt: string, message: string): PickupVerifyResult => {
+        const localPass = pickupPasses.find((it) => it.token.toUpperCase() === normalized);
+        if (localPass?.usedAt) {
+          return { ok: false, message: "이미 수령 인증이 완료된 코드입니다." };
+        }
+
+        const finalize = async (
+          pass: PickupPass,
+          usedAt: string,
+          message: string
+        ): Promise<PickupVerifyResult> => {
           setPickupPasses((prev) =>
             prev.map((it) => (it.token.toUpperCase() === normalized ? { ...it, usedAt } : it))
           );
@@ -776,6 +901,9 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
                 String(report.id) === String(pass.reportId) ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report
               )
             );
+          }
+          if (pass.lostItemId) {
+            await removeLostItemAfterPickup(pass.lostItemId);
           }
           void refreshHomeCatalog();
           setAdminAuditLogs((prev) => [
@@ -789,8 +917,6 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           void refreshNotices();
           return { ok: true, message, pass: { ...pass, usedAt } };
         };
-
-        const localPass = pickupPasses.find((it) => it.token.toUpperCase() === normalized);
 
         try {
           const data = await apiJson<{
@@ -821,7 +947,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             usedAt,
             reportId: data.reportId ?? localPass?.reportId,
           };
-          return finalize(merged, usedAt, data.message ?? "QR 인증 완료: 최종 수령 처리되었습니다.");
+          return await finalize(merged, usedAt, data.message ?? "QR 인증 완료: 최종 수령 처리되었습니다.");
         } catch (error) {
           if (!localPass) {
             return {
@@ -830,7 +956,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             };
           }
           const usedAt = shortDateTime();
-          return finalize(
+          return await finalize(
             localPass,
             usedAt,
             error instanceof Error
@@ -961,6 +1087,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       appendLocalNotice,
       refreshReports,
       reports,
+      removeLostItemAfterPickup,
+      pickupPasses,
     ]
   );
 

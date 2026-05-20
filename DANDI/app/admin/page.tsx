@@ -5,7 +5,7 @@ import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Camera, CameraOff, CheckCircle2, CircleX, Clock3, Loader2, ShieldAlert } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { getAuthSession, type AuthSession } from "@/lib/auth-session";
+import { extractStudentIdFromEmail, getAuthSession, type AuthSession } from "@/lib/auth-session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,7 +21,12 @@ import { useDandiState } from "@/lib/dandi-state";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
 import { displayDateTimeLabels, formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
-import { decodeQrFromVideo, isBarcodeDetectorSupported, normalizePickupToken } from "@/lib/qr-scanner";
+import {
+  decodeQrFromVideo,
+  isBarcodeDetectorSupported,
+  isValidPickupToken,
+  normalizePickupToken,
+} from "@/lib/qr-scanner";
 import { categories } from "@/lib/mock-data";
 
 const selectableCategories = categories.filter((c) => c !== "전체");
@@ -52,7 +57,17 @@ function formatFoundAtLabel(foundAt: string): string {
   return parsed.toLocaleString("ko-KR", { hour12: false });
 }
 
-function buildManageDraft(item: { name?: string; category?: string; type?: string; place?: string; time?: string; memo?: string; image?: string; storage?: string }): ManageDraft {
+function buildManageDraft(item: {
+  name?: string;
+  category?: string;
+  type?: string;
+  place?: string;
+  time?: string;
+  foundAt?: string;
+  memo?: string;
+  image?: string;
+  storage?: string;
+}): ManageDraft {
   return {
     name: item.name ?? "",
     category: item.category ?? selectableCategories[0] ?? "기타",
@@ -92,7 +107,14 @@ export default function AdminPage() {
     });
     return () => window.cancelAnimationFrame(rafId);
   }, []);
+
   const isAdmin = Boolean(adminCheckSession?.isAdmin);
+
+  useEffect(() => {
+    if (isAdmin && apiConfigured) {
+      void refreshReports();
+    }
+  }, [isAdmin, apiConfigured, refreshReports]);
   const [regName, setRegName] = useState("");
   const [regCategory, setRegCategory] = useState(selectableCategories[0] ?? "기타");
   const regFoundLocation = useBuildingLocationField();
@@ -193,18 +215,27 @@ export default function AdminPage() {
   };
 
   const onVerifyPickup = async (token: string, itemId?: string) => {
-    if (!token.trim()) {
+    const normalized = normalizePickupToken(token);
+    if (!normalized) {
       setPickupMessage("QR 코드를 입력해 주세요.");
+      return;
+    }
+    if (!isValidPickupToken(normalized)) {
+      setPickupMessage("올바른 수령 코드 형식이 아닙니다. (DKU-로 시작하는 발급 코드)");
       return;
     }
     setPickupVerifying(true);
     try {
-      const result = await verifyPickupPass(token);
+      const result = await verifyPickupPass(normalized);
       setPickupMessage(result.message);
       if (result.ok) {
         setPickupToken("");
         if (itemId) {
-          setPickupTokens((prev) => ({ ...prev, [itemId]: "" }));
+          setPickupTokens((prev) => {
+            const next = { ...prev };
+            delete next[itemId];
+            return next;
+          });
         }
         if (result.pass) {
           setLastVerifiedPass({
@@ -227,6 +258,8 @@ export default function AdminPage() {
   const [scanToken, setScanToken] = useState("");
   const [confirmIdCheck, setConfirmIdCheck] = useState(false);
   const [confirmCardCheck, setConfirmCardCheck] = useState(false);
+  const [visionMaskId, setVisionMaskId] = useState(false);
+  const [visionMaskCard, setVisionMaskCard] = useState(false);
   const [scannedPass, setScannedPass] = useState<typeof lastVerifiedPass>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scanHandledRef = useRef(false);
@@ -251,13 +284,18 @@ export default function AdminPage() {
       const raw = await decodeQrFromVideo(videoRef.current);
       if (!raw) return;
       const token = normalizePickupToken(raw);
-      if (!/^DKU-\d{6}$/.test(token)) return;
+      if (!isValidPickupToken(token)) return;
 
       scanHandledRef.current = true;
       setScanToken(token);
       const target = pickupPasses.find((p) => p.token.toUpperCase() === token);
       if (!target) {
         setCameraError("발급된 수령 QR이 아닙니다. 마이페이지에서 QR을 발급했는지 확인해 주세요.");
+        scanHandledRef.current = false;
+        return;
+      }
+      if (target.usedAt) {
+        setCameraError("이미 수령 인증이 완료된 QR입니다.");
         scanHandledRef.current = false;
         return;
       }
@@ -268,10 +306,9 @@ export default function AdminPage() {
         claimantEmail: target.claimantEmail,
         usedAt: target.usedAt,
       });
-      setConfirmIdCheck(true);
-      setConfirmCardCheck(true);
+      setConfirmIdCheck(false);
+      setConfirmCardCheck(false);
       setCameraError(null);
-      void onVerifyPickup(token).then(() => closeCamera());
     };
 
     const loop = () => {
@@ -352,16 +389,20 @@ export default function AdminPage() {
   };
 
   const pickupSearchResults = useMemo(() => {
+    const verifiedLostIds = new Set(
+      pickupPasses.filter((p) => p.usedAt && p.lostItemId).map((p) => String(p.lostItemId))
+    );
+    const available = managedItems.filter((item) => !verifiedLostIds.has(String(item.id)));
     const keyword = pickupSearch.trim().toLowerCase();
-    if (!keyword) return managedItems.slice(0, 6);
-    return managedItems.filter((item) => {
+    if (!keyword) return available.slice(0, 6);
+    return available.filter((item) => {
       const haystack = [item.name, item.category, item.type, item.place, (item as { memo?: string }).memo]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [managedItems, pickupSearch]);
+  }, [managedItems, pickupSearch, pickupPasses]);
 
   const onVisionFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -405,8 +446,25 @@ export default function AdminPage() {
       return;
     }
 
+    if (visionMaskId || visionMaskCard) {
+      if (!visionMaskId) {
+        setVisionMessage("신분증·학생증 사진은 「신분증/학생증」 체크 후 분석해 주세요.");
+        return;
+      }
+    }
+
     const formData = new FormData();
     formData.append("image", visionFile);
+    if (visionMaskId) {
+      formData.append("maskIdCard", "true");
+      formData.append("documentType", "ID_CARD");
+      formData.append("sensitiveContent", "true");
+    }
+    if (visionMaskCard) {
+      formData.append("maskPaymentCard", "true");
+      formData.append("documentType", visionMaskId ? "ID_AND_PAYMENT_CARD" : "PAYMENT_CARD");
+      formData.append("sensitiveContent", "true");
+    }
 
     setVisionLoading(true);
     setVisionMessage("");
@@ -672,8 +730,8 @@ export default function AdminPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  관리자 계정 권한 기준으로 물품 등록/분석이 진행됩니다. 등록한 물품은 사용자 분실 신고와 동일하게{" "}
-                  <b>검수 대기</b>에 들어가며, 습득 완료/불가 처리 후 홈·마이페이지에 반영됩니다.
+                  관리자가 등록한 물품은 <b>검수 대기 없이 홈·검색에 바로</b> 노출됩니다. 사용자 분실 신고는 검수 대기 후
+                  「습득 완료」 처리 시 홈에 등록됩니다.
                 </div>
 
                 <div className="space-y-2">
@@ -690,7 +748,27 @@ export default function AdminPage() {
                       {visionFile ? `선택됨: ${visionFile.name}` : "여기를 눌러 사진 업로드"}
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">신분증은 사진 없이 텍스트 정보만 기록합니다.</p>
+                  <div className="space-y-2 rounded-lg border bg-slate-50 p-3 text-xs">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={visionMaskId}
+                        onChange={(e) => setVisionMaskId(e.target.checked)}
+                      />
+                      <span>신분증·학생증 (체크 시 Vision API로 중요 정보 마스킹/블러 요청)</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={visionMaskCard}
+                        onChange={(e) => setVisionMaskCard(e.target.checked)}
+                      />
+                      <span>카드·체크카드 (체크 시 번호 등 민감 정보 마스킹 요청)</span>
+                    </label>
+                    <p className="text-muted-foreground">
+                      신분증/카드 사진은 위 체크 후 「Vision 분석」을 눌러 주세요. 미체크 시 일반 물품 분석만 수행됩니다.
+                    </p>
+                  </div>
                   {visionPreview ? (
                     <div className="overflow-hidden rounded-lg border">
                       <div className="relative h-64 w-full bg-slate-50 md:h-80">
@@ -1006,7 +1084,10 @@ export default function AdminPage() {
                       <p>접수: {report.createdAt}</p>
                       {report.ownerName || report.ownerEmail ? (
                         <p>
-                          신고자: {report.ownerName ?? "이름 없음"}{" "}
+                          신고자:{" "}
+                          {report.ownerName?.trim() ||
+                            extractStudentIdFromEmail(report.ownerEmail) ||
+                            "프로필 미등록 (마이페이지에서 이름 저장 필요)"}{" "}
                           {report.ownerEmail ? <>({report.ownerEmail})</> : null}
                         </p>
                       ) : null}
@@ -1146,7 +1227,7 @@ export default function AdminPage() {
                         </Button>
                       </div>
                       <p className="text-[11px] text-muted-foreground">
-                        ※ 현장 카메라 스캔 라이브러리(BarcodeDetector 등)는 백엔드/PWA 환경 설정 후 연동 예정. 지금은 인식된 토큰을 입력해 확인합니다.
+                        Chrome/Edge에서 QR이 자동 인식되면 아래 토큰이 채워집니다. 신분증 확인 체크 후 「최종 수령 인증 완료」를 눌러 주세요.
                       </p>
                     </div>
 
@@ -1232,7 +1313,7 @@ export default function AdminPage() {
                           <Input
                             value={draftToken}
                             onChange={(e) => setPickupTokens((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                            placeholder="분실자 QR 코드 입력 (예: DKU-123456)"
+                            placeholder="분실자 QR 코드 입력 (예: DKU-123456 또는 발급된 전체 코드)"
                           />
                           <Button
                             type="button"
@@ -1259,7 +1340,7 @@ export default function AdminPage() {
                   <Input
                     value={pickupToken}
                     onChange={(e) => setPickupToken(e.target.value)}
-                    placeholder="사용자 QR 코드 입력 (예: DKU-123456)"
+                    placeholder="사용자 QR 코드 전체 입력 (예: DKU-551033...)"
                   />
                   <Button onClick={() => void onVerifyPickup(pickupToken)} disabled={pickupVerifying}>
                     {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

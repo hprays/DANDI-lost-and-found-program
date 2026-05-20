@@ -20,7 +20,13 @@ import {
 } from "@/lib/auth-session";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
-import { getStoredKeywords, setStoredKeywords } from "@/lib/user-preferences";
+import {
+  getStoredAlertEnabled,
+  getStoredKeywords,
+  KEYWORDS_CHANGED_EVENT,
+  setStoredAlertEnabled,
+  setStoredKeywords,
+} from "@/lib/user-preferences";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
@@ -37,6 +43,7 @@ export default function MyPage() {
 
   const [keyword, setKeyword] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [tagsReady, setTagsReady] = useState(false);
   const [alertEnabled, setAlertEnabled] = useState(true);
   const [noticeMessage, setNoticeMessage] = useState("");
   const [readingNoticeId, setReadingNoticeId] = useState<string | null>(null);
@@ -48,14 +55,32 @@ export default function MyPage() {
       setEditName(s?.name ?? "");
       setEditDepartment(s?.department ?? "");
       setTags(getStoredKeywords());
+      setAlertEnabled(getStoredAlertEnabled());
+      setTagsReady(true);
     });
     return () => window.cancelAnimationFrame(rafId);
   }, []);
 
-  // 키워드는 변경 시 localStorage에 즉시 영속화 (로그아웃 후에도 유지)
   useEffect(() => {
+    const onKeywordsChanged = (event: Event) => {
+      const detail = (event as CustomEvent<string[]>).detail;
+      if (Array.isArray(detail)) setTags(detail);
+      else setTags(getStoredKeywords());
+    };
+    window.addEventListener(KEYWORDS_CHANGED_EVENT, onKeywordsChanged);
+    return () => window.removeEventListener(KEYWORDS_CHANGED_EVENT, onKeywordsChanged);
+  }, []);
+
+  // 키워드는 로드 완료 후에만 저장 (빈 배열로 덮어쓰기 방지)
+  useEffect(() => {
+    if (!tagsReady) return;
     setStoredKeywords(tags);
-  }, [tags]);
+  }, [tags, tagsReady]);
+
+  useEffect(() => {
+    if (!tagsReady) return;
+    setStoredAlertEnabled(alertEnabled);
+  }, [alertEnabled, tagsReady]);
 
   const myPickupPasses = useMemo(() => {
     if (!session?.email) return pickupPasses;

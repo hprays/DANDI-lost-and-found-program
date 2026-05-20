@@ -3,9 +3,12 @@
 import { safeSetLocalStorage } from "@/lib/safe-local-storage";
 
 const KEYWORDS_STORAGE_KEY = "dandi.userPrefs.keywords";
+const ALERT_ENABLED_KEY = "dandi.userPrefs.alertEnabled";
 const LOCAL_NOTICES_KEY = "dandi.userPrefs.localNotices";
 
 const DEFAULT_KEYWORDS = ["에어팟", "검정", "지갑"];
+
+export const KEYWORDS_CHANGED_EVENT = "dandi-keywords-changed";
 
 export function getStoredKeywords(): string[] {
   if (typeof window === "undefined") return DEFAULT_KEYWORDS;
@@ -21,7 +24,21 @@ export function getStoredKeywords(): string[] {
 
 export function setStoredKeywords(keywords: string[]) {
   if (typeof window === "undefined") return;
-  safeSetLocalStorage(KEYWORDS_STORAGE_KEY, JSON.stringify(keywords));
+  if (safeSetLocalStorage(KEYWORDS_STORAGE_KEY, JSON.stringify(keywords))) {
+    window.dispatchEvent(new CustomEvent(KEYWORDS_CHANGED_EVENT, { detail: keywords }));
+  }
+}
+
+export function getStoredAlertEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = window.localStorage.getItem(ALERT_ENABLED_KEY);
+  if (raw === "false") return false;
+  return true;
+}
+
+export function setStoredAlertEnabled(enabled: boolean) {
+  if (typeof window === "undefined") return;
+  safeSetLocalStorage(ALERT_ENABLED_KEY, enabled ? "true" : "false");
 }
 
 export type StoredNotice = {

@@ -1,71 +1,45 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+import QRCode from "qrcode";
+
 type PickupQrProps = {
   value: string;
   size?: number;
 };
 
-function hashString(input: string) {
-  let hash = 2166136261;
-  for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function isFinderPattern(x: number, y: number, n: number) {
-  const inTopLeft = x < 7 && y < 7;
-  const inTopRight = x >= n - 7 && y < 7;
-  const inBottomLeft = x < 7 && y >= n - 7;
-  return inTopLeft || inTopRight || inBottomLeft;
-}
-
-function finderCell(x: number, y: number, n: number) {
-  let fx = x;
-  let fy = y;
-  if (x >= n - 7 && y < 7) {
-    fx = x - (n - 7);
-  } else if (x < 7 && y >= n - 7) {
-    fy = y - (n - 7);
-  }
-
-  const edge = fx === 0 || fx === 6 || fy === 0 || fy === 6;
-  const center = fx >= 2 && fx <= 4 && fy >= 2 && fy <= 4;
-  return edge || center;
-}
-
+/** 마이페이지·수령 안내용 — 토큰 문자열이 그대로 인코딩되는 표준 QR */
 export function PickupQr({ value, size = 144 }: PickupQrProps) {
-  const n = 21;
-  const cells: boolean[] = [];
-  const seed = hashString(value);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  for (let y = 0; y < n; y += 1) {
-    for (let x = 0; x < n; x += 1) {
-      if (isFinderPattern(x, y, n)) {
-        cells.push(finderCell(x, y, n));
-        continue;
-      }
-      const v = (seed + x * 92821 + y * 68917 + x * y * 271) % 11;
-      cells.push(v % 2 === 0);
-    }
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !value.trim()) return;
+    void QRCode.toCanvas(canvas, value.trim(), {
+      width: size,
+      margin: 1,
+      errorCorrectionLevel: "M",
+    }).catch(() => undefined);
+  }, [value, size]);
+
+  if (!value.trim()) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-lg border bg-slate-50 text-xs text-muted-foreground"
+        style={{ width: size, height: size }}
+      >
+        QR 없음
+      </div>
+    );
   }
 
   return (
-    <div className="rounded-lg border bg-white p-2" style={{ width: size, height: size }}>
-      <div
-        className="grid h-full w-full"
-        style={{
-          gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${n}, minmax(0, 1fr))`,
-          gap: 0,
-        }}
-        aria-label={`QR-${value}`}
-      >
-        {cells.map((on, idx) => (
-          <span key={idx} className={on ? "bg-black" : "bg-white"} />
-        ))}
-      </div>
-    </div>
+    <canvas
+      ref={canvasRef}
+      width={size}
+      height={size}
+      className="rounded-lg border bg-white"
+      aria-label={`수령 QR ${value}`}
+    />
   );
 }
