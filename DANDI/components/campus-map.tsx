@@ -25,6 +25,7 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const osmMapRef = useRef<LeafletMap | null>(null);
   const osmMarkerRef = useRef<Map<string, LeafletMarker>>(new Map());
+  const userLocationMarkerRef = useRef<LeafletMarker | null>(null);
   const onOfficeSelectRef = useRef(onOfficeSelect);
   const [mapReady, setMapReady] = useState(false);
 
@@ -73,6 +74,8 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
         preferCanvas: true,
       }).setView([37.3219, 127.1264], 16);
 
+      osmMapRef.current = map;
+
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
         maxZoom: 19,
@@ -100,7 +103,11 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (position) => {
+            if (cancelled || !osmMapRef.current) return;
+
+            const mapInstance = osmMapRef.current;
             setGeoLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+
             const myIcon = L.divIcon({
               className: "",
               html: '<span style="display:inline-block;width:14px;height:14px;border-radius:9999px;background:#0ea5e9;border:2px solid #fff;box-shadow:0 0 0 4px rgba(14,165,233,.25)"></span>',
@@ -108,8 +115,12 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
               iconAnchor: [7, 7],
             });
 
-            L.marker([position.coords.latitude, position.coords.longitude], { icon: myIcon })
-              .addTo(map)
+            userLocationMarkerRef.current?.remove();
+            userLocationMarkerRef.current = L.marker(
+              [position.coords.latitude, position.coords.longitude],
+              { icon: myIcon }
+            )
+              .addTo(mapInstance)
               .bindPopup("현재 위치");
           },
           (err) => {
@@ -148,7 +159,6 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
         resizeObserver.observe(mapRef.current);
       }
 
-      osmMapRef.current = map;
       setMapReady(true);
       invalidate();
     };
@@ -160,6 +170,8 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
       resizeTimers.forEach((tid) => window.clearTimeout(tid));
       if (resizeHandler) window.removeEventListener("resize", resizeHandler);
       resizeObserver?.disconnect();
+      userLocationMarkerRef.current?.remove();
+      userLocationMarkerRef.current = null;
       if (osmMapRef.current) {
         osmMapRef.current.remove();
         osmMapRef.current = null;
