@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { MAX_IMAGE_BYTES } from "@/lib/constants";
 import { applyLostItemAdminChanges, markLostItemDeleted, setLostItemOverride } from "@/lib/custom-lost-items";
 import { enrichPublishedItemsWithReports } from "@/lib/published-lost-items";
-import { resolveMediaUrl } from "@/lib/media-url";
+import { resolveItemImageUrl } from "@/lib/media-url";
 import { useDandiState } from "@/lib/dandi-state";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
@@ -76,7 +76,7 @@ function buildManageDraft(item: {
     foundAt: toDatetimeLocalValue(item.foundAt ?? item.time ?? ""),
     storage: item.storage ?? "",
     memo: item.memo ?? "",
-    image: resolveMediaUrl(item.image) ?? "",
+    image: resolveItemImageUrl(item.image) ?? "",
   };
 }
 
@@ -948,11 +948,9 @@ export default function AdminPage() {
                             />
                             {draft.image ? (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={draft.image} alt={draft.name} className="pointer-events-none h-full w-full object-contain" />
+                              <img src={draft.image} alt={draft.name} className="pointer-events-none h-full w-full object-contain bg-slate-50" />
                             ) : (
-                              <div className="pointer-events-none flex h-full items-center justify-center text-sm text-slate-500">
-                                여기를 눌러 사진 업로드/변경
-                              </div>
+                              <div className="pointer-events-none h-full w-full bg-slate-100" aria-hidden />
                             )}
                           </div>
                           {draft.image ? (

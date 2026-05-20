@@ -1,9 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
-import { getFallbackImageByCategory } from "@/lib/image-fallback";
-import { resolveMediaUrl } from "@/lib/media-url";
+import { useEffect, useMemo, useState } from "react";
+import { resolveItemImageUrl } from "@/lib/media-url";
 
 type ItemImageProps = {
   src?: string;
@@ -13,21 +12,43 @@ type ItemImageProps = {
   fit?: "contain" | "cover";
 };
 
-export function ItemImage({ src, alt, category, sizes = "(max-width: 768px) 100vw, 50vw", fit = "contain" }: ItemImageProps) {
+/** 사진이 없거나 로드 실패 시 단색 빈 영역만 표시 (AI 예비 이미지 미사용) */
+export function ItemImage({
+  src,
+  alt,
+  sizes = "(max-width: 768px) 100vw, 50vw",
+  fit = "contain",
+}: ItemImageProps) {
   const [failed, setFailed] = useState(false);
-  const fallbackSrc = useMemo(() => getFallbackImageByCategory(category), [category]);
-  const resolvedSrc = useMemo(() => resolveMediaUrl(src), [src]);
-  const safeSrc = failed || !resolvedSrc ? fallbackSrc : resolvedSrc;
+  const resolvedSrc = useMemo(() => resolveItemImageUrl(src), [src]);
+  const showImage = Boolean(resolvedSrc && !failed);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  if (!showImage) {
+    return (
+      <div
+        className="h-full w-full bg-slate-100"
+        role="img"
+        aria-label={`${alt} (사진 없음)`}
+      />
+    );
+  }
+
   const useNativeImg = Boolean(
-    resolvedSrc && (resolvedSrc.startsWith("http://") || resolvedSrc.startsWith("https://") || resolvedSrc.startsWith("data:"))
+    resolvedSrc!.startsWith("http://") ||
+      resolvedSrc!.startsWith("https://") ||
+      resolvedSrc!.startsWith("data:")
   );
 
-  if (useNativeImg && !failed) {
+  if (useNativeImg) {
     return (
-      <div className="relative h-full w-full bg-gradient-to-br from-slate-50 to-slate-200">
+      <div className="relative h-full w-full bg-slate-50">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={safeSrc}
+          src={resolvedSrc}
           alt={alt}
           className={`h-full w-full ${fit === "cover" ? "object-cover object-center" : "object-contain object-center"}`}
           onError={() => setFailed(true)}
@@ -37,21 +58,16 @@ export function ItemImage({ src, alt, category, sizes = "(max-width: 768px) 100v
   }
 
   return (
-    <div className="relative h-full w-full bg-gradient-to-br from-slate-50 to-slate-200">
+    <div className="relative h-full w-full bg-slate-50">
       <Image
-        src={safeSrc}
+        src={resolvedSrc!}
         alt={alt}
         fill
         sizes={sizes}
         className={fit === "cover" ? "object-cover object-center" : "object-contain object-center"}
         onError={() => setFailed(true)}
-        unoptimized={!safeSrc.startsWith("/")}
+        unoptimized={!resolvedSrc!.startsWith("/")}
       />
-      {(failed || !resolvedSrc) && (
-        <div className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white">
-          AI 예비 이미지
-        </div>
-      )}
     </div>
   );
 }

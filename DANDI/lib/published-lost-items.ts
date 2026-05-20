@@ -2,7 +2,7 @@
 
 import type { LostReport } from "@/lib/dandi-state";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
-import { pickImageFromRaw, resolveMediaUrl } from "@/lib/media-url";
+import { pickImageFromRaw, resolveItemImageUrl } from "@/lib/media-url";
 import { imageForLocalStorage, safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
 export type PublishedLostItem = {
@@ -95,7 +95,7 @@ export function reportToPublishedItem(report: LostReport): PublishedLostItem {
     time: lostAtLabel || createdLabel,
     foundAt: lostAtLabel,
     storage: report.storage ? sanitizeLocation(report.storage) : undefined,
-    image: resolveMediaUrl(report.image),
+    image: resolveItemImageUrl(report.image),
     createdAt: createdLabel,
   };
 }
@@ -106,17 +106,17 @@ export function enrichPublishedItemsWithReports(
 ): PublishedLostItem[] {
   const byId = new Map(reports.map((r) => [String(r.id), r]));
   return items.map((item) => {
-    const resolvedImage = resolveMediaUrl(item.image);
+    const resolvedImage = resolveItemImageUrl(item.image);
     if (resolvedImage && !resolvedImage.startsWith("data:")) {
       return { ...item, image: resolvedImage };
     }
     const linked =
       (item.reportId ? byId.get(String(item.reportId)) : undefined) ?? byId.get(String(item.id));
     if (linked?.image) {
-      const fromReport = resolveMediaUrl(linked.image);
+      const fromReport = resolveItemImageUrl(linked.image);
       if (fromReport) return { ...item, image: fromReport };
     }
-    return { ...item, image: resolvedImage?.startsWith("data:") ? resolvedImage : item.image };
+    return { ...item, image: resolvedImage?.startsWith("data:") ? resolvedImage : undefined };
   });
 }
 

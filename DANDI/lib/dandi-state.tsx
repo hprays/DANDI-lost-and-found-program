@@ -22,7 +22,7 @@ import {
   toApiDateTime,
 } from "@/lib/format-display";
 import { normalizePickupToken } from "@/lib/qr-scanner";
-import { pickImageFromRaw, resolveMediaUrl } from "@/lib/media-url";
+import { apiImageFields, pickImageFromRaw, resolveItemImageUrl, resolveMediaUrl } from "@/lib/media-url";
 import { compactDandiLocalStorage } from "@/lib/safe-local-storage";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
 
@@ -268,9 +268,7 @@ async function publishLostItemToApi(report: LostReport) {
       memo: report.memo,
       itemType: report.itemType,
       storage: report.storage,
-      image: report.image,
-      imageUrl: report.image,
-      photoUrl: report.image,
+      ...apiImageFields(report.image),
       status: "published",
     }),
   });
@@ -297,9 +295,7 @@ async function publishAdminLostItemToApi(
       memo: payload.memo,
       itemType: payload.itemType,
       storage: payload.storage,
-      image: payload.image,
-      imageUrl: payload.image,
-      photoUrl: payload.image,
+      ...apiImageFields(payload.image),
       status: "published",
     }),
   });
@@ -368,13 +364,13 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     const merged = new Map<string, PublishedLostItem>();
 
     remoteItems.forEach((item) => {
-      merged.set(String(item.id), { ...item, image: resolveMediaUrl(item.image) });
+      merged.set(String(item.id), { ...item, image: resolveItemImageUrl(item.image) });
     });
 
     if (!API_BASE_URL) {
       const localPublished = getPublishedLostItems();
       localPublished.forEach((item) => {
-        merged.set(String(item.id), { ...item, image: resolveMediaUrl(item.image) });
+        merged.set(String(item.id), { ...item, image: resolveItemImageUrl(item.image) });
       });
     }
 
@@ -538,7 +534,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           location: sanitizeLocation(payload.location),
           lostAt: lostAtDisplay,
           storage: payload.storage ? sanitizeLocation(payload.storage) : payload.storage,
-          image: resolveMediaUrl(payload.image) ?? payload.image,
+          image: resolveItemImageUrl(payload.image),
         };
         try {
           const data = await apiJson<Record<string, unknown>>("/api/reports", {
@@ -551,16 +547,14 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               ownerName,
               reporterName: ownerName,
               reporterEmail: ownerEmail,
-              imageUrl: normalizedPayload.image,
-              photoUrl: normalizedPayload.image,
-              image: normalizedPayload.image,
+              ...apiImageFields(normalizedPayload.image),
             }),
           });
           const reportId = String(data.id ?? data.reportId ?? `r-${Date.now()}`);
           const report: LostReport = {
             id: reportId,
             ...normalizedPayload,
-            image: pickImageFromRaw(data) ?? normalizedPayload.image,
+            image: pickImageFromRaw(data) ?? normalizedPayload.image ?? undefined,
             status: normalizeReportStatus(data.status),
             createdAt: formatDateTimeLabel(String(data.createdAt ?? "")) || shortDateTime(),
             ownerEmail,
@@ -617,7 +611,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           location: sanitizeLocation(payload.location),
           lostAt: lostAtDisplay,
           storage: payload.storage ? sanitizeLocation(payload.storage) : payload.storage,
-          image: resolveMediaUrl(payload.image) ?? payload.image,
+          image: resolveItemImageUrl(payload.image),
         };
 
         const buildLocalItem = (id: string): PublishedLostItem => ({
@@ -785,7 +779,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               memo: updated.memo,
               itemType: updated.type,
               storage: updated.storage,
-              image: updated.image,
+              ...apiImageFields(updated.image),
             }),
           }).catch(() => undefined);
         }

@@ -1,5 +1,23 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
+/** 백엔드·AI 예비 이미지 URL — 실제 사진이 아니면 표시하지 않음 */
+const PLACEHOLDER_IMAGE_PATTERN =
+  /(?:fallback|placeholder|generic|no[_-]?image|default[_-]?image|ai[_-]?preview|dummy|sample)/i;
+
+/**
+ * 게시용 실제 사진 URL인지 판별 (없거나 placeholder면 false)
+ */
+export function isValidItemImageUrl(value: string | undefined | null): boolean {
+  if (!value?.trim()) return false;
+  const trimmed = value.trim();
+  if (trimmed === "null" || trimmed === "undefined") return false;
+  if (PLACEHOLDER_IMAGE_PATTERN.test(trimmed)) return false;
+  const resolved = resolveMediaUrl(trimmed);
+  if (!resolved) return false;
+  if (PLACEHOLDER_IMAGE_PATTERN.test(resolved)) return false;
+  return true;
+}
+
 /**
  * 백엔드가 반환하는 상대 경로·다양한 필드명을 브라우저에서 쓸 수 있는 URL로 변환합니다.
  */
@@ -13,6 +31,12 @@ export function resolveMediaUrl(value: string | undefined | null): string | unde
     return API_BASE_URL ? `${API_BASE_URL}${trimmed}` : trimmed;
   }
   return API_BASE_URL ? `${API_BASE_URL}/${trimmed.replace(/^\/+/, "")}` : trimmed;
+}
+
+/** 목록·상세용 — 유효한 사진만 반환, 없으면 undefined */
+export function resolveItemImageUrl(value: string | undefined | null): string | undefined {
+  if (!isValidItemImageUrl(value)) return undefined;
+  return resolveMediaUrl(value);
 }
 
 function pickImageValue(value: unknown): string | undefined {
@@ -36,6 +60,13 @@ function pickImageValue(value: unknown): string | undefined {
   return undefined;
 }
 
+/** POST/PATCH 시 사진이 없으면 image 필드를 보내지 않음 (백엔드 placeholder 생성 방지) */
+export function apiImageFields(image?: string | null): Record<string, string> {
+  if (!isValidItemImageUrl(image)) return {};
+  const url = resolveMediaUrl(image)!;
+  return { image: url, imageUrl: url, photoUrl: url };
+}
+
 export function pickImageFromRaw(raw: Record<string, unknown>): string | undefined {
   const candidates = [
     raw.image,
@@ -56,7 +87,7 @@ export function pickImageFromRaw(raw: Record<string, unknown>): string | undefin
   ];
   for (const candidate of candidates) {
     const resolved = pickImageValue(candidate);
-    if (resolved) return resolved;
+    if (resolved && isValidItemImageUrl(resolved)) return resolved;
   }
   return undefined;
 }
