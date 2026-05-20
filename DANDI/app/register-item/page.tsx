@@ -22,8 +22,7 @@ export default function RegisterItemPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [itemName, setItemName] = useState("");
   const [dateTime, setDateTime] = useState("");
-  const foundLocation = useBuildingLocationField();
-  const storageLocation = useBuildingLocationField();
+  const reportLocation = useBuildingLocationField();
   const [memo, setMemo] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -69,18 +68,19 @@ export default function RegisterItemPage() {
   };
 
   const onSubmit = async () => {
-    if (!itemName.trim() || !dateTime || !foundLocation.isValid || !storageLocation.isValid) {
-      setSavedMessage("물품명, 일시, 습득 위치, 신고 장소를 입력해 주세요.");
+    if (!itemName.trim() || !dateTime || !reportLocation.isValid) {
+      setSavedMessage("물품명, 일시, 신고 장소를 입력해 주세요.");
       return;
     }
     setIsSubmitting(true);
     try {
+      const place = reportLocation.composed;
       const result = await submitReport({
         itemName: itemName.trim(),
         category,
         lostAt: dateTime,
-        location: foundLocation.composed,
-        storage: storageLocation.composed,
+        location: place,
+        storage: place,
         memo: memo.trim(),
         image: photoPreview ?? undefined,
       });
@@ -90,8 +90,7 @@ export default function RegisterItemPage() {
       }
       setItemName("");
       setDateTime("");
-      foundLocation.reset();
-      storageLocation.reset();
+      reportLocation.reset();
       setMemo("");
       clearPhoto();
       setSavedMessage(result.message || "관리자에게 신고가 전달되었습니다. 처리 상태는 마이페이지에서 확인하세요.");
@@ -169,32 +168,20 @@ export default function RegisterItemPage() {
             <p className="text-xs text-muted-foreground">목록을 스크롤해 더 많은 카테고리를 선택할 수 있습니다.</p>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="date-time">분실/습득 일시</Label>
+            <Label htmlFor="date-time">분실 일시</Label>
             <Input id="date-time" type="datetime-local" value={dateTime} onChange={(e) => setDateTime(e.target.value)} />
           </div>
 
           <BuildingLocationPicker
-            idPrefix="found"
-            label="습득 위치"
-            building={foundLocation.building}
-            detail={foundLocation.detail}
-            customText={foundLocation.customText}
-            onBuildingChange={foundLocation.setBuilding}
-            onDetailChange={foundLocation.setDetail}
-            onCustomTextChange={foundLocation.setCustomText}
-            detailPlaceholder="예: 1층 북카페, 2층 열람실"
-          />
-
-          <BuildingLocationPicker
             idPrefix="report-place"
             label="신고 장소"
-            building={storageLocation.building}
-            detail={storageLocation.detail}
-            customText={storageLocation.customText}
-            onBuildingChange={storageLocation.setBuilding}
-            onDetailChange={storageLocation.setDetail}
-            onCustomTextChange={storageLocation.setCustomText}
-            detailPlaceholder="예: 분실한 건물·층·장소 (습득 위치와 다를 수 있음)"
+            building={reportLocation.building}
+            detail={reportLocation.detail}
+            customText={reportLocation.customText}
+            onBuildingChange={reportLocation.setBuilding}
+            onDetailChange={reportLocation.setDetail}
+            onCustomTextChange={reportLocation.setCustomText}
+            detailPlaceholder="예: 1층 북카페, 214호 강의실"
           />
           <div className="space-y-2">
             <Label htmlFor="memo">상세 설명</Label>
@@ -240,7 +227,8 @@ export default function RegisterItemPage() {
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold">{report.itemName}</p>
                     <p className="text-muted-foreground">
-                      {report.category} · {sanitizeLocation(report.location)} / {formatDateTimeLabel(report.lostAt) || report.createdAt}
+                      {report.category} · {sanitizeLocation(report.storage ?? report.location)} /{" "}
+                      {formatDateTimeLabel(report.lostAt) || report.createdAt}
                     </p>
                     {report.memo ? <p className="mt-1 text-xs text-muted-foreground">메모: {report.memo}</p> : null}
                   </div>
