@@ -61,6 +61,13 @@ export function useBuildingLocationField(initialLocation = "") {
     setCustomText("");
   }, []);
 
+  const applyFromLocation = useCallback((location: string) => {
+    const parsed = parseBuildingLocation(location);
+    setBuilding(parsed.building);
+    setDetail(parsed.detail);
+    setCustomText(parsed.customText);
+  }, []);
+
   return {
     building,
     setBuilding,
@@ -71,6 +78,7 @@ export function useBuildingLocationField(initialLocation = "") {
     composed,
     isValid: isBuildingLocationValid({ building, detail, customText }),
     reset,
+    applyFromLocation,
     isCustom: building === BUILDING_CUSTOM,
   };
 }

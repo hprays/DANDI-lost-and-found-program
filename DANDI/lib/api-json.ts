@@ -80,6 +80,45 @@ function statusPayloadVariants(status: string): string[] {
   return [...new Set([status, upper, ...extras])];
 }
 
+export type ReportPatchPayload = {
+  itemName?: string;
+  category?: string;
+  lostAt?: string;
+  foundAt?: string;
+  location?: string;
+  place?: string;
+  storage?: string;
+  memo?: string;
+  itemType?: string;
+  image?: string;
+  imageUrl?: string;
+};
+
+export async function patchReportDetails(reportId: string, payload: ReportPatchPayload): Promise<void> {
+  const id = encodeURIComponent(String(reportId));
+  const foundAtIso = payload.foundAt ?? payload.lostAt;
+  const body = JSON.stringify({
+    ...payload,
+    name: payload.itemName,
+    ...(foundAtIso ? { lostAt: foundAtIso, foundAt: foundAtIso } : {}),
+  });
+  const attempts: Array<{ method: string; path: string }> = [
+    { method: "PATCH", path: `/api/reports/${id}` },
+    { method: "PUT", path: `/api/reports/${id}` },
+  ];
+
+  let lastError: Error | null = null;
+  for (const attempt of attempts) {
+    try {
+      await apiJson<object>(attempt.path, { method: attempt.method, body });
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  throw lastError ?? new Error("신고 수정에 실패했습니다.");
+}
+
 export async function patchReportStatus(reportId: string, status: string): Promise<void> {
   const id = encodeURIComponent(String(reportId));
   const attempts: Array<{ method: string; path: string; body?: string }> = [];

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { extractStudentIdFromEmail, getAuthSession } from "@/lib/auth-session";
 import { markLostItemDeleted } from "@/lib/custom-lost-items";
 import { safeSetLocalStorage } from "@/lib/safe-local-storage";
@@ -14,7 +14,7 @@ import {
   type PublishedLostItem,
 } from "@/lib/published-lost-items";
 import { fetchRemoteLostItems, sortLostItemsNewestFirst } from "@/lib/catalog-utils";
-import { apiJson, getApiBaseUrl, patchReportStatus } from "@/lib/api-json";
+import { apiJson, getApiBaseUrl, patchReportDetails, patchReportStatus } from "@/lib/api-json";
 import {
   formatDateTimeLabel,
   normalizeReportStatus,
@@ -88,6 +88,10 @@ export type PickupVerifyResult = {
   pass?: PickupPass;
 };
 
+export type PendingReportPatch = Partial<
+  Pick<LostReport, "itemName" | "category" | "lostAt" | "location" | "memo" | "image" | "itemType" | "storage">
+>;
+
 type DandiStateContextValue = {
   reports: LostReport[];
   homeLostItems: PublishedLostItem[];
@@ -104,9 +108,11 @@ type DandiStateContextValue = {
   publishAdminLostItem: (
     payload: Omit<LostReport, "id" | "status" | "createdAt">
   ) => Promise<{ ok: boolean; message: string; itemId?: string }>;
+  updatePendingReport: (reportId: string, patch: PendingReportPatch) => Promise<{ ok: boolean; message: string }>;
   resolveReport: (
     reportId: string,
-    status: Extract<ReportStatus, "resolved" | "unavailable">
+    status: Extract<ReportStatus, "resolved" | "unavailable">,
+    overrides?: PendingReportPatch
   ) => Promise<{ ok: boolean; message: string }>;
   updateHomeLostItem: (itemId: string, patch: Partial<PublishedLostItem>) => void;
   removeHomeLostItem: (itemId: string) => void | Promise<void>;
@@ -302,8 +308,21 @@ async function publishAdminLostItemToApi(
   });
 }
 
+function normalizePendingPatch(patch: PendingReportPatch): PendingReportPatch {
+  const next: PendingReportPatch = { ...patch };
+  if (next.location != null) next.location = sanitizeLocation(next.location);
+  if (next.storage != null) next.storage = sanitizeLocation(next.storage);
+  if (next.lostAt != null) next.lostAt = formatDateTimeLabel(next.lostAt) || next.lostAt;
+  if (next.image != null) next.image = resolveItemImageUrl(next.image);
+  return next;
+}
+
 export function DandiStateProvider({ children }: { children: React.ReactNode }) {
   const [reports, setReports] = useState<LostReport[]>([]);
+  const reportsRef = useRef(reports);
+  useEffect(() => {
+    reportsRef.current = reports;
+  }, [reports]);
   const [homeLostItems, setHomeLostItems] = useState<PublishedLostItem[]>([]);
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -363,10 +382,18 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
   const applyCatalogMerge = useCallback((reportList: LostReport[], remoteItems: PublishedLostItem[]) => {
     const merged = new Map<string, PublishedLostItem>();
+    const pendingIds = new Set(
+      reportList.filter((r) => r.status === "pending").map((r) => String(r.id))
+    );
 
-    remoteItems.forEach((item) => {
-      merged.set(String(item.id), { ...item, image: resolveItemImageUrl(item.image) });
-    });
+    remoteItems
+      .filter((item) => {
+        const reportKey = item.reportId ? String(item.reportId) : String(item.id);
+        return !pendingIds.has(reportKey);
+      })
+      .forEach((item) => {
+        merged.set(String(item.id), { ...item, image: resolveItemImageUrl(item.image) });
+      });
 
     if (!API_BASE_URL) {
       const localPublished = getPublishedLostItems();
@@ -664,59 +691,93 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         setCatalogVersion((v) => v + 1);
         return { ok: true, message: "홈·검색에 바로 등록되었습니다.", itemId: localId };
       },
-      resolveReport: async (reportId, status) => {
+      updatePendingReport: async (reportId, patch) => {
         const normalizedId = String(reportId);
+        const normalizedPatch = normalizePendingPatch(patch);
+        let sourceReport = reportsRef.current.find((report) => String(report.id) === normalizedId);
+        if (!sourceReport) {
+          await refreshReportsList();
+          sourceReport = reportsRef.current.find((report) => String(report.id) === normalizedId);
+        }
+        if (!sourceReport) {
+          return { ok: false, message: "해당 신고를 찾을 수 없습니다. 목록을 새로고침해 주세요." };
+        }
+        if (sourceReport.status !== "pending") {
+          return { ok: false, message: "검수 대기 중인 신고만 수정할 수 있습니다." };
+        }
 
-        const applyResolved = async () => {
-          const sourceReport = reports.find((report) => String(report.id) === normalizedId);
-          if (!sourceReport) return;
-          const resolvedReport: LostReport = { ...sourceReport, status };
-          setReports((prev) =>
-            prev.map((report) => (String(report.id) === normalizedId ? resolvedReport : report))
-          );
-          if (status === "resolved") {
-            const published = reportToPublishedItem(resolvedReport);
-            upsertPublishedLostItem(published);
-            setHomeLostItems((prev) =>
-              sortLostItemsNewestFirst([
-                published,
-                ...prev.filter((it) => String(it.id) !== String(published.id)),
-              ])
-            );
-            setCatalogVersion((v) => v + 1);
-            try {
-              await publishLostItemToApi(resolvedReport);
-            } catch {
-              // lost-items API 미구현 시 refresh로 동기화
-            }
+        const updated: LostReport = { ...sourceReport, ...normalizedPatch };
+        let serverSynced = false;
+        let serverError = "";
+        if (API_BASE_URL) {
+          try {
+            await patchReportDetails(normalizedId, {
+              itemName: updated.itemName,
+              category: updated.category,
+              lostAt: toApiDateTime(updated.lostAt),
+              location: updated.location,
+              place: updated.location,
+              storage: updated.storage,
+              memo: updated.memo,
+              itemType: updated.itemType,
+              ...apiImageFields(updated.image),
+            });
+            serverSynced = true;
+          } catch (error) {
+            serverError = error instanceof Error ? error.message : "서버 동기화 실패";
           }
-          await refreshHomeCatalog();
-          notifyReportsChanged();
-          setAdminAuditLogs((prev) => [
-            {
-              id: `a-${Date.now()}`,
-              message: `${normalizedId} 신고건을 ${status === "resolved" ? "습득 완료" : "습득 불가"}로 처리했습니다.`,
-              createdAt: shortDateTime(),
-            },
-            ...prev,
-          ]);
-          if (!serverSynced) {
-            if (status === "resolved") {
-              appendLocalNotice(
-                "습득 완료 알림",
-                `[${sourceReport.itemName}] 습득이 확인되어 홈 목록에 공개되었습니다.`
-              );
-            } else {
-              appendLocalNotice("습득 불가 알림", "신고하신 물품은 아직 습득되지 않은 것으로 처리되었습니다.");
-            }
-          }
-          await refreshNotices();
+        }
+
+        setReports((prev) =>
+          prev.map((report) => (String(report.id) === normalizedId ? updated : report))
+        );
+        notifyReportsChanged();
+
+        return {
+          ok: true,
+          message: serverSynced
+            ? "검수 대기 내용이 저장되었습니다."
+            : serverError
+              ? `화면에 저장했습니다. (서버: ${serverError})`
+              : "검수 대기 내용이 저장되었습니다.",
+        };
+      },
+      resolveReport: async (reportId, status, overrides) => {
+        const normalizedId = String(reportId);
+        const normalizedOverrides = overrides ? normalizePendingPatch(overrides) : undefined;
+
+        let sourceReport = reportsRef.current.find((report) => String(report.id) === normalizedId);
+        if (!sourceReport) {
+          await refreshReportsList();
+          sourceReport = reportsRef.current.find((report) => String(report.id) === normalizedId);
+        }
+        if (!sourceReport) {
+          return { ok: false, message: "해당 신고를 찾을 수 없습니다. 목록을 새로고침해 주세요." };
+        }
+
+        const resolvedReport: LostReport = {
+          ...sourceReport,
+          ...normalizedOverrides,
+          status,
         };
 
         let serverSynced = false;
         let serverError = "";
         if (API_BASE_URL) {
           try {
+            if (normalizedOverrides) {
+              await patchReportDetails(normalizedId, {
+                itemName: resolvedReport.itemName,
+                category: resolvedReport.category,
+                lostAt: toApiDateTime(resolvedReport.lostAt),
+                location: resolvedReport.location,
+                place: resolvedReport.location,
+                storage: resolvedReport.storage,
+                memo: resolvedReport.memo,
+                itemType: resolvedReport.itemType,
+                ...apiImageFields(resolvedReport.image),
+              });
+            }
             await patchReportStatus(normalizedId, status);
             serverSynced = true;
           } catch (error) {
@@ -724,16 +785,48 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           }
         }
 
-        let found = false;
-        setReports((prev) => {
-          found = prev.some((report) => String(report.id) === normalizedId);
-          return prev;
-        });
-        if (!found) {
-          return { ok: false, message: "해당 신고를 찾을 수 없습니다. 목록을 새로고침해 주세요." };
+        setReports((prev) =>
+          prev.map((report) => (String(report.id) === normalizedId ? resolvedReport : report))
+        );
+
+        if (status === "resolved") {
+          const published = reportToPublishedItem(resolvedReport);
+          upsertPublishedLostItem(published);
+          setHomeLostItems((prev) =>
+            sortLostItemsNewestFirst([
+              published,
+              ...prev.filter((it) => String(it.id) !== String(published.id)),
+            ])
+          );
+          setCatalogVersion((v) => v + 1);
+          try {
+            await publishLostItemToApi(resolvedReport);
+          } catch {
+            // lost-items API 미구현 시 refresh로 동기화
+          }
         }
 
-        await applyResolved();
+        await refreshHomeCatalog();
+        notifyReportsChanged();
+        setAdminAuditLogs((prev) => [
+          {
+            id: `a-${Date.now()}`,
+            message: `${normalizedId} 신고건을 ${status === "resolved" ? "습득 완료" : "습득 불가"}로 처리했습니다.`,
+            createdAt: shortDateTime(),
+          },
+          ...prev,
+        ]);
+        if (!serverSynced) {
+          if (status === "resolved") {
+            appendLocalNotice(
+              "습득 완료 알림",
+              `[${resolvedReport.itemName}] 습득이 확인되어 홈 목록에 공개되었습니다.`
+            );
+          } else {
+            appendLocalNotice("습득 불가 알림", "신고하신 물품은 아직 습득되지 않은 것으로 처리되었습니다.");
+          }
+        }
+        await refreshNotices();
 
         if (serverSynced) {
           return { ok: true, message: "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다." };

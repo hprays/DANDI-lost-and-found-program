@@ -17,7 +17,8 @@ import { MAX_IMAGE_BYTES } from "@/lib/constants";
 import { applyLostItemAdminChanges, markLostItemDeleted, setLostItemOverride } from "@/lib/custom-lost-items";
 import { enrichPublishedItemsWithReports } from "@/lib/published-lost-items";
 import { resolveItemImageUrl } from "@/lib/media-url";
-import { useDandiState } from "@/lib/dandi-state";
+import { useDandiState, type LostReport, type PendingReportPatch } from "@/lib/dandi-state";
+import { attachStreamToVideo, requestCameraStream } from "@/lib/camera-stream";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
 import { displayDateTimeLabels, formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
@@ -101,6 +102,7 @@ export default function AdminPage() {
     apiConfigured,
     apiBaseUrl,
     publishAdminLostItem,
+    updatePendingReport,
     homeLostItems,
     updateHomeLostItem,
     removeHomeLostItem,
@@ -158,8 +160,117 @@ export default function AdminPage() {
   >([]);
   const [manageMessage, setManageMessage] = useState("");
   const [manageDrafts, setManageDrafts] = useState<Record<string, ManageDraft>>({});
+  const [adminTab, setAdminTab] = useState("register");
+  const [editingPendingReportId, setEditingPendingReportId] = useState<string | null>(null);
+  const [pendingSaveLoading, setPendingSaveLoading] = useState(false);
+  const [videoPlayError, setVideoPlayError] = useState<string | null>(null);
 
   const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
+  const editingPendingReport = useMemo(
+    () => pendingReports.find((r) => r.id === editingPendingReportId) ?? null,
+    [pendingReports, editingPendingReportId]
+  );
+
+  const buildPendingPatchFromRegisterForm = (): PendingReportPatch => ({
+    itemName: regName.trim(),
+    category: regCategory.trim(),
+    location: regFoundLocation.composed,
+    storage: regStorageLocation.composed,
+    lostAt: regFoundAt,
+    memo: regMemo.trim() || undefined,
+    image: visionDataUrl ?? undefined,
+  });
+
+  const resetRegisterFormForAdmin = () => {
+    setRegName("");
+    setRegCategory(selectableCategories[0] ?? "기타");
+    regFoundLocation.reset();
+    regStorageLocation.reset();
+    setRegFoundAt("");
+    setRegMemo("");
+    setVisionDataUrl(null);
+    setVisionPreview(null);
+    setVisionFile(null);
+    setVisionResult(null);
+    setVisionResultId("");
+    setVisionMessage("");
+    setVisionImageMasked(false);
+    setVisionMaskId(false);
+    setVisionMaskCard(false);
+  };
+
+  const openPendingReportForEdit = (report: LostReport) => {
+    setEditingPendingReportId(report.id);
+    setAdminTab("register");
+    setRegName(report.itemName);
+    setRegCategory(report.category || selectableCategories[0] || "기타");
+    regFoundLocation.applyFromLocation(report.location);
+    regStorageLocation.applyFromLocation(report.storage ?? report.location);
+    setRegFoundAt(toDatetimeLocalValue(report.lostAt));
+    setRegMemo(report.memo ?? "");
+    const image = resolveItemImageUrl(report.image) ?? null;
+    setVisionPreview(image);
+    setVisionDataUrl(image);
+    setVisionFile(null);
+    setVisionImageMasked(Boolean(image));
+    setVisionResult(null);
+    setVisionResultId("");
+    setVisionMessage("");
+    setRegMessage("");
+    setActionMessage("");
+  };
+
+  const cancelPendingEdit = () => {
+    setEditingPendingReportId(null);
+    resetRegisterFormForAdmin();
+    setRegMessage("검수 수정을 취소했습니다.");
+  };
+
+  const savePendingReviewDraft = async () => {
+    if (!editingPendingReportId) return;
+    if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {
+      setRegMessage("물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.");
+      return;
+    }
+    setPendingSaveLoading(true);
+    try {
+      const result = await updatePendingReport(editingPendingReportId, buildPendingPatchFromRegisterForm());
+      setRegMessage(result.message);
+      if (result.ok) setActionMessage(result.message);
+    } finally {
+      setPendingSaveLoading(false);
+    }
+  };
+
+  const resolvePendingWithForm = async (reportId: string, status: "resolved" | "unavailable") => {
+    const useFormOverrides = editingPendingReportId === reportId;
+    const overrides =
+      useFormOverrides && status === "resolved" ? buildPendingPatchFromRegisterForm() : undefined;
+    if (useFormOverrides && status === "resolved") {
+      if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {
+        setActionMessage("습득 완료 전에 물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.");
+        setAdminTab("register");
+        return;
+      }
+    }
+    setStatusUpdatingId(reportId);
+    setStatusUpdatingType(status);
+    try {
+      const result = await resolveReport(reportId, status, overrides);
+      setActionMessage(result.message);
+      if (result.ok) {
+        if (editingPendingReportId === reportId) {
+          setEditingPendingReportId(null);
+          resetRegisterFormForAdmin();
+        }
+        await refreshReports();
+        if (status === "resolved") await refreshHomeCatalog();
+      }
+    } finally {
+      setStatusUpdatingId(null);
+      setStatusUpdatingType(null);
+    }
+  };
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
   const managedItems = useMemo(
     () => enrichPublishedItemsWithReports(applyLostItemAdminChanges(homeLostItems), reports),
@@ -331,14 +442,26 @@ export default function AdminPage() {
     }
     stopCameraStream();
     setCameraOpen(false);
+    setVideoPlayError(null);
   };
 
-  // 카메라 스트림이 준비되면 video 엘리먼트에 연결
+  // 카메라 스트림이 준비되면 video 엘리먼트에 연결·재생
   useEffect(() => {
-    if (cameraOpen && cameraStream && videoRef.current) {
-      videoRef.current.srcObject = cameraStream;
-      void videoRef.current.play().catch(() => {});
-    }
+    if (!cameraOpen || !cameraStream || !videoRef.current) return;
+    let cancelled = false;
+    setVideoPlayError(null);
+    void (async () => {
+      const playError = await attachStreamToVideo(videoRef.current!, cameraStream);
+      if (cancelled) return;
+      if (playError) {
+        setVideoPlayError(playError);
+        stopCameraStream();
+        setCameraOpen(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [cameraOpen, cameraStream]);
 
   // 프레임 QR 자동 디코딩 → 토큰 입력 → 카메라 종료
@@ -387,20 +510,25 @@ export default function AdminPage() {
 
   const openCamera = async () => {
     setCameraError(null);
+    setVideoPlayError(null);
     setScannedPass(null);
     setConfirmIdCheck(false);
     setConfirmCardCheck(false);
     setScanToken("");
     setPickupToken("");
     scanHandledRef.current = false;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      setCameraStream(stream);
-      setCameraOpen(true);
-    } catch (err) {
-      setCameraError(err instanceof Error ? err.message : "카메라를 사용할 수 없습니다.");
+    stopCameraStream();
+    setCameraOpen(false);
+
+    const result = await requestCameraStream();
+    if (!result.ok) {
+      setCameraError(result.error);
+      setCameraStream(null);
       setCameraOpen(false);
+      return;
     }
+    setCameraStream(result.stream);
+    setCameraOpen(true);
   };
 
   const onScanFromCamera = () => {
@@ -743,7 +871,7 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        <Tabs defaultValue="register">
+        <Tabs value={adminTab} onValueChange={setAdminTab}>
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="register">관리자 분실물 등록</TabsTrigger>
             <TabsTrigger value="manage">물품 관리</TabsTrigger>
@@ -759,10 +887,37 @@ export default function AdminPage() {
                 <CardTitle>관리자 분실물 등록</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  관리자가 등록한 물품은 <b>검수 대기 없이 홈·검색에 바로</b> 노출됩니다. 사용자 분실 신고는 검수 대기 후
-                  「습득 완료」 처리 시 홈에 등록됩니다.
-                </div>
+                {editingPendingReport ? (
+                  <div className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+                    <p className="font-semibold">검수 대기 수정 중: {editingPendingReport.itemName}</p>
+                    <p className="mt-1 text-xs text-sky-800">
+                      Vision 분석·사진·습득 위치를 확인한 뒤 「검수 내용 저장」 또는 「습득 완료 처리」를 진행하세요. 저장 전에도
+                      폼 값은 습득 완료 시 함께 반영됩니다.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => void savePendingReviewDraft()} disabled={pendingSaveLoading}>
+                        {pendingSaveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        검수 내용 저장
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void resolvePendingWithForm(editingPendingReport.id, "resolved")}
+                        disabled={statusUpdatingId === editingPendingReport.id}
+                      >
+                        습득 완료 처리
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={cancelPendingEdit}>
+                        수정 취소
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    관리자가 등록한 물품은 <b>검수 대기 없이 홈·검색에 바로</b> 노출됩니다. 사용자 분실 신고는 검수 대기에서
+                    수정·Vision 적용 후 「습득 완료」 처리 시 홈에 등록됩니다.
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <Label>사진 업로드</Label>
@@ -920,13 +1075,31 @@ export default function AdminPage() {
                 </div>
 
                 <div className="grid gap-2 md:grid-cols-2">
-                  <Button onClick={registerItem} disabled={registering}>
-                    {registering ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                    등록 완료
-                  </Button>
-                  <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={clearLastRegistered}>
-                    등록 삭제
-                  </Button>
+                  {editingPendingReport ? (
+                    <>
+                      <Button type="button" onClick={() => void savePendingReviewDraft()} disabled={pendingSaveLoading}>
+                        {pendingSaveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        검수 내용 저장
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => void resolvePendingWithForm(editingPendingReport.id, "resolved")}
+                        disabled={statusUpdatingId === editingPendingReport.id}
+                      >
+                        습득 완료 처리
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button onClick={registerItem} disabled={registering}>
+                        {registering ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        등록 완료
+                      </Button>
+                      <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={clearLastRegistered}>
+                        등록 삭제
+                      </Button>
+                    </>
+                  )}
                 </div>
                 {regMessage ? <p className="text-sm font-semibold text-primary">{regMessage}</p> : null}
               </CardContent>
@@ -1148,25 +1321,14 @@ export default function AdminPage() {
                         </div>
                       ) : null}
                     </div>
-                    <div className="grid gap-2 md:grid-cols-2">
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <Button type="button" variant="secondary" onClick={() => openPendingReportForEdit(report)}>
+                        수정 (Vision·사진)
+                      </Button>
                       <Button
                         variant="outline"
                         disabled={statusUpdatingId === report.id}
-                        onClick={async () => {
-                          setStatusUpdatingId(report.id);
-                          setStatusUpdatingType("resolved");
-                          try {
-                            const result = await resolveReport(report.id, "resolved");
-                            setActionMessage(result.message);
-                            if (result.ok) {
-                              await refreshReports();
-                              await refreshHomeCatalog();
-                            }
-                          } finally {
-                            setStatusUpdatingId(null);
-                            setStatusUpdatingType(null);
-                          }
-                        }}
+                        onClick={() => void resolvePendingWithForm(report.id, "resolved")}
                       >
                         {statusUpdatingId === report.id && statusUpdatingType === "resolved" ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -1178,20 +1340,7 @@ export default function AdminPage() {
                       <Button
                         variant="outline"
                         disabled={statusUpdatingId === report.id}
-                        onClick={async () => {
-                          setStatusUpdatingId(report.id);
-                          setStatusUpdatingType("unavailable");
-                          try {
-                            const result = await resolveReport(report.id, "unavailable");
-                            setActionMessage(result.message);
-                            if (result.ok) {
-                              await refreshReports();
-                            }
-                          } finally {
-                            setStatusUpdatingId(null);
-                            setStatusUpdatingType(null);
-                          }
-                        }}
+                        onClick={() => void resolvePendingWithForm(report.id, "unavailable")}
                       >
                         {statusUpdatingId === report.id && statusUpdatingType === "unavailable" ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -1201,6 +1350,9 @@ export default function AdminPage() {
                         습득 불가 처리
                       </Button>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      사진·마스킹·위치를 바꾸려면 「수정」으로 등록 탭에서 Vision 분석 후 저장·습득 완료하세요.
+                    </p>
                   </CardContent>
                 </Card>
               ))
@@ -1244,9 +1396,13 @@ export default function AdminPage() {
                 ) : (
                   <div className="space-y-3">
                     <div className="relative overflow-hidden rounded-lg border bg-black">
-                      {cameraError && !cameraStream ? (
+                      {cameraError || videoPlayError ? (
                         <div className="flex h-48 items-center justify-center bg-slate-900 px-4 text-center text-xs text-red-200">
-                          {cameraError}
+                          {cameraError ?? videoPlayError}
+                        </div>
+                      ) : !cameraStream ? (
+                        <div className="flex h-48 items-center justify-center bg-slate-900 px-4 text-center text-xs text-slate-300">
+                          카메라 연결 중...
                         </div>
                       ) : (
                         <video
