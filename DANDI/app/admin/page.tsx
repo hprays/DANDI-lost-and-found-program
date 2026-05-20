@@ -1533,7 +1533,7 @@ export default function AdminPage() {
                             disabled={pickupVerifying}
                           >
                             {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            인증 완료
+                            수령 인증하기
                           </Button>
                         </div>
                       </div>
@@ -1556,12 +1556,12 @@ export default function AdminPage() {
                   />
                   <Button onClick={() => void onVerifyPickup(pickupToken)} disabled={pickupVerifying}>
                     {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                    수령 인증 완료
+                    수령 인증하기
                   </Button>
                 </div>
                 {lastVerifiedPass ? (
                   <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
-                    <p className="font-semibold">최근 인증 완료</p>
+                    <p className="font-semibold">최근 인증됨</p>
                     <p>물품: {lastVerifiedPass.itemName ?? "-"}</p>
                     <p>인수자: {lastVerifiedPass.claimantName ?? "이름 없음"}</p>
                     <p>이메일: {lastVerifiedPass.claimantEmail ?? "이메일 없음"}</p>
@@ -1583,7 +1583,7 @@ export default function AdminPage() {
                     <div key={pass.id} className="rounded-lg border p-3 text-sm">
                       <div className="flex items-center justify-between">
                         <p className="font-semibold tracking-wider">{pass.token}</p>
-                        <Badge variant={pass.usedAt ? "secondary" : "default"}>{pass.usedAt ? "인증 완료" : "미사용"}</Badge>
+                        <Badge variant={pass.usedAt ? "secondary" : "default"}>{pass.usedAt ? "인증됨" : "미사용"}</Badge>
                       </div>
                       <p className="text-muted-foreground">
                         물품: {pass.itemName ?? "-"} / 위치: {pass.itemLocation ?? "-"}
