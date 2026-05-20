@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getAuthSession } from "@/lib/auth-session";
 import {
+  enrichPublishedItemsWithReports,
   getPublishedLostItems,
   mapApiLostItem,
   removePublishedLostItem,
@@ -11,7 +12,9 @@ import {
   upsertPublishedLostItem,
   type PublishedLostItem,
 } from "@/lib/published-lost-items";
-import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import { apiJson, getApiBaseUrl, patchReportStatus } from "@/lib/api-json";
+import { formatDateTimeLabel, normalizeReportStatus, sanitizeLocation } from "@/lib/format-display";
+import { pickImageFromRaw, resolveMediaUrl } from "@/lib/media-url";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
 
 export type ReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
@@ -104,7 +107,7 @@ type DandiStateContextValue = {
 };
 
 const DandiStateContext = createContext<DandiStateContextValue | null>(null);
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
+const API_BASE_URL = getApiBaseUrl();
 
 function nowISO() {
   return new Date().toISOString();
@@ -123,58 +126,37 @@ function pickupToken() {
   return `DKU-${rand}`;
 }
 
-function apiUrl(path: string) {
-  if (!path.startsWith("/")) return `${API_BASE_URL}/${path}`;
-  return `${API_BASE_URL}${path}`;
+function normalizeNotice(raw: Record<string, unknown>): UserNotice | null {
+  const id = raw.id ?? raw.noticeId;
+  if (id == null) return null;
+  return {
+    id: String(id),
+    title: String(raw.title ?? "알림"),
+    message: String(raw.message ?? raw.body ?? raw.content ?? ""),
+    createdAt: formatDateTimeLabel(String(raw.createdAt ?? raw.sentAt ?? "")) || shortDateTime(),
+    read: Boolean(raw.read ?? raw.isRead ?? false),
+  };
 }
 
-async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  if (!API_BASE_URL) {
-    throw new Error("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
-  }
-
-  const session = getAuthSession();
-  const authHeader = session?.accessToken
-    ? ({
-        Authorization: `Bearer ${session.accessToken}`,
-      } as Record<string, string>)
-    : {};
-
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeader,
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  if (!response.ok) {
-    let serverMessage = "요청 처리에 실패했습니다.";
-    try {
-      const err = (await response.json()) as { message?: string; error?: string };
-      serverMessage = err.message || err.error || serverMessage;
-    } catch {
-      // ignore json parsing errors
-    }
-    if (response.status === 404 && serverMessage === "요청 처리에 실패했습니다.") {
-      serverMessage = `엔드포인트를 찾을 수 없습니다: ${path}`;
-    }
-    throw new Error(serverMessage);
-  }
-
-  if (response.status === 204) {
-    return {} as T;
-  }
-
-  return (await response.json()) as T;
+function extractNoticeList(payload: unknown): UserNotice[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === "object"
+      ? ((payload as { content?: unknown[]; data?: unknown[]; items?: unknown[] }).content ??
+        (payload as { data?: unknown[] }).data ??
+        (payload as { items?: unknown[] }).items ??
+        [])
+      : [];
+  return list
+    .map((row) => normalizeNotice(row as Record<string, unknown>))
+    .filter((row): row is UserNotice => row !== null);
 }
 
 function normalizeReport(raw: Record<string, unknown>): LostReport | null {
   const id = raw.id ?? raw.reportId;
   const itemName = raw.itemName ?? raw.name;
   if (id == null || itemName == null) return null;
-  const status = (raw.status as ReportStatus) ?? "pending";
+  const status = normalizeReportStatus(raw.status);
   return {
     id: String(id),
     itemName: String(itemName),
@@ -182,12 +164,12 @@ function normalizeReport(raw: Record<string, unknown>): LostReport | null {
     lostAt: formatDateTimeLabel(String(raw.lostAt ?? raw.foundAt ?? "")),
     location: sanitizeLocation(String(raw.location ?? raw.place ?? "")),
     memo: raw.memo != null ? String(raw.memo) : undefined,
-    image: raw.image != null ? String(raw.image) : undefined,
+    image: pickImageFromRaw(raw),
     itemType: raw.itemType != null ? String(raw.itemType) : raw.type != null ? String(raw.type) : undefined,
     storage: raw.storage != null ? String(raw.storage) : undefined,
     status,
-    createdAt: String(raw.createdAt ?? shortDateTime()),
-    pickedUpAt: raw.pickedUpAt != null ? String(raw.pickedUpAt) : undefined,
+    createdAt: formatDateTimeLabel(String(raw.createdAt ?? "")) || shortDateTime(),
+    pickedUpAt: raw.pickedUpAt != null ? formatDateTimeLabel(String(raw.pickedUpAt)) || String(raw.pickedUpAt) : undefined,
     ownerEmail: raw.ownerEmail != null ? String(raw.ownerEmail) : undefined,
     ownerName: raw.ownerName != null ? String(raw.ownerName) : undefined,
   };
@@ -238,6 +220,8 @@ async function publishLostItemToApi(report: LostReport) {
       itemType: report.itemType,
       storage: report.storage,
       image: report.image,
+      imageUrl: report.image,
+      photoUrl: report.image,
     }),
   });
 }
@@ -281,10 +265,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     const resolvedPublished = reportList.filter((r) => r.status === "resolved").map(reportToPublishedItem);
     const localPublished = getPublishedLostItems();
     const merged = new Map<string, PublishedLostItem>();
-    remoteItems.forEach((item) => merged.set(item.id, item));
-    localPublished.forEach((item) => merged.set(item.id, item));
-    resolvedPublished.forEach((item) => merged.set(item.id, item));
-    const next = Array.from(merged.values());
+    remoteItems.forEach((item) => merged.set(String(item.id), { ...item, image: resolveMediaUrl(item.image) }));
+    localPublished.forEach((item) => merged.set(String(item.id), { ...item, image: resolveMediaUrl(item.image) }));
+    resolvedPublished.forEach((item) => merged.set(String(item.id), item));
+    const next = enrichPublishedItemsWithReports(Array.from(merged.values()), reportList);
     setPublishedLostItems(next);
     setHomeLostItems(next);
     setCatalogVersion((v) => v + 1);
@@ -316,7 +300,14 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       setReports((prev) => {
         const map = new Map<string, LostReport>();
         prev.forEach((r) => map.set(r.id, r));
-        remote.forEach((r) => map.set(r.id, r));
+        remote.forEach((r) => {
+          const prev = map.get(r.id);
+          if (prev?.image && !r.image) {
+            map.set(r.id, { ...r, image: prev.image });
+          } else {
+            map.set(r.id, r);
+          }
+        });
         const merged = Array.from(map.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
         applyCatalogMerge(merged, []);
         return merged;
@@ -326,18 +317,27 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     }
   }, [applyCatalogMerge]);
 
+  const appendLocalNotice = useCallback((title: string, message: string) => {
+    const notice: UserNotice = {
+      id: `n-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      title,
+      message,
+      createdAt: shortDateTime(),
+      read: false,
+    };
+    setNotices((prev) => [notice, ...prev.filter((it) => it.id !== notice.id)]);
+  }, []);
+
   const refreshNotices = useCallback(async () => {
     if (!API_BASE_URL) return;
     setNoticesLoading(true);
     setNoticesError(null);
     try {
-      const data = await apiJson<UserNotice[]>("/api/notices", { method: "GET" });
-      const remote = Array.isArray(data) ? data : [];
-      // 로컬 알림(n- prefix)은 새로고침 후에도 유지되도록 백엔드 응답과 병합
+      const data = await apiJson<unknown>("/api/notices", { method: "GET" });
+      const remote = extractNoticeList(data);
       setNotices((prev) => {
         const localOnly = prev.filter((it) => it.id.startsWith("n-"));
         const merged = [...remote, ...localOnly];
-        // id 중복 제거 (백엔드 우선)
         const dedup = new Map<string, UserNotice>();
         merged.forEach((notice) => {
           if (!dedup.has(notice.id)) dedup.set(notice.id, notice);
@@ -378,108 +378,132 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           location: sanitizeLocation(payload.location),
           lostAt: formatDateTimeLabel(payload.lostAt) || payload.lostAt,
           storage: payload.storage ? sanitizeLocation(payload.storage) : payload.storage,
+          image: resolveMediaUrl(payload.image) ?? payload.image,
         };
         try {
-          const data = await apiJson<{ id?: string; reportId?: string; createdAt?: string; status?: ReportStatus; message?: string }>(
-            "/api/reports",
-            {
-              method: "POST",
-              body: JSON.stringify({ ...normalizedPayload, ownerEmail, ownerName }),
-            }
-          );
-          const reportId = data.id ?? data.reportId ?? `r-${Date.now()}`;
+          const data = await apiJson<Record<string, unknown>>("/api/reports", {
+            method: "POST",
+            body: JSON.stringify({
+              ...normalizedPayload,
+              ownerEmail,
+              ownerName,
+              imageUrl: normalizedPayload.image,
+              photoUrl: normalizedPayload.image,
+              image: normalizedPayload.image,
+            }),
+          });
+          const reportId = String(data.id ?? data.reportId ?? `r-${Date.now()}`);
           const report: LostReport = {
             id: reportId,
             ...normalizedPayload,
-            status: data.status ?? "pending",
-            createdAt: formatDateTimeLabel(data.createdAt ?? "") || shortDateTime(),
+            image: pickImageFromRaw(data) ?? normalizedPayload.image,
+            status: normalizeReportStatus(data.status),
+            createdAt: formatDateTimeLabel(String(data.createdAt ?? "")) || shortDateTime(),
             ownerEmail,
             ownerName,
           };
           setReports((prev) => {
-            const next = [report, ...prev.filter((it) => it.id !== reportId)];
+            const next = [report, ...prev.filter((it) => String(it.id) !== reportId)];
             applyCatalogMerge(next, []);
             return next;
           });
+          appendLocalNotice("분실물 신고 접수", `${report.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`);
           void refreshNotices();
-          return { ok: true, message: data.message ?? "신고가 접수되었습니다.", reportId };
-        } catch (error) {
-          const fallbackReportId = `r-local-${Date.now()}`;
-          const fallbackReport: LostReport = {
-            id: fallbackReportId,
-            ...normalizedPayload,
-            status: "pending",
-            createdAt: shortDateTime(),
-            ownerEmail,
-            ownerName,
+          void refreshReports();
+          return {
+            ok: true,
+            message: data.message ? String(data.message) : "신고가 접수되었습니다.",
+            reportId,
           };
-          setReports((prev) => {
-            const next = [fallbackReport, ...prev.filter((it) => it.id !== fallbackReportId)];
-            applyCatalogMerge(next, []);
-            return next;
-          });
+        } catch (error) {
           return {
             ok: false,
             message:
               error instanceof Error
                 ? `신고 접수에 실패했습니다. (${error.message})`
                 : "신고 접수에 실패했습니다.",
-            reportId: fallbackReportId,
           };
         }
       },
       resolveReport: async (reportId, status) => {
-        const applyResolved = async (fromBackend: boolean) => {
+        const normalizedId = String(reportId);
+
+        const applyResolved = async () => {
           let updatedReport: LostReport | null = null;
           setReports((prev) => {
-            const sourceReport = prev.find((report) => report.id === reportId);
+            const sourceReport = prev.find((report) => String(report.id) === normalizedId);
             if (!sourceReport) return prev;
             updatedReport = { ...sourceReport, status };
-            const next = prev.map((report) => (report.id === reportId ? updatedReport! : report));
+            const next = prev.map((report) => (String(report.id) === normalizedId ? updatedReport! : report));
             if (status === "resolved") {
               upsertPublishedLostItem(reportToPublishedItem(updatedReport));
             } else {
-              removePublishedLostItem(reportId);
+              removePublishedLostItem(normalizedId);
             }
             applyCatalogMerge(next, []);
             return next;
           });
-          if (status === "resolved" && updatedReport && fromBackend) {
+          if (status === "resolved" && updatedReport) {
             try {
               await publishLostItemToApi(updatedReport);
-              await refreshHomeCatalog();
             } catch {
-              // 백엔드 lost-items 미구현 시 로컬 카탈로그만 유지
+              // lost-items API 미구현 시 로컬 카탈로그 유지
             }
+            await refreshHomeCatalog();
           }
           setAdminAuditLogs((prev) => [
             {
               id: `a-${Date.now()}`,
-              message: `${reportId} 신고건을 ${status === "resolved" ? "습득 완료" : "습득 불가"}로 처리했습니다.`,
+              message: `${normalizedId} 신고건을 ${status === "resolved" ? "습득 완료" : "습득 불가"}로 처리했습니다.`,
               createdAt: shortDateTime(),
             },
             ...prev,
           ]);
+          if (status === "resolved") {
+            appendLocalNotice(
+              "습득 완료 알림",
+              updatedReport
+                ? `[${updatedReport.itemName}] 습득이 확인되어 홈 목록에 공개되었습니다.`
+                : "신고하신 물품이 습득 완료 처리되었습니다."
+            );
+          } else {
+            appendLocalNotice("습득 불가 알림", "신고하신 물품은 아직 습득되지 않은 것으로 처리되었습니다.");
+          }
           await refreshNotices();
+          void refreshReports();
         };
 
-        try {
-          await apiJson<{ message?: string }>(`/api/reports/${reportId}/status`, {
-            method: "PATCH",
-            body: JSON.stringify({ status }),
-          });
-          await applyResolved(true);
-          return { ok: true, message: "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다." };
-        } catch (error) {
-          if (!API_BASE_URL) {
-            await applyResolved(false);
-            return { ok: true, message: "상태 변경이 완료되었습니다." };
+        let serverSynced = false;
+        let serverError = "";
+        if (API_BASE_URL) {
+          try {
+            await patchReportStatus(normalizedId, status);
+            serverSynced = true;
+          } catch (error) {
+            serverError = error instanceof Error ? error.message : "서버 동기화 실패";
           }
-          return {
-            ok: false,
-            message: error instanceof Error ? error.message : "상태 변경에 실패했습니다.",
-          };
         }
+
+        let found = false;
+        setReports((prev) => {
+          found = prev.some((report) => String(report.id) === normalizedId);
+          return prev;
+        });
+        if (!found) {
+          return { ok: false, message: "해당 신고를 찾을 수 없습니다. 목록을 새로고침해 주세요." };
+        }
+
+        await applyResolved();
+
+        if (serverSynced) {
+          return { ok: true, message: "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다." };
+        }
+        return {
+          ok: true,
+          message: serverError
+            ? `화면에 반영했습니다. (서버: ${serverError})`
+            : "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다.",
+        };
       },
       updateHomeLostItem: (itemId, patch) => {
         const current = getPublishedLostItems();
@@ -595,7 +619,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           if (pass.reportId) {
             setReports((prev) => {
               const next = prev.map((report) =>
-                report.id === pass.reportId ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report
+                String(report.id) === String(pass.reportId) ? { ...report, status: "picked_up", pickedUpAt: usedAt } : report
               );
               removePublishedLostItem(pass.reportId);
               applyCatalogMerge(next, []);
@@ -749,6 +773,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       pickupPasses,
       refreshHomeCatalog,
       refreshNotices,
+      appendLocalNotice,
       refreshReports,
       reports,
     ]

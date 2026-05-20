@@ -2,6 +2,29 @@ import { buildings } from "@/lib/mock-data";
 
 const BUILDING_NAMES = new Set(buildings.filter((b) => b !== "전체"));
 
+export type NormalizedReportStatus = "pending" | "resolved" | "picked_up" | "unavailable";
+
+/** 백엔드·DB에 저장된 다양한 상태 문자열을 프론트 표준 상태로 통일합니다. */
+export function normalizeReportStatus(raw: unknown): NormalizedReportStatus {
+  const token = String(raw ?? "pending")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+  if (["pending", "waiting", "submitted", "reported", "open", "new", "in_review", "review"].includes(token)) {
+    return "pending";
+  }
+  if (["resolved", "found", "acquired", "completed", "approved", "published", "done", "success"].includes(token)) {
+    return "resolved";
+  }
+  if (["picked_up", "pickedup", "collected", "returned", "claimed", "received"].includes(token)) {
+    return "picked_up";
+  }
+  if (["unavailable", "not_found", "notfound", "rejected", "failed", "cancelled", "canceled", "denied"].includes(token)) {
+    return "unavailable";
+  }
+  return "pending";
+}
+
 /**
  * ISO·datetime-local 문자열을 한국어 날짜/시간 표기로 변환합니다. (T 제거)
  */

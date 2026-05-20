@@ -2,6 +2,7 @@
 
 import type { LostReport } from "@/lib/dandi-state";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import { pickImageFromRaw, resolveMediaUrl } from "@/lib/media-url";
 
 export type PublishedLostItem = {
   id: string;
@@ -60,8 +61,23 @@ export function reportToPublishedItem(report: LostReport): PublishedLostItem {
     place: sanitizeLocation(report.location),
     time: lostAtLabel,
     storage: report.storage ? sanitizeLocation(report.storage) : undefined,
-    image: report.image,
+    image: resolveMediaUrl(report.image),
   };
+}
+
+export function enrichPublishedItemsWithReports(
+  items: PublishedLostItem[],
+  reports: Array<{ id: string; image?: string; reportId?: string }>
+): PublishedLostItem[] {
+  const byId = new Map(reports.map((r) => [String(r.id), r]));
+  return items.map((item) => {
+    const resolvedImage = resolveMediaUrl(item.image);
+    if (resolvedImage) return { ...item, image: resolvedImage };
+    const linked =
+      (item.reportId ? byId.get(String(item.reportId)) : undefined) ?? byId.get(String(item.id));
+    if (linked?.image) return { ...item, image: resolveMediaUrl(linked.image) };
+    return item;
+  });
 }
 
 export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem | null {
@@ -80,6 +96,6 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
     place: sanitizeLocation(String(raw.place ?? raw.location ?? "")),
     time,
     storage: raw.storage != null ? String(raw.storage) : undefined,
-    image: raw.image != null ? String(raw.image) : undefined,
+    image: pickImageFromRaw(raw),
   };
 }

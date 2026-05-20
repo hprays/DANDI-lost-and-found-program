@@ -13,7 +13,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { MAX_IMAGE_BYTES } from "@/lib/constants";
 import { applyLostItemAdminChanges, markLostItemDeleted, setLostItemOverride } from "@/lib/custom-lost-items";
+import { enrichPublishedItemsWithReports } from "@/lib/published-lost-items";
+import { resolveMediaUrl } from "@/lib/media-url";
 import { useDandiState } from "@/lib/dandi-state";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
@@ -21,8 +24,6 @@ import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { categories } from "@/lib/mock-data";
 
 const selectableCategories = categories.filter((c) => c !== "전체");
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
 type ManageDraft = {
   name: string;
   category: string;
@@ -59,7 +60,7 @@ function buildManageDraft(item: { name?: string; category?: string; type?: strin
     foundAt: toDatetimeLocalValue(item.time ?? ""),
     storage: item.storage ?? "",
     memo: item.memo ?? "",
-    image: item.image ?? "",
+    image: resolveMediaUrl(item.image) ?? "",
   };
 }
 
@@ -77,6 +78,8 @@ export default function AdminPage() {
     homeLostItems,
     updateHomeLostItem,
     removeHomeLostItem,
+    refreshReports,
+    refreshHomeCatalog,
   } = useDandiState();
 
   const [adminCheckSession, setAdminCheckSession] = useState<AuthSession | null>(null);
@@ -96,6 +99,7 @@ export default function AdminPage() {
   const [regFoundAt, setRegFoundAt] = useState("");
   const [regMemo, setRegMemo] = useState("");
   const [regMessage, setRegMessage] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
   const [pickupToken, setPickupToken] = useState("");
   const [pickupMessage, setPickupMessage] = useState("");
   const [visionFile, setVisionFile] = useState<File | null>(null);
@@ -128,7 +132,10 @@ export default function AdminPage() {
 
   const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
-  const managedItems = useMemo(() => applyLostItemAdminChanges(homeLostItems), [homeLostItems]);
+  const managedItems = useMemo(
+    () => enrichPublishedItemsWithReports(applyLostItemAdminChanges(homeLostItems), reports),
+    [homeLostItems, reports]
+  );
 
   const registerItem = async () => {
     if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {
@@ -309,6 +316,13 @@ export default function AdminPage() {
     setVisionResultId("");
     setVisionMessage("");
     if (!file) {
+      setVisionPreview(null);
+      setVisionDataUrl(null);
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setVisionMessage("사진 용량은 10MB 이하만 가능합니다.");
+      setVisionFile(null);
       setVisionPreview(null);
       setVisionDataUrl(null);
       return;
@@ -512,7 +526,7 @@ export default function AdminPage() {
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setManageMessage("사진 용량은 5MB 이하만 가능합니다.");
+      setManageMessage("사진 용량은 10MB 이하만 가능합니다.");
       return;
     }
     const reader = new FileReader();
@@ -558,6 +572,10 @@ export default function AdminPage() {
         ) : (
           <p className="text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
         )}
+
+        {actionMessage ? (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-primary">{actionMessage}</div>
+        ) : null}
 
         <div className="grid gap-3 md:grid-cols-3">
           <Card>
@@ -940,7 +958,11 @@ export default function AdminPage() {
                           setStatusUpdatingType("resolved");
                           try {
                             const result = await resolveReport(report.id, "resolved");
-                            setRegMessage(result.message);
+                            setActionMessage(result.message);
+                            if (result.ok) {
+                              await refreshHomeCatalog();
+                              await refreshReports();
+                            }
                           } finally {
                             setStatusUpdatingId(null);
                             setStatusUpdatingType(null);
@@ -962,7 +984,10 @@ export default function AdminPage() {
                           setStatusUpdatingType("unavailable");
                           try {
                             const result = await resolveReport(report.id, "unavailable");
-                            setRegMessage(result.message);
+                            setActionMessage(result.message);
+                            if (result.ok) {
+                              await refreshReports();
+                            }
                           } finally {
                             setStatusUpdatingId(null);
                             setStatusUpdatingType(null);

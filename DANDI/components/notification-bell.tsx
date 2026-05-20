@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatDateTimeLabel } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
 
 export function NotificationBell() {
@@ -102,7 +103,7 @@ export function NotificationBell() {
                     >
                       <motion.div className="flex items-center gap-2">
                         <Badge variant="secondary">알림</Badge>
-                        <span className="text-xs text-muted-foreground">{selected.createdAt}</span>
+                        <span className="text-xs text-muted-foreground">{formatDateTimeLabel(selected.createdAt) || selected.createdAt}</span>
                       </motion.div>
                       <p className="text-sm font-semibold">{selected.title}</p>
                       <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{selected.message}</p>
@@ -129,7 +130,7 @@ export function NotificationBell() {
                                 <Badge className="shrink-0 bg-red-500 text-[10px]">NEW</Badge>
                               ) : null}
                             </motion.div>
-                            <p className="mt-1 text-[11px] text-muted-foreground">{notice.createdAt}</p>
+                            <p className="mt-1 text-[11px] text-muted-foreground">{formatDateTimeLabel(notice.createdAt) || notice.createdAt}</p>
                           </button>
                         </li>
                       ))}

@@ -12,9 +12,8 @@ import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
 import { useDandiState } from "@/lib/dandi-state";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import { MAX_IMAGE_BYTES } from "@/lib/constants";
 import { categories } from "@/lib/mock-data";
-
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export default function RegisterItemPage() {
   const { reports, submitReport, deleteReport, apiConfigured, apiBaseUrl } = useDandiState();
@@ -50,7 +49,7 @@ export default function RegisterItemPage() {
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setSavedMessage("사진 용량은 5MB 이하만 가능합니다.");
+      setSavedMessage("사진 용량은 10MB 이하만 가능합니다.");
       clearPhoto();
       return;
     }
@@ -134,7 +133,7 @@ export default function RegisterItemPage() {
                 <div className="pointer-events-none flex h-full flex-col items-center justify-center gap-2 text-slate-500">
                   <ImagePlus className="h-8 w-8" />
                   <p className="text-sm font-medium">여기를 눌러 사진 업로드</p>
-                  <p className="text-xs text-muted-foreground">JPG, PNG · 최대 5MB</p>
+                  <p className="text-xs text-muted-foreground">JPG, PNG · 최대 10MB</p>
                 </div>
               )}
             </div>
