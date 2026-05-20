@@ -68,9 +68,59 @@ export function setPublishedLostItems(items: PublishedLostItem[]) {
   safeSetLocalStorage(PUBLISHED_KEY, JSON.stringify(minimal));
 }
 
+/** 같은 신고·분실물을 id/reportId 조합으로 판별 */
+export function isSameCatalogItem(a: PublishedLostItem, b: PublishedLostItem): boolean {
+  if (String(a.id) === String(b.id)) return true;
+  const aReport = a.reportId ? String(a.reportId) : null;
+  const bReport = b.reportId ? String(b.reportId) : null;
+  if (aReport && (aReport === String(b.id) || aReport === bReport)) return true;
+  if (bReport && (bReport === String(a.id) || bReport === aReport)) return true;
+  return false;
+}
+
+/** reportId·lostItemId가 달라도 홈에 카드 1장만 */
+export function dedupePublishedCatalog(items: PublishedLostItem[]): PublishedLostItem[] {
+  const groups = new Map<string, PublishedLostItem>();
+  const aliasToGroup = new Map<string, string>();
+
+  const linkAliases = (groupKey: string, item: PublishedLostItem) => {
+    aliasToGroup.set(`id:${item.id}`, groupKey);
+    if (item.reportId) {
+      aliasToGroup.set(`id:${item.reportId}`, groupKey);
+      aliasToGroup.set(`report:${item.reportId}`, groupKey);
+    }
+  };
+
+  const findGroupKey = (item: PublishedLostItem): string | null => {
+    const probes = [
+      `id:${item.id}`,
+      item.reportId ? `id:${item.reportId}` : "",
+      item.reportId ? `report:${item.reportId}` : "",
+    ].filter(Boolean);
+    for (const probe of probes) {
+      const group = aliasToGroup.get(probe);
+      if (group) return group;
+    }
+    return null;
+  };
+
+  for (const item of items) {
+    const existingGroup = findGroupKey(item);
+    const groupKey = existingGroup ?? (item.reportId ? `report:${item.reportId}` : `item:${item.id}`);
+    const existing = groups.get(groupKey);
+    const merged = existing ? mergePublishedItems(item, existing) : item;
+    groups.set(groupKey, merged);
+    linkAliases(groupKey, item);
+    linkAliases(groupKey, merged);
+  }
+
+  return Array.from(groups.values());
+}
+
 export function upsertPublishedLostItem(item: PublishedLostItem) {
   const current = getPublishedLostItems();
-  const next = [item, ...current.filter((it) => it.id !== item.id)];
+  const filtered = current.filter((it) => !isSameCatalogItem(it, item));
+  const next = dedupePublishedCatalog([item, ...filtered]);
   setPublishedLostItems(next);
   return next;
 }

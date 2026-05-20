@@ -7,6 +7,8 @@ import {
   enrichPublishedItemsWithReports,
   getPublishedLostItems,
   mapApiLostItem,
+  dedupePublishedCatalog,
+  isSameCatalogItem,
   mergePublishedItems,
   removePublishedLostItem,
   reportToPublishedItem,
@@ -370,7 +372,7 @@ function normalizePendingPatch(patch: PendingReportPatch): PendingReportPatch {
 }
 
 export function DandiStateProvider({ children }: { children: React.ReactNode }) {
-  const [reports, setReports] = useState<LostReport[]>([]);
+  const [reports, setReports] = useState<LostReport[]>(() => loadReportsLocal());
   const [homeLostItems, setHomeLostItems] = useState<PublishedLostItem[]>([]);
   const reportsRef = useRef(reports);
   const homeLostItemsRef = useRef(homeLostItems);
@@ -436,55 +438,41 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     }
   }, []);
 
-  const applyCatalogMerge = useCallback(
-    (reportList: LostReport[], remoteItems: PublishedLostItem[], stickyHome: PublishedLostItem[] = []) => {
-    const merged = new Map<string, PublishedLostItem>();
+  const applyCatalogMerge = useCallback((reportList: LostReport[], remoteItems: PublishedLostItem[]) => {
     const pendingIds = new Set(
       reportList.filter((r) => r.status === "pending").map((r) => String(r.id))
     );
 
-    const putMerged = (item: PublishedLostItem) => {
-      const key = String(item.id);
-      const existing = merged.get(key);
-      merged.set(
-        key,
-        mergePublishedItems(
-          { ...item, image: resolveItemImageUrl(item.image) ?? item.image },
-          existing
-        )
-      );
-    };
+    const collected: PublishedLostItem[] = [];
 
     remoteItems
       .filter((item) => {
         const reportKey = item.reportId ? String(item.reportId) : String(item.id);
         return !pendingIds.has(reportKey);
       })
-      .forEach((item) => putMerged(item));
+      .forEach((item) => {
+        collected.push({ ...item, image: resolveItemImageUrl(item.image) ?? item.image });
+      });
 
-    getPublishedLostItems().forEach((item) => putMerged(item));
-    stickyHome.forEach((item) => putMerged(item));
+    getPublishedLostItems().forEach((item) => {
+      collected.push({ ...item, image: resolveItemImageUrl(item.image) ?? item.image });
+    });
 
     reportList
       .filter((r) => r.status === "resolved")
       .map(reportToPublishedItem)
-      .forEach((item) => {
-        const key = String(item.id);
-        if (merged.has(key)) {
-          putMerged(item);
-        } else {
-          merged.set(key, item);
-        }
-      });
+      .forEach((item) => collected.push(item));
 
-    const next = sortLostItemsNewestFirst(enrichPublishedItemsWithReports(Array.from(merged.values()), reportList));
+    const deduped = dedupePublishedCatalog(collected);
+    const next = sortLostItemsNewestFirst(enrichPublishedItemsWithReports(deduped, reportList));
     setHomeLostItems(next);
     setCatalogVersion((v) => v + 1);
-  },
-    []
-  );
+  }, []);
 
-  const refreshHomeCatalog = useCallback(async () => {
+  const catalogRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reportsSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const refreshHomeCatalogInner = useCallback(async () => {
     if (!API_BASE_URL || !getAuthSession()?.accessToken) return;
     setCatalogLoading(true);
     try {
@@ -494,15 +482,30 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       } catch {
         remoteItems = [];
       }
-      const sticky = homeLostItemsRef.current;
       setReports((current) => {
-        applyCatalogMerge(current, remoteItems, sticky);
+        applyCatalogMerge(current, remoteItems);
         return current;
       });
     } finally {
       setCatalogLoading(false);
     }
   }, [applyCatalogMerge]);
+
+  const scheduleHomeCatalogRefresh = useCallback(() => {
+    if (catalogRefreshTimerRef.current) clearTimeout(catalogRefreshTimerRef.current);
+    catalogRefreshTimerRef.current = setTimeout(() => {
+      catalogRefreshTimerRef.current = null;
+      void refreshHomeCatalogInner();
+    }, 450);
+  }, [refreshHomeCatalogInner]);
+
+  const refreshHomeCatalog = useCallback(async () => {
+    if (catalogRefreshTimerRef.current) {
+      clearTimeout(catalogRefreshTimerRef.current);
+      catalogRefreshTimerRef.current = null;
+    }
+    await refreshHomeCatalogInner();
+  }, [refreshHomeCatalogInner]);
 
   const refreshReportsList = useCallback(async () => {
     if (!API_BASE_URL || !getAuthSession()?.accessToken) return;
@@ -521,6 +524,12 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           const existing = map.get(key);
           map.set(key, existing ? mergeReportRecords(existing, r) : r);
         });
+        prev
+          .filter((r) => r.status === "pending")
+          .forEach((r) => {
+            const key = String(r.id);
+            if (!map.has(key)) map.set(key, r);
+          });
         const next = Array.from(map.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
         persistReportsLocal(next);
         return next;
@@ -544,8 +553,17 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
   const refreshReports = useCallback(async () => {
     await refreshReportsList();
-    await refreshHomeCatalog();
-  }, [refreshHomeCatalog, refreshReportsList]);
+    await refreshHomeCatalogInner();
+  }, [refreshHomeCatalogInner, refreshReportsList]);
+
+  const scheduleReportsSync = useCallback(() => {
+    if (reportsSyncTimerRef.current) clearTimeout(reportsSyncTimerRef.current);
+    reportsSyncTimerRef.current = setTimeout(() => {
+      reportsSyncTimerRef.current = null;
+      void refreshReportsList();
+      scheduleHomeCatalogRefresh();
+    }, 500);
+  }, [refreshReportsList, scheduleHomeCatalogRefresh]);
 
   const appendLocalNotice = useCallback((title: string, message: string) => {
     const notice: UserNotice = {
@@ -583,9 +601,9 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
   const bootstrapAfterAuth = useCallback(async () => {
     if (!getAuthSession()?.accessToken) return;
-    await refreshReports();
-    await refreshNotices();
-  }, [refreshNotices, refreshReports]);
+    await Promise.all([refreshReportsList(), refreshNotices()]);
+    scheduleHomeCatalogRefresh();
+  }, [refreshNotices, refreshReportsList, scheduleHomeCatalogRefresh]);
 
   useEffect(() => {
     if (getAuthSession()?.accessToken) {
@@ -599,30 +617,29 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
   }, [bootstrapAfterAuth]);
 
   useEffect(() => {
-    const syncReportsFull = () => {
-      if (getAuthSession()?.accessToken) void refreshReports();
-    };
-    const syncReportsListOnly = () => {
-      if (getAuthSession()?.accessToken) void refreshReportsList();
+    const syncReportsDebounced = () => {
+      if (getAuthSession()?.accessToken) scheduleReportsSync();
     };
 
-    window.addEventListener(REPORTS_CHANGED_EVENT, syncReportsFull);
+    window.addEventListener(REPORTS_CHANGED_EVENT, syncReportsDebounced);
 
     let channel: BroadcastChannel | null = null;
     try {
       channel = new BroadcastChannel(SYNC_CHANNEL);
       channel.onmessage = (event) => {
-        if (event.data?.type === "reports") syncReportsFull();
+        if (event.data?.type === "reports") syncReportsDebounced();
       };
     } catch {
       // ignore
     }
 
     return () => {
-      window.removeEventListener(REPORTS_CHANGED_EVENT, syncReportsFull);
+      window.removeEventListener(REPORTS_CHANGED_EVENT, syncReportsDebounced);
       channel?.close();
+      if (catalogRefreshTimerRef.current) clearTimeout(catalogRefreshTimerRef.current);
+      if (reportsSyncTimerRef.current) clearTimeout(reportsSyncTimerRef.current);
     };
-  }, [refreshReports, refreshReportsList]);
+  }, [scheduleReportsSync]);
 
   const value = useMemo<DandiStateContextValue>(
     () => ({
@@ -677,11 +694,14 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             ownerEmail,
             ownerName,
           };
-          setReports((prev) => [report, ...prev.filter((it) => String(it.id) !== reportId)]);
+          setReports((prev) => {
+            const next = [report, ...prev.filter((it) => String(it.id) !== reportId)];
+            persistReportsLocal(next);
+            return next;
+          });
           appendLocalNotice("분실물 신고 접수", `${report.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`);
           void refreshNotices();
-          await refreshReports();
-          notifyReportsChanged();
+          void refreshReportsList();
           return {
             ok: true,
             message: data.message ? String(data.message) : "신고가 접수되었습니다.",
@@ -698,9 +718,13 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
                   r.status === "pending"
               );
               if (matched) {
-                setReports((prev) => [matched, ...prev.filter((it) => String(it.id) !== matched.id)]);
+                setReports((prev) => {
+                  const next = [matched, ...prev.filter((it) => String(it.id) !== matched.id)];
+                  persistReportsLocal(next);
+                  return next;
+                });
                 appendLocalNotice("분실물 신고 접수", `${matched.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`);
-                await refreshReports();
+                void refreshReportsList();
                 return {
                   ok: true,
                   message: "신고가 접수되었습니다. (서버 응답 형식이 달라 목록을 다시 불러왔습니다.)",
@@ -757,13 +781,15 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             }
             upsertPublishedLostItem(mapped);
             setHomeLostItems((prev) =>
-              sortLostItemsNewestFirst([
-                mapped,
-                ...prev.filter((it) => String(it.id) !== itemId && String(it.reportId) !== itemId),
-              ])
+              sortLostItemsNewestFirst(
+                dedupePublishedCatalog([
+                  mapped,
+                  ...prev.filter((it) => !isSameCatalogItem(it, mapped)),
+                ])
+              )
             );
             setCatalogVersion((v) => v + 1);
-            void refreshHomeCatalog();
+            scheduleHomeCatalogRefresh();
             setAdminAuditLogs((prev) => [
               {
                 id: `a-${Date.now()}`,
@@ -909,14 +935,12 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           }
           upsertPublishedLostItem(published);
           setHomeLostItems((prev) =>
-            sortLostItemsNewestFirst([
-              published,
-              ...prev.filter(
-                (it) =>
-                  String(it.id) !== String(published.id) &&
-                  String(it.reportId) !== String(published.id)
-              ),
-            ])
+            sortLostItemsNewestFirst(
+              dedupePublishedCatalog([
+                published,
+                ...prev.filter((it) => !isSameCatalogItem(it, published)),
+              ])
+            )
           );
           setCatalogVersion((v) => v + 1);
           try {
@@ -926,14 +950,12 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               const withServerId = { ...published, id: String(postedId), reportId: resolvedReport.id };
               upsertPublishedLostItem(withServerId);
               setHomeLostItems((prev) =>
-                sortLostItemsNewestFirst([
-                  withServerId,
-                  ...prev.filter(
-                    (it) =>
-                      String(it.id) !== String(published.id) &&
-                      String(it.id) !== String(postedId)
-                  ),
-                ])
+                sortLostItemsNewestFirst(
+                  dedupePublishedCatalog([
+                    withServerId,
+                    ...prev.filter((it) => !isSameCatalogItem(it, withServerId)),
+                  ])
+                )
               );
             }
           } catch {
@@ -941,8 +963,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           }
         }
 
-        void refreshHomeCatalog();
-        notifyReportsChanged();
+        scheduleHomeCatalogRefresh();
         setAdminAuditLogs((prev) => [
           {
             id: `a-${Date.now()}`,

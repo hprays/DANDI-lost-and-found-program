@@ -269,10 +269,9 @@ export default function AdminPage() {
           resetRegisterFormForAdmin();
         }
         setAdminTab(status === "resolved" ? "processed" : "pending");
+        void refreshReportsList();
         if (status === "resolved") {
           await refreshHomeCatalog();
-        } else {
-          await refreshReportsList();
         }
       }
     } finally {
