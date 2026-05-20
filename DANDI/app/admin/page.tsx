@@ -24,6 +24,7 @@ import { displayDateTimeLabels, formatDateTimeLabel, sanitizeLocation } from "@/
 import {
   decodeQrFromVideo,
   isBarcodeDetectorSupported,
+  isQrAutoScanSupported,
   isValidPickupToken,
   normalizePickupToken,
 } from "@/lib/qr-scanner";
@@ -284,6 +285,58 @@ export default function AdminPage() {
   const [scannedPass, setScannedPass] = useState<typeof lastVerifiedPass>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scanHandledRef = useRef(false);
+  const scanLoopTimerRef = useRef<number | null>(null);
+
+  const applyScannedQrToken = (token: string) => {
+    const normalized = normalizePickupToken(token);
+    if (!isValidPickupToken(normalized)) return false;
+
+    scanHandledRef.current = true;
+    setScanToken(normalized);
+    setPickupToken(normalized);
+    setCameraError(null);
+    setPickupMessage("QR이 인식되었습니다. 토큰이 입력란에 채워졌습니다.");
+
+    const target = pickupPasses.find((p) => p.token.toUpperCase() === normalized);
+    if (target?.usedAt) {
+      setCameraError("이미 수령 인증이 완료된 QR입니다.");
+      setScannedPass(null);
+      return true;
+    }
+
+    setScannedPass(
+      target
+        ? {
+            itemName: target.itemName,
+            claimantName: target.claimantName,
+            claimantEmail: target.claimantEmail,
+            usedAt: target.usedAt,
+          }
+        : {
+            itemName: undefined,
+            claimantName: undefined,
+            claimantEmail: undefined,
+            usedAt: null,
+          }
+    );
+    setConfirmIdCheck(false);
+    setConfirmCardCheck(false);
+    return true;
+  };
+
+  const stopCameraStream = () => {
+    cameraStream?.getTracks().forEach((track) => track.stop());
+    setCameraStream(null);
+  };
+
+  const closeCamera = () => {
+    if (scanLoopTimerRef.current != null) {
+      window.clearInterval(scanLoopTimerRef.current);
+      scanLoopTimerRef.current = null;
+    }
+    stopCameraStream();
+    setCameraOpen(false);
+  };
 
   // 카메라 스트림이 준비되면 video 엘리먼트에 연결
   useEffect(() => {
@@ -293,64 +346,47 @@ export default function AdminPage() {
     }
   }, [cameraOpen, cameraStream]);
 
+  // 프레임 QR 자동 디코딩 → 토큰 입력 → 카메라 종료
   useEffect(() => {
-    if (!cameraOpen || !cameraStream || !videoRef.current) return;
-    if (!isBarcodeDetectorSupported()) return;
+    if (!cameraOpen || !cameraStream || !isQrAutoScanSupported()) return;
 
     let cancelled = false;
-    let rafId = 0;
 
-    const scanFrame = async () => {
+    const tick = async () => {
       if (cancelled || scanHandledRef.current || !videoRef.current) return;
-      const raw = await decodeQrFromVideo(videoRef.current);
+      const video = videoRef.current;
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) return;
+
+      const raw = await decodeQrFromVideo(video);
       if (!raw) return;
-      const token = normalizePickupToken(raw);
-      if (!isValidPickupToken(token)) return;
 
-      scanHandledRef.current = true;
-      setScanToken(token);
-      const target = pickupPasses.find((p) => p.token.toUpperCase() === token);
-      if (!target) {
-        setCameraError("발급된 수령 QR이 아닙니다. 마이페이지에서 QR을 발급했는지 확인해 주세요.");
-        scanHandledRef.current = false;
-        return;
-      }
-      if (target.usedAt) {
-        setCameraError("이미 수령 인증이 완료된 QR입니다.");
-        scanHandledRef.current = false;
-        return;
-      }
+      const ok = applyScannedQrToken(raw);
+      if (!ok || cancelled) return;
 
-      setScannedPass({
-        itemName: target.itemName,
-        claimantName: target.claimantName,
-        claimantEmail: target.claimantEmail,
-        usedAt: target.usedAt,
-      });
-      setConfirmIdCheck(false);
-      setConfirmCardCheck(false);
-      setCameraError(null);
+      closeCamera();
     };
 
-    const loop = () => {
-      if (cancelled) return;
-      void scanFrame().finally(() => {
-        if (!cancelled) rafId = requestAnimationFrame(loop);
-      });
-    };
-    rafId = requestAnimationFrame(loop);
+    scanLoopTimerRef.current = window.setInterval(() => {
+      void tick();
+    }, 280);
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(rafId);
+      if (scanLoopTimerRef.current != null) {
+        window.clearInterval(scanLoopTimerRef.current);
+        scanLoopTimerRef.current = null;
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 스캔 성공 시 한 번만 verify/close
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 스캔 성공 시 카메라 종료
   }, [cameraOpen, cameraStream, pickupPasses]);
 
   // 페이지 떠날 때 카메라 자원 정리
   useEffect(() => {
     return () => {
-      cameraStream?.getTracks().forEach((track) => track.stop());
+      stopCameraStream();
+      if (scanLoopTimerRef.current != null) {
+        window.clearInterval(scanLoopTimerRef.current);
+      }
     };
   }, [cameraStream]);
 
@@ -360,6 +396,7 @@ export default function AdminPage() {
     setConfirmIdCheck(false);
     setConfirmCardCheck(false);
     setScanToken("");
+    setPickupToken("");
     scanHandledRef.current = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
@@ -367,46 +404,33 @@ export default function AdminPage() {
       setCameraOpen(true);
     } catch (err) {
       setCameraError(err instanceof Error ? err.message : "카메라를 사용할 수 없습니다.");
-      setCameraOpen(true);
+      setCameraOpen(false);
     }
   };
 
-  const closeCamera = () => {
-    cameraStream?.getTracks().forEach((track) => track.stop());
-    setCameraStream(null);
-    setCameraOpen(false);
-    scanHandledRef.current = false;
-  };
-
   const onScanFromCamera = () => {
-    // 실제 QR 디코딩 라이브러리 대신 입력값을 인식 결과로 사용 (현장에서는 BarcodeDetector 등을 도입)
     if (!scanToken.trim()) {
       setCameraError("스캔된 QR 토큰을 입력해 주세요. (예: DKU-123456)");
       return;
     }
-    const target = pickupPasses.find((p) => p.token.toUpperCase() === scanToken.trim().toUpperCase());
-    if (!target) {
-      setCameraError("해당 토큰의 수령 QR이 발견되지 않았습니다. 분실자에게 다시 확인해 주세요.");
-      return;
-    }
-    setScannedPass({
-      itemName: target.itemName,
-      claimantName: target.claimantName,
-      claimantEmail: target.claimantEmail,
-      usedAt: target.usedAt,
-    });
+    applyScannedQrToken(scanToken);
     setCameraError(null);
   };
 
   const onFinalizePickup = async () => {
-    if (!scannedPass) return;
+    const token = normalizePickupToken(scanToken);
+    if (!token || !isValidPickupToken(token)) {
+      setCameraError("스캔된 QR 토큰이 없습니다. 카메라로 다시 스캔하거나 토큰을 입력해 주세요.");
+      return;
+    }
     if (!confirmIdCheck) {
       setCameraError("신분증/학생증 확인 체크가 필요합니다.");
       return;
     }
     setCameraError(null);
-    await onVerifyPickup(scanToken);
+    await onVerifyPickup(token);
     closeCamera();
+    scanHandledRef.current = false;
   };
 
   const pickupSearchResults = useMemo(() => {
@@ -1232,7 +1256,11 @@ export default function AdminPage() {
                       )}
                       <div className="pointer-events-none absolute inset-6 rounded-md border-2 border-white/70" />
                       <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white">
-                        {isBarcodeDetectorSupported() ? "자동 스캔 중" : "QR 인식 영역 — 토큰 수동 입력"}
+                        {isQrAutoScanSupported()
+                          ? isBarcodeDetectorSupported()
+                            ? "자동 스캔 중 (BarcodeDetector)"
+                            : "자동 스캔 중 (jsQR)"
+                          : "자동 스캔 미지원 — 토큰 수동 입력"}
                       </div>
                     </div>
 
@@ -1250,17 +1278,19 @@ export default function AdminPage() {
                         </Button>
                       </div>
                       <p className="text-[11px] text-muted-foreground">
-                        Chrome/Edge에서 QR이 자동 인식되면 아래 토큰이 채워집니다. 신분증 확인 체크 후 「최종 수령 인증 완료」를 눌러 주세요.
+                        QR이 인식되면 카메라가 자동으로 꺼지고 토큰이 아래·빠른 인증란에 채워집니다. 신분증 확인 후 「최종 수령
+                        인증 완료」를 눌러 주세요.
                       </p>
                     </div>
 
-                    {scannedPass ? (
+                    {scanToken ? (
                       <div className="space-y-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
                         <p className="font-semibold">인수자/물품 확인</p>
+                        <p className="font-mono text-xs break-all">토큰: {scanToken}</p>
                         <ul className="space-y-1 text-sm">
-                          <li>물품: {scannedPass.itemName ?? "-"}</li>
-                          <li>인수자: {scannedPass.claimantName ?? "이름 없음"}</li>
-                          <li>이메일: {scannedPass.claimantEmail ?? "이메일 없음"}</li>
+                          <li>물품: {scannedPass?.itemName ?? "(서버 인증 시 확인)"}</li>
+                          <li>인수자: {scannedPass?.claimantName ?? "(서버 인증 시 확인)"}</li>
+                          <li>이메일: {scannedPass?.claimantEmail ?? "-"}</li>
                         </ul>
 
                         <div className="space-y-2 rounded-md border border-emerald-200 bg-white p-3 text-xs text-slate-800">
