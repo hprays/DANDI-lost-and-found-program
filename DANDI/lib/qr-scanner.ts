@@ -1,6 +1,29 @@
-/** QR 스캔: BarcodeDetector(Chrome/Edge) + jsQR(폴백) */
+/** QR 스캔: BarcodeDetector(Chrome/Edge) + jsQR(폴백, 동적 로드) */
 
-import jsQR from "jsqr";
+import { isValidPickupToken, normalizePickupToken } from "@/lib/pickup-token";
+
+export { isValidPickupToken, normalizePickupToken };
+
+type JsQRFn = (
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  options?: { inversionAttempts?: "dontInvert" | "onlyInvert" | "attemptBoth" | "invertFirst" }
+) => { data: string } | null;
+
+let jsQRModule: Promise<JsQRFn | null> | null = null;
+
+async function loadJsQR(): Promise<JsQRFn | null> {
+  if (!jsQRModule) {
+    jsQRModule = import("jsqr")
+      .then((mod) => {
+        const fn = (mod as { default?: JsQRFn }).default ?? (mod as unknown as JsQRFn);
+        return typeof fn === "function" ? fn : null;
+      })
+      .catch(() => null);
+  }
+  return jsQRModule;
+}
 
 type BarcodeDetectorCtor = new (options?: { formats: string[] }) => {
   detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue?: string }>>;
@@ -29,11 +52,14 @@ async function decodeWithBarcodeDetector(video: HTMLVideoElement): Promise<strin
   }
 }
 
-function decodeWithJsQR(video: HTMLVideoElement): string | null {
+async function decodeWithJsQR(video: HTMLVideoElement): Promise<string | null> {
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
   const w = video.videoWidth;
   const h = video.videoHeight;
   if (!w || !h) return null;
+
+  const jsQR = await loadJsQR();
+  if (!jsQR) return null;
 
   const canvas = document.createElement("canvas");
   canvas.width = w;
@@ -56,36 +82,4 @@ export async function decodeQrFromVideo(video: HTMLVideoElement): Promise<string
   const fromNative = await decodeWithBarcodeDetector(video);
   if (fromNative) return fromNative;
   return decodeWithJsQR(video);
-}
-
-/** 백엔드 발급 토큰: DKU-123456 또는 DKU-해시(긴 형식), URL 내 token 파라미터 지원 */
-export function normalizePickupToken(raw: string): string {
-  let trimmed = raw.trim();
-  if (!trimmed) return "";
-
-  try {
-    if (/^https?:\/\//i.test(trimmed)) {
-      const url = new URL(trimmed);
-      const fromQuery =
-        url.searchParams.get("token") ??
-        url.searchParams.get("pickupToken") ??
-        url.searchParams.get("code");
-      if (fromQuery) trimmed = fromQuery.trim();
-    }
-  } catch {
-    // not a URL
-  }
-
-  const upper = trimmed.toUpperCase();
-  const longMatch = upper.match(/DKU-[A-Z0-9]{10,}/);
-  if (longMatch) return longMatch[0];
-  const shortMatch = upper.match(/DKU-\d{6}/);
-  if (shortMatch) return shortMatch[0];
-  if (upper.startsWith("DKU-")) return upper.split(/\s/)[0]?.replace(/[^A-Z0-9-]/g, "") ?? upper;
-  return upper;
-}
-
-export function isValidPickupToken(token: string): boolean {
-  const normalized = normalizePickupToken(token);
-  return /^DKU-[A-Z0-9]{6,}$/.test(normalized);
 }

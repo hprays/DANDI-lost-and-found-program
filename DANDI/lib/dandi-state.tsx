@@ -21,7 +21,7 @@ import {
   sanitizeLocation,
   toApiDateTime,
 } from "@/lib/format-display";
-import { normalizePickupToken } from "@/lib/qr-scanner";
+import { normalizePickupToken } from "@/lib/pickup-token";
 import { apiImageFields, pickImageFromRaw, resolveItemImageUrl, resolveMediaUrl } from "@/lib/media-url";
 import { compactDandiLocalStorage } from "@/lib/safe-local-storage";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
