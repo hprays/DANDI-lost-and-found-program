@@ -20,6 +20,7 @@ import { resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { useDandiState, type LostReport, type PendingReportPatch } from "@/lib/dandi-state";
 import { attachStreamToVideo, requestCameraStream } from "@/lib/camera-stream";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
+import { ManageLocationPickers } from "@/components/manage-location-pickers";
 import { useBuildingLocationField } from "@/lib/building-location";
 import {
   displayFoundDateTime,
@@ -1255,38 +1256,26 @@ export default function AdminPage() {
                               </option>
                             ))}
                           </select>
-                        </div>
-
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label htmlFor={`manage-place-${item.id}`}>습득 위치</Label>
-                            <Input
-                              id={`manage-place-${item.id}`}
-                              value={draft.place}
-                              onChange={(e) => onManageDraftChange(item.id, "place", e.target.value)}
-                              placeholder="예: 혜당관 2층"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor={`manage-found-at-${item.id}`}>습득 시간</Label>
-                            <Input
-                              id={`manage-found-at-${item.id}`}
-                              type="datetime-local"
-                              value={draft.foundAt}
-                              onChange={(e) => onManageDraftChange(item.id, "foundAt", e.target.value)}
-                            />
-                          </div>
+                          <p className="text-xs text-muted-foreground">목록을 스크롤해 카테고리를 선택할 수 있습니다.</p>
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor={`manage-storage-${item.id}`}>보관 장소</Label>
+                          <Label htmlFor={`manage-found-at-${item.id}`}>습득 시간</Label>
                           <Input
-                            id={`manage-storage-${item.id}`}
-                            value={draft.storage}
-                            onChange={(e) => onManageDraftChange(item.id, "storage", e.target.value)}
-                            placeholder="예: 혜당관 학생팀 425호"
+                            id={`manage-found-at-${item.id}`}
+                            type="datetime-local"
+                            value={draft.foundAt}
+                            onChange={(e) => onManageDraftChange(item.id, "foundAt", e.target.value)}
                           />
                         </div>
+
+                        <ManageLocationPickers
+                          idPrefix={`manage-${item.id}`}
+                          place={draft.place}
+                          storage={draft.storage}
+                          onPlaceChange={(value) => onManageDraftChange(item.id, "place", value)}
+                          onStorageChange={(value) => onManageDraftChange(item.id, "storage", value)}
+                        />
 
                         <div className="space-y-2">
                           <Label htmlFor={`manage-type-${item.id}`}>물품 상세종류</Label>
