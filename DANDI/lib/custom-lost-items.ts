@@ -110,16 +110,26 @@ export function getDeletedLostItemIds(): string[] {
 
 export function markLostItemDeleted(id: string) {
   if (typeof window === "undefined") return;
+  const normalized = String(id).trim();
+  if (!normalized) return;
   const current = new Set(getDeletedLostItemIds());
-  current.add(id);
+  current.add(normalized);
   safeSetLocalStorage(LOST_ITEM_DELETED_IDS_KEY, JSON.stringify(Array.from(current).slice(0, 200)));
 }
 
-export function applyLostItemAdminChanges<T extends { id: string }>(items: T[]): Array<T & Partial<CustomLostItem>> {
+export function isLostItemMarkedDeleted(item: { id: string; reportId?: string }): boolean {
   const deleted = new Set(getDeletedLostItemIds());
+  if (deleted.has(String(item.id))) return true;
+  if (item.reportId && deleted.has(String(item.reportId))) return true;
+  return false;
+}
+
+export function applyLostItemAdminChanges<T extends { id: string; reportId?: string }>(
+  items: T[]
+): Array<T & Partial<CustomLostItem>> {
   const overrides = getLostItemOverridesRaw();
   return items
-    .filter((item) => !deleted.has(item.id))
+    .filter((item) => !isLostItemMarkedDeleted(item))
     .map((item) => {
       const override = overrides[item.id];
       return override ? { ...item, ...override } : item;

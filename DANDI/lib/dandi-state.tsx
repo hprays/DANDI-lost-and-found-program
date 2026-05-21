@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { extractStudentIdFromEmail, getAuthSession } from "@/lib/auth-session";
-import { markLostItemDeleted } from "@/lib/custom-lost-items";
+import { getDeletedLostItemIds, isLostItemMarkedDeleted, markLostItemDeleted } from "@/lib/custom-lost-items";
 import {
   enrichPublishedItemsWithReports,
   getPublishedLostItems,
@@ -438,7 +438,14 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
   const [pickupPasses, setPickupPasses] = useState<PickupPass[]>(() => getStoredPickupPasses());
 
   useEffect(() => {
-    compactDandiLocalStorage();
+    if (typeof window === "undefined") return;
+    const runCompact = () => compactDandiLocalStorage();
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(runCompact, { timeout: 3000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = setTimeout(runCompact, 1200);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -464,11 +471,13 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     const pendingIds = new Set(
       reportList.filter((r) => r.status === "pending").map((r) => String(r.id))
     );
+    const deletedIds = new Set(getDeletedLostItemIds());
 
     const collected: PublishedLostItem[] = [];
 
     remoteItems
       .filter((item) => {
+        if (isLostItemMarkedDeleted(item) || deletedIds.has(String(item.id))) return false;
         const reportKey = item.reportId ? String(item.reportId) : String(item.id);
         return !pendingIds.has(reportKey);
       })
@@ -480,6 +489,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       });
 
     getPublishedLostItems().forEach((item) => {
+      if (isLostItemMarkedDeleted(item)) return;
       collected.push({
         ...item,
         image: resolveDisplayImageUrl(item.image) ?? resolveItemImageUrl(item.image) ?? item.image,
@@ -489,6 +499,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     reportList
       .filter((r) => r.status === "resolved")
       .map(reportToPublishedItem)
+      .filter((item) => !isLostItemMarkedDeleted(item))
       .forEach((item) => collected.push(item));
 
     const deduped = dedupePublishedCatalog(collected);
@@ -1064,17 +1075,28 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         }
       },
       removeHomeLostItem: async (itemId) => {
+        const normalizedId = String(itemId);
+        markLostItemDeleted(normalizedId);
+        const current = homeLostItemsRef.current.find((it) => String(it.id) === normalizedId);
+        if (current?.reportId) markLostItemDeleted(String(current.reportId));
+
         if (API_BASE_URL && getAuthSession()?.accessToken) {
           try {
-            await apiJson<object>(`/api/lost-items/${encodeURIComponent(itemId)}`, { method: "DELETE" });
+            await apiJson<object>(`/api/lost-items/${encodeURIComponent(normalizedId)}`, {
+              method: "DELETE",
+            });
           } catch {
-            // 삭제 API 미구현 시 화면만 반영
+            // 삭제 API 미구현 시 로컬·화면에서만 제거
           }
         }
-        removePublishedLostItem(itemId);
-        setHomeLostItems((prev) => prev.filter((it) => it.id !== itemId));
+        removePublishedLostItem(normalizedId);
+        setHomeLostItems((prev) =>
+          prev.filter(
+            (it) =>
+              String(it.id) !== normalizedId && String(it.reportId ?? "") !== normalizedId
+          )
+        );
         setCatalogVersion((v) => v + 1);
-        void refreshHomeCatalog();
       },
       issuePickupPass: async (payload) => {
         if (!payload?.lostItemId) {

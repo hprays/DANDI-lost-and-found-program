@@ -126,7 +126,10 @@ export function upsertPublishedLostItem(item: PublishedLostItem) {
 }
 
 export function removePublishedLostItem(id: string) {
-  const next = getPublishedLostItems().filter((it) => it.id !== id);
+  const targetId = String(id);
+  const next = getPublishedLostItems().filter(
+    (it) => String(it.id) !== targetId && String(it.reportId ?? "") !== targetId
+  );
   setPublishedLostItems(next);
   return next;
 }

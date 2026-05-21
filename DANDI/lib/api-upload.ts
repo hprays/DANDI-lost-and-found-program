@@ -55,26 +55,62 @@ async function apiFormDataPost<T>(path: string, formData: FormData, method = "PO
   }
 }
 
-function appendImageToForm(form: FormData, image?: string | null) {
-  const trimmed = image?.trim();
-  if (!trimmed) return;
-  if (trimmed.startsWith("data:")) {
-    const file = dataUrlToFile(trimmed);
-    if (file) {
-      form.append("image", file, file.name);
-      form.append("file", file, file.name);
-    }
-    return;
+function firstNonEmpty(...values: Array<string | undefined | null>): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
   }
-  const url = resolveMediaUrl(trimmed);
-  if (url) {
-    form.append("imageUrl", url);
-    form.append("image", url);
-    form.append("mosaicImageUrl", url);
-  }
+  return undefined;
 }
 
-/** 분실물 등록 — 사진은 multipart, URL만 있으면 JSON도 시도 */
+/**
+ * 백엔드 createMultipart 계약 (Option B)
+ * itemName, foundLocation, storedLocation, storedDate, contact, itemType, image(file)
+ */
+function buildLostItemMultipartForm(
+  fields: Record<string, string | undefined>,
+  image?: string | null
+): FormData {
+  const form = new FormData();
+
+  const itemName = firstNonEmpty(fields.itemName, fields.name);
+  if (itemName) form.append("itemName", itemName);
+
+  const foundLocation = firstNonEmpty(fields.foundLocation, fields.location, fields.place);
+  if (foundLocation) form.append("foundLocation", foundLocation);
+
+  const storedLocation = firstNonEmpty(fields.storedLocation, fields.storage);
+  if (storedLocation) form.append("storedLocation", storedLocation);
+
+  const storedDate = firstNonEmpty(
+    fields.storedDate,
+    fields.foundAt,
+    fields.lostAt,
+    fields.acquiredAt,
+    fields.createdAt,
+    fields.registeredAt
+  );
+  if (storedDate) form.append("storedDate", storedDate);
+
+  const contact = firstNonEmpty(fields.contact, fields.memo);
+  if (contact) form.append("contact", contact);
+
+  const itemType = fields.itemType?.trim();
+  if (itemType) form.append("itemType", itemType);
+
+  const color = fields.color?.trim();
+  if (color) form.append("color", color);
+
+  const trimmedImage = image?.trim();
+  if (trimmedImage?.startsWith("data:")) {
+    const file = dataUrlToFile(trimmedImage);
+    if (file) form.append("image", file, file.name);
+  }
+
+  return form;
+}
+
+/** 분실물 등록 — base64 미리보기는 multipart(백엔드 필드명), URL만 있으면 JSON */
 export async function postLostItemCreate(
   fields: Record<string, string | undefined>,
   image?: string | null
@@ -85,11 +121,7 @@ export async function postLostItemCreate(
   if (hasDataImage) {
     let lastError: Error | null = null;
     for (const path of paths) {
-      const form = new FormData();
-      Object.entries(fields).forEach(([key, value]) => {
-        if (value != null && value !== "") form.append(key, value);
-      });
-      appendImageToForm(form, image);
+      const form = buildLostItemMultipartForm(fields, image);
       try {
         return await apiFormDataPost<Record<string, unknown>>(path, form);
       } catch (error) {
@@ -116,34 +148,19 @@ export async function postLostItemCreate(
   });
 }
 
-/** 신고 등록 — 사진 multipart 우선 */
+/** 신고 등록 — 백엔드는 JSON @RequestBody만 수신 (multipart 미지원) */
 export async function postReportCreate(
   fields: Record<string, string | undefined>,
   image?: string | null
 ): Promise<Record<string, unknown>> {
-  const path = "/api/reports";
-  const hasDataImage = Boolean(image?.trim().startsWith("data:"));
-
-  if (hasDataImage) {
-    const form = new FormData();
-    Object.entries(fields).forEach(([key, value]) => {
-      if (value != null && value !== "") form.append(key, value);
-    });
-    appendImageToForm(form, image);
-    return apiFormDataPost<Record<string, unknown>>(path, form);
-  }
-
   const { apiJson } = await import("@/lib/api-json");
+  const { apiImageFields } = await import("@/lib/media-url");
   const body: Record<string, string> = {};
   Object.entries(fields).forEach(([key, value]) => {
     if (value != null && value !== "") body[key] = value;
   });
-  const url = image?.trim() ? resolveMediaUrl(image) : undefined;
-  if (url) {
-    body.image = url;
-    body.imageUrl = url;
-  }
-  return apiJson<Record<string, unknown>>(path, {
+  Object.assign(body, apiImageFields(image));
+  return apiJson<Record<string, unknown>>("/api/reports", {
     method: "POST",
     body: JSON.stringify(body),
   });

@@ -280,10 +280,11 @@ export default function AdminPage() {
     }
   };
   const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
-  const managedItems = useMemo(
-    () => enrichPublishedItemsWithReports(applyLostItemAdminChanges(homeLostItems), reports),
-    [homeLostItems, reports]
-  );
+  const needsCatalogLists = adminTab === "manage" || adminTab === "pickup";
+  const managedItems = useMemo(() => {
+    if (!needsCatalogLists) return [];
+    return enrichPublishedItemsWithReports(applyLostItemAdminChanges(homeLostItems), reports);
+  }, [homeLostItems, reports, needsCatalogLists]);
 
   const registerItem = async () => {
     if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {
@@ -453,22 +454,35 @@ export default function AdminPage() {
     setVideoPlayError(null);
   };
 
-  // 카메라 스트림이 준비되면 video 엘리먼트에 연결·재생
+  // 카메라 스트림이 준비되면 video 엘리먼트에 연결·재생 (마운트 타이밍 대기)
   useEffect(() => {
-    if (!cameraOpen || !cameraStream || !videoRef.current) return;
+    if (!cameraOpen || !cameraStream) return;
     let cancelled = false;
+    let rafId = 0;
     setVideoPlayError(null);
-    void (async () => {
-      const playError = await attachStreamToVideo(videoRef.current!, cameraStream);
+
+    const tryAttach = async (attempt = 0) => {
+      if (cancelled) return;
+      const video = videoRef.current;
+      if (!video) {
+        if (attempt < 40) {
+          rafId = window.requestAnimationFrame(() => void tryAttach(attempt + 1));
+        }
+        return;
+      }
+      const playError = await attachStreamToVideo(video, cameraStream);
       if (cancelled) return;
       if (playError) {
         setVideoPlayError(playError);
-        stopCameraStream();
-        setCameraOpen(false);
+      } else {
+        setVideoPlayError(null);
       }
-    })();
+    };
+
+    void tryAttach();
     return () => {
       cancelled = true;
+      if (rafId) window.cancelAnimationFrame(rafId);
     };
   }, [cameraOpen, cameraStream]);
 
@@ -565,6 +579,7 @@ export default function AdminPage() {
   };
 
   const pickupSearchResults = useMemo(() => {
+    if (adminTab !== "pickup") return [];
     const verifiedLostIds = new Set(
       pickupPasses.filter((p) => p.usedAt && p.lostItemId).map((p) => String(p.lostItemId))
     );
@@ -578,7 +593,7 @@ export default function AdminPage() {
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [managedItems, pickupSearch, pickupPasses]);
+  }, [adminTab, managedItems, pickupSearch, pickupPasses]);
 
   const onVisionFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -779,9 +794,16 @@ export default function AdminPage() {
   };
 
   const onDeleteManagedItem = async (itemId: string) => {
+    const target = managedItems.find((it) => it.id === itemId);
     markLostItemDeleted(itemId);
+    if (target?.reportId) markLostItemDeleted(String(target.reportId));
     await removeHomeLostItem(itemId);
-    setManageMessage("해당 물품을 서버에서 삭제했습니다.");
+    setManageDrafts((prev) => {
+      const next = { ...prev };
+      delete next[itemId];
+      return next;
+    });
+    setManageMessage("해당 물품이 삭제되어 홈·검색 목록에서 제외되었습니다.");
   };
 
   const onManageDraftChange = (itemId: string, field: keyof ManageDraft, value: string) => {
@@ -890,6 +912,8 @@ export default function AdminPage() {
           </TabsList>
 
           <TabsContent value="register" className="space-y-3">
+            {adminTab === "register" ? (
+            <>
             <Card>
               <CardHeader>
                 <CardTitle>관리자 분실물 등록</CardTitle>
@@ -1133,9 +1157,12 @@ export default function AdminPage() {
                 </CardContent>
               </Card>
             ) : null}
+            </>
+            ) : null}
           </TabsContent>
 
           <TabsContent value="manage" className="space-y-3">
+            {adminTab === "manage" ? (
             <Card>
               <CardHeader>
                 <CardTitle>관리자 물품 수정/삭제</CardTitle>
@@ -1289,13 +1316,16 @@ export default function AdminPage() {
                 )}
               </CardContent>
             </Card>
+            ) : null}
           </TabsContent>
 
           <TabsContent value="pending" className="space-y-3">
-            {pendingReports.length === 0 ? (
+            {adminTab === "pending" ? (
+            pendingReports.length === 0 ? (
               <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">현재 검수 대기 중인 신고가 없습니다.</p>
             ) : (
-              pendingReports.map((report) => (
+              <>
+              {pendingReports.map((report) => (
                 <Card key={report.id}>
                   <CardContent className="space-y-3 p-4">
                     {(() => {
@@ -1366,12 +1396,15 @@ export default function AdminPage() {
                     </p>
                   </CardContent>
                 </Card>
-              ))
-            )}
+              ))}
+              </>
+            )
+            ) : null}
           </TabsContent>
 
           <TabsContent value="processed" className="space-y-2">
-            {processedReports.length === 0 ? (
+            {adminTab === "processed" ? (
+            processedReports.length === 0 ? (
               <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">처리 완료된 신고 이력이 없습니다.</p>
             ) : (
               processedReports.map((report) => (
@@ -1384,10 +1417,13 @@ export default function AdminPage() {
                   </p>
                 </div>
               ))
-            )}
+            )
+            ) : null}
           </TabsContent>
 
           <TabsContent value="pickup" className="space-y-3">
+            {adminTab === "pickup" ? (
+            <>
             <Card className="border-primary/40 bg-primary/5">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1613,10 +1649,13 @@ export default function AdminPage() {
                 )}
               </CardContent>
             </Card>
+            </>
+            ) : null}
           </TabsContent>
 
           <TabsContent value="audit" className="space-y-2">
-            {adminAuditLogs.map((log) => (
+            {adminTab === "audit" ? (
+            adminAuditLogs.map((log) => (
               <div key={log.id} className="rounded-xl border bg-white p-3 text-sm">
                 <p className="flex items-center gap-2 font-medium">
                   <Clock3 className="h-4 w-4 text-primary" />
@@ -1624,7 +1663,8 @@ export default function AdminPage() {
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">{log.createdAt}</p>
               </div>
-            ))}
+            ))
+            ) : null}
           </TabsContent>
         </Tabs>
       </div>
