@@ -183,9 +183,20 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
   }, []);
 
   useEffect(() => {
-    if (!mapReady || !osmMapRef.current) return;
-    osmMapRef.current.setView([activeOffice.lat, activeOffice.lng], 17, { animate: true });
-    osmMarkerRef.current.get(activeOffice.name)?.openPopup();
+    if (!mapReady || !osmMapRef.current || !mapRef.current?.isConnected) return;
+    const map = osmMapRef.current;
+    const marker = osmMarkerRef.current.get(activeOffice.name);
+    const rafId = window.requestAnimationFrame(() => {
+      if (!osmMapRef.current || !mapRef.current?.isConnected) return;
+      try {
+        map.invalidateSize({ animate: false });
+        map.setView([activeOffice.lat, activeOffice.lng], 17, { animate: true });
+        marker?.openPopup();
+      } catch {
+        // Leaflet pane not ready (_leaflet_pos)
+      }
+    });
+    return () => window.cancelAnimationFrame(rafId);
   }, [activeOffice, mapReady]);
 
   const onMoveToCurrent = () => {

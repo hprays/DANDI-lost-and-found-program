@@ -17,6 +17,7 @@ import { MAX_IMAGE_BYTES } from "@/lib/constants";
 import { applyLostItemAdminChanges, setLostItemOverride } from "@/lib/custom-lost-items";
 import { enrichPublishedItemsWithReports } from "@/lib/published-lost-items";
 import { resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
+import { getPublishedLostItems, dedupePublishedCatalog } from "@/lib/published-lost-items";
 import { useDandiState, type LostReport, type PendingReportPatch } from "@/lib/dandi-state";
 import { attachStreamToVideo, requestCameraStream } from "@/lib/camera-stream";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
@@ -163,7 +164,17 @@ export default function AdminPage() {
   const [pendingSaveLoading, setPendingSaveLoading] = useState(false);
   const [videoPlayError, setVideoPlayError] = useState<string | null>(null);
 
-  const pendingReports = useMemo(() => reports.filter((report) => report.status === "pending"), [reports]);
+  const pendingReports = useMemo(() => {
+    const publishedReportIds = new Set(
+      homeLostItems
+        .map((item) => item.reportId)
+        .filter(Boolean)
+        .map(String)
+    );
+    return reports.filter(
+      (report) => report.status === "pending" && !publishedReportIds.has(String(report.id))
+    );
+  }, [reports, homeLostItems]);
   const editingPendingReport = useMemo(
     () => pendingReports.find((r) => r.id === editingPendingReportId) ?? null,
     [pendingReports, editingPendingReportId]
@@ -281,8 +292,19 @@ export default function AdminPage() {
   const needsCatalogLists = adminTab === "manage" || adminTab === "pickup";
   const managedItems = useMemo(() => {
     if (!needsCatalogLists) return [];
-    return enrichPublishedItemsWithReports(applyLostItemAdminChanges(homeLostItems), reports);
+    const merged = dedupePublishedCatalog([
+      ...applyLostItemAdminChanges(homeLostItems),
+      ...applyLostItemAdminChanges(getPublishedLostItems()),
+    ]);
+    return enrichPublishedItemsWithReports(merged, reports);
   }, [homeLostItems, reports, needsCatalogLists]);
+
+  useEffect(() => {
+    if (!isAdmin || !apiConfigured || adminTab !== "manage") return;
+    if (homeLostItems.length === 0) {
+      void refreshHomeCatalog();
+    }
+  }, [isAdmin, apiConfigured, adminTab, homeLostItems.length, refreshHomeCatalog]);
 
   const registerItem = async () => {
     if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {

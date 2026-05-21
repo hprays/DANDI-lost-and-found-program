@@ -373,51 +373,14 @@ async function publishLostItemToApi(
   return data;
 }
 
-async function createAdminLinkedReport(
-  payload: Omit<LostReport, "id" | "status" | "createdAt">,
-  imageSource?: string | null
-): Promise<string | undefined> {
-  try {
-    const foundAtIso = toApiDateTime(payload.lostAt);
-    const data = await postReportCreate(
-      {
-        itemName: payload.itemName,
-        name: payload.itemName,
-        category: payload.category,
-        lostAt: foundAtIso,
-        foundAt: foundAtIso,
-        location: payload.location,
-        place: payload.location,
-        storage: payload.storage,
-        memo: payload.memo,
-        itemType: payload.itemType,
-      },
-      imageSource ?? payload.image
-    );
-    const reportId = data.id ?? data.reportId;
-    if (reportId == null) return undefined;
-    const id = String(reportId);
-    try {
-      await patchReportStatus(id, "resolved");
-    } catch {
-      // 상태 변경 실패해도 lost_item 연결은 진행
-    }
-    return id;
-  } catch {
-    return undefined;
-  }
-}
-
 async function publishAdminLostItemToApi(
   payload: Omit<LostReport, "id" | "status" | "createdAt">,
   imageSource?: string | null
 ): Promise<{ id?: string; lostItemId?: string; message?: string } & Record<string, unknown>> {
   const foundAtIso = toApiDateTime(payload.lostAt);
   const createdAtIso = nowISO();
-  const linkedReportId = await createAdminLinkedReport(payload, imageSource);
   return postLostItemCreate(
     {
-      ...(linkedReportId ? { reportId: linkedReportId } : {}),
       name: payload.itemName,
       itemName: payload.itemName,
       category: payload.category,
@@ -521,9 +484,6 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const applyCatalogMerge = useCallback((reportList: LostReport[], remoteItems: PublishedLostItem[]) => {
-    const pendingIds = new Set(
-      reportList.filter((r) => r.status === "pending").map((r) => String(r.id))
-    );
     const deletedIds = new Set(getDeletedLostItemIds());
 
     const collected: PublishedLostItem[] = [];
@@ -531,8 +491,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     remoteItems
       .filter((item) => {
         if (isLostItemMarkedDeleted(item) || deletedIds.has(String(item.id))) return false;
-        const reportKey = item.reportId ? String(item.reportId) : String(item.id);
-        return !pendingIds.has(reportKey);
+        if (!item.reportId) return true;
+        const linked = reportList.find((r) => String(r.id) === String(item.reportId));
+        if (!linked) return true;
+        return linked.status !== "pending";
       })
       .forEach((item) => {
         collected.push({
@@ -716,9 +678,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
   const bootstrapAfterAuth = useCallback(async () => {
     if (!getAuthSession()?.accessToken) return;
-    await Promise.all([refreshReportsList(), refreshNotices()]);
-    scheduleHomeCatalogRefresh();
-  }, [refreshNotices, refreshReportsList, scheduleHomeCatalogRefresh]);
+    void refreshNotices();
+    await refreshHomeCatalogInner();
+    void refreshReportsList();
+  }, [refreshHomeCatalogInner, refreshNotices, refreshReportsList]);
 
   useEffect(() => {
     if (getAuthSession()?.accessToken) {
@@ -919,7 +882,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               )
             );
             setCatalogVersion((v) => v + 1);
-            scheduleReportsSync();
+            invalidateRemoteLostItemsCache();
+            await refreshHomeCatalogInner();
             setAdminAuditLogs((prev) => [
               {
                 id: `a-${Date.now()}`,

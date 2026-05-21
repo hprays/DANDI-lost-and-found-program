@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { ChevronLeft, ChevronRight, CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -35,11 +35,17 @@ function getVisiblePages(current: number, total: number): Array<number | "ellips
 }
 
 export default function HomePage() {
-  const { homeLostItems, catalogLoading } = useDandiState();
+  const { homeLostItems, catalogLoading, refreshHomeCatalog } = useDandiState();
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [selectedBuilding, setSelectedBuilding] = useState<string>("전체");
   const [searchKeyword, setSearchKeyword] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    if (homeLostItems.length === 0 && !catalogLoading) {
+      void refreshHomeCatalog();
+    }
+  }, [homeLostItems.length, catalogLoading, refreshHomeCatalog]);
 
   const mergedItems = useMemo(() => {
     const published = applyLostItemAdminChanges(homeLostItems);
@@ -194,12 +200,12 @@ export default function HomePage() {
               분실물 목록을 불러오는 중…
             </div>
           ) : null}
-          {(!catalogLoading || mergedItems.length > 0) && filteredItems.length === 0 ? (
+          {filteredItems.length === 0 && !catalogLoading ? (
             <div className="md:col-span-2 rounded-xl border bg-white p-6 text-center text-sm text-muted-foreground">
               습득 완료 처리된 분실물만 표시됩니다. 관리자 검수 후 목록에 노출됩니다.
             </div>
           ) : null}
-          {(!catalogLoading || mergedItems.length > 0)
+          {filteredItems.length > 0
             ? paginatedItems.map((item) => {
             const timeLabel = formatCatalogTimeLine(item);
             return (

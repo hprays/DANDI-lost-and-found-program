@@ -29,7 +29,6 @@ import {
 import {
   getStoredAlertEnabled,
   getStoredKeywords,
-  KEYWORDS_CHANGED_EVENT,
   setStoredAlertEnabled,
   setStoredKeywords,
 } from "@/lib/user-preferences";
@@ -84,7 +83,10 @@ export default function MyPage() {
         const rows = await fetchUserKeywords();
         if (!cancelled) {
           setKeywordRows(rows);
-          setStoredKeywords(rows.map((r) => r.keyword));
+          setStoredKeywords(
+            rows.map((r) => r.keyword),
+            { silent: true }
+          );
           setTagsReady(true);
         }
       } catch {
@@ -101,26 +103,17 @@ export default function MyPage() {
     };
   }, [session?.accessToken]);
 
-  useEffect(() => {
-    const onKeywordsChanged = (event: Event) => {
-      const detail = (event as CustomEvent<string[]>).detail;
-      if (Array.isArray(detail)) {
-        setKeywordRows(detail.map((k, i) => ({ id: `local-${i}`, keyword: k })));
-      }
-    };
-    window.addEventListener(KEYWORDS_CHANGED_EVENT, onKeywordsChanged);
-    return () => window.removeEventListener(KEYWORDS_CHANGED_EVENT, onKeywordsChanged);
-  }, []);
+  const persistKeywordsCache = (rows: UserKeyword[]) => {
+    setStoredKeywords(
+      rows.map((r) => r.keyword),
+      { silent: true }
+    );
+  };
 
-  useEffect(() => {
-    if (!tagsReady) return;
-    setStoredKeywords(keywordRows.map((r) => r.keyword));
-  }, [keywordRows, tagsReady]);
-
-  useEffect(() => {
-    if (!tagsReady) return;
-    setStoredAlertEnabled(alertEnabled);
-  }, [alertEnabled, tagsReady]);
+  const onAlertEnabledChange = (checked: boolean) => {
+    setAlertEnabled(checked);
+    setStoredAlertEnabled(checked);
+  };
 
   const myPickupPasses = useMemo(() => {
     if (!session?.email) return pickupPasses;
@@ -146,9 +139,17 @@ export default function MyPage() {
     try {
       if (API_BASE_URL) {
         const row = await addUserKeyword(trimmed);
-        setKeywordRows((prev) => [...prev, row]);
+        setKeywordRows((prev) => {
+          const next = [...prev, row];
+          persistKeywordsCache(next);
+          return next;
+        });
       } else {
-        setKeywordRows((prev) => [...prev, { id: `local-${Date.now()}`, keyword: trimmed }]);
+        setKeywordRows((prev) => {
+          const next = [...prev, { id: `local-${Date.now()}`, keyword: trimmed }];
+          persistKeywordsCache(next);
+          return next;
+        });
       }
       setKeyword("");
     } catch (error) {
@@ -165,7 +166,11 @@ export default function MyPage() {
       if (API_BASE_URL && session?.accessToken && !row.id.startsWith("local-")) {
         await deleteUserKeyword(row.id);
       }
-      setKeywordRows((prev) => prev.filter((it) => it.id !== row.id));
+      setKeywordRows((prev) => {
+        const next = prev.filter((it) => it.id !== row.id);
+        persistKeywordsCache(next);
+        return next;
+      });
     } catch (error) {
       setKeywordMessage(error instanceof Error ? error.message : "키워드 삭제에 실패했습니다.");
     } finally {
@@ -356,7 +361,7 @@ export default function MyPage() {
             </div>
             <div className="flex items-center justify-between rounded-xl border p-3">
               <p className="text-sm font-medium">매칭 알림 받기 (키워드 기준)</p>
-              <Switch checked={alertEnabled} onCheckedChange={setAlertEnabled} />
+              <Switch checked={alertEnabled} onCheckedChange={onAlertEnabledChange} />
             </div>
           </CardContent>
         </Card>

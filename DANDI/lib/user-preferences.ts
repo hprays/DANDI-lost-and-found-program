@@ -22,10 +22,12 @@ export function getStoredKeywords(): string[] {
   }
 }
 
-export function setStoredKeywords(keywords: string[]) {
+export function setStoredKeywords(keywords: string[], options?: { silent?: boolean }) {
   if (typeof window === "undefined") return;
   if (safeSetLocalStorage(KEYWORDS_STORAGE_KEY, JSON.stringify(keywords))) {
-    window.dispatchEvent(new CustomEvent(KEYWORDS_CHANGED_EVENT, { detail: keywords }));
+    if (!options?.silent) {
+      window.dispatchEvent(new CustomEvent(KEYWORDS_CHANGED_EVENT, { detail: keywords }));
+    }
   }
 }
 
