@@ -14,7 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { fetchAIGuidance, useDandiState } from "@/lib/dandi-state";
 import { lostItems } from "@/lib/mock-data";
 import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
-import { displayDateTimeLabels } from "@/lib/format-display";
+import { displayFoundDateTime, displayRegistrationDateTime } from "@/lib/format-display";
 import { fetchLostItemById } from "@/lib/catalog-utils";
 import { getPublishedLostItems, type PublishedLostItem } from "@/lib/published-lost-items";
 
@@ -137,12 +137,12 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
           <div className="grid gap-2 text-sm text-muted-foreground">
             <p>습득 위치: {item.place}</p>
             {(() => {
-              const { registered, found } = displayDateTimeLabels(item);
+              const registered = displayRegistrationDateTime(item);
+              const found = displayFoundDateTime(item);
               return (
                 <>
-                  {registered ? <p>등록 일시: {registered}</p> : null}
+                  {registered ? <p>등록 일시: {registered}</p> : <p>등록 일시: 시간 정보 없음</p>}
                   {found ? <p>습득 일시: {found}</p> : null}
-                  {!registered && !found ? <p>습득 시간: 시간 정보 없음</p> : null}
                 </>
               );
             })()}

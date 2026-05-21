@@ -9,19 +9,21 @@ import {
   isLostItemMarkedDeleted,
   markLostItemDeleted,
 } from "@/lib/custom-lost-items";
+import { resolveServerLostItemId } from "@/lib/catalog-identity";
 import {
   enrichPublishedItemsWithReports,
+  finalizeCatalogItems,
   getPublishedLostItems,
   mapApiLostItem,
   dedupePublishedCatalog,
   isSameCatalogItem,
-  mergePublishedItems,
   removePublishedLostItem,
   reportToPublishedItem,
   upsertPublishedLostItem,
   type PublishedLostItem,
 } from "@/lib/published-lost-items";
 import { fetchRemoteLostItems, sortLostItemsNewestFirst } from "@/lib/catalog-utils";
+import { rememberItemRegistrationTime } from "@/lib/registration-meta";
 import { postLostItemCreate, postReportCreate } from "@/lib/api-upload";
 import { apiJson, getApiBaseUrl, patchReportDetails, patchReportStatus } from "@/lib/api-json";
 import {
@@ -367,14 +369,44 @@ async function publishLostItemToApi(
   return data;
 }
 
+async function createAdminLinkedReport(
+  payload: Omit<LostReport, "id" | "status" | "createdAt">,
+  imageSource?: string | null
+): Promise<string | undefined> {
+  try {
+    const foundAtIso = toApiDateTime(payload.lostAt);
+    const data = await postReportCreate(
+      {
+        itemName: payload.itemName,
+        name: payload.itemName,
+        category: payload.category,
+        lostAt: foundAtIso,
+        foundAt: foundAtIso,
+        location: payload.location,
+        place: payload.location,
+        storage: payload.storage,
+        memo: payload.memo,
+        itemType: payload.itemType,
+      },
+      imageSource ?? payload.image
+    );
+    const reportId = data.id ?? data.reportId;
+    return reportId != null ? String(reportId) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function publishAdminLostItemToApi(
   payload: Omit<LostReport, "id" | "status" | "createdAt">,
   imageSource?: string | null
 ): Promise<{ id?: string; lostItemId?: string; message?: string } & Record<string, unknown>> {
   const foundAtIso = toApiDateTime(payload.lostAt);
   const createdAtIso = nowISO();
+  const linkedReportId = await createAdminLinkedReport(payload, imageSource);
   return postLostItemCreate(
     {
+      ...(linkedReportId ? { reportId: linkedReportId } : {}),
       name: payload.itemName,
       itemName: payload.itemName,
       category: payload.category,
@@ -506,18 +538,27 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       });
     });
 
+    const linkedReportIds = new Set(
+      collected
+        .map((item) => item.reportId)
+        .filter(Boolean)
+        .map(String)
+    );
+
     reportList
       .filter(
         (r) =>
           r.status === "resolved" &&
+          !linkedReportIds.has(String(r.id)) &&
           !isLostItemMarkedDeleted({ id: String(r.id), reportId: String(r.id) })
       )
-      .map(reportToPublishedItem)
+      .map((r) => reportToPublishedItem(r))
       .filter((item) => !isLostItemMarkedDeleted(item) && Boolean(item.name?.trim()))
       .forEach((item) => collected.push(item));
 
-    const deduped = dedupePublishedCatalog(collected);
-    const next = sortLostItemsNewestFirst(enrichPublishedItemsWithReports(deduped, reportList)).filter(
+    const next = sortLostItemsNewestFirst(
+      enrichPublishedItemsWithReports(finalizeCatalogItems(collected), reportList)
+    ).filter(
       (item) => !isLostItemMarkedDeleted(item) && Boolean(item.name?.trim())
     );
     setHomeLostItems(next);
@@ -837,9 +878,15 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             let mapped =
               mapApiLostItem({ ...data, id: itemId, ...normalizedPayload, itemName: normalizedPayload.itemName }) ??
               buildLocalItem(itemId);
+            mapped = {
+              ...mapped,
+              createdAt: mapped.createdAt ?? createdAtDisplay,
+              reportId: mapped.reportId ?? (data.reportId != null ? String(data.reportId) : undefined),
+            };
             if (!resolveDisplayImageUrl(mapped.image) && displayImage) {
               mapped = { ...mapped, image: displayImage };
             }
+            rememberItemRegistrationTime(itemId, toApiDateTime(createdAtDisplay));
             upsertPublishedLostItem(mapped);
             setHomeLostItems((prev) =>
               sortLostItemsNewestFirst(
@@ -989,37 +1036,54 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         });
 
         if (status === "resolved") {
-          const published = reportToPublishedItem(resolvedReport);
-          if (!resolveItemImageUrl(published.image) && resolvedReport.image) {
-            published.image = resolveItemImageUrl(resolvedReport.image) ?? resolvedReport.image;
-          }
-          upsertPublishedLostItem(published);
-          setHomeLostItems((prev) =>
-            sortLostItemsNewestFirst(
-              dedupePublishedCatalog([
-                published,
-                ...prev.filter((it) => !isSameCatalogItem(it, published)),
-              ])
-            )
-          );
-          setCatalogVersion((v) => v + 1);
+          const registeredAtIso = nowISO();
+          const registeredLabel = formatDateTimeLabel(registeredAtIso) || shortDateTime();
           try {
             const posted = await publishLostItemToApi(resolvedReport, resolvedReport.image);
-            const postedId = posted?.id ?? posted?.lostItemId;
-            if (postedId && String(postedId) !== String(published.id)) {
-              const withServerId = { ...published, id: String(postedId), reportId: resolvedReport.id };
-              upsertPublishedLostItem(withServerId);
-              setHomeLostItems((prev) =>
-                sortLostItemsNewestFirst(
-                  dedupePublishedCatalog([
-                    withServerId,
-                    ...prev.filter((it) => !isSameCatalogItem(it, withServerId)),
-                  ])
-                )
-              );
+            const postedId = String(posted?.id ?? posted?.lostItemId ?? "");
+            const mapped =
+              (posted && typeof posted === "object"
+                ? mapApiLostItem({ ...(posted as Record<string, unknown>), id: postedId || undefined })
+                : null) ?? reportToPublishedItem(resolvedReport, postedId || undefined);
+            let published: PublishedLostItem = {
+              ...mapped,
+              id: postedId || mapped.id,
+              reportId: resolvedReport.id,
+              createdAt: pickRicherDateTimeLabel(mapped.createdAt, registeredLabel) ?? registeredLabel,
+            };
+            if (!resolveItemImageUrl(published.image) && resolvedReport.image) {
+              published = {
+                ...published,
+                image: resolveItemImageUrl(resolvedReport.image) ?? resolvedReport.image,
+              };
             }
+            if (postedId) rememberItemRegistrationTime(postedId, registeredAtIso);
+            upsertPublishedLostItem(published);
+            setHomeLostItems((prev) =>
+              sortLostItemsNewestFirst(
+                dedupePublishedCatalog([
+                  published,
+                  ...prev.filter((it) => !isSameCatalogItem(it, published)),
+                ])
+              )
+            );
+            setCatalogVersion((v) => v + 1);
           } catch {
-            // lost-items API 미구현 시 refresh로 동기화
+            const published = reportToPublishedItem(resolvedReport);
+            if (!resolveItemImageUrl(published.image) && resolvedReport.image) {
+              published.image = resolveItemImageUrl(resolvedReport.image) ?? resolvedReport.image;
+            }
+            published.createdAt = registeredLabel;
+            upsertPublishedLostItem(published);
+            setHomeLostItems((prev) =>
+              sortLostItemsNewestFirst(
+                dedupePublishedCatalog([
+                  published,
+                  ...prev.filter((it) => !isSameCatalogItem(it, published)),
+                ])
+              )
+            );
+            setCatalogVersion((v) => v + 1);
           }
         }
 
@@ -1078,43 +1142,44 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
         const patchBody: Record<string, string> = {
           itemName: updated.name,
-          name: updated.name,
           category,
           itemType: detailType,
           place: updated.place,
           location: updated.place,
           foundAt: toApiDateTime(updated.foundAt ?? updated.time),
-          storage: updated.storage ?? "",
-          memo: updated.memo ?? "",
-          ...apiImageFields(updated.image),
         };
-        Object.keys(patchBody).forEach((key) => {
-          if (patchBody[key] === "") delete patchBody[key];
-        });
+        if (updated.storage?.trim()) patchBody.storage = updated.storage.trim();
+        if (updated.memo?.trim()) patchBody.memo = updated.memo.trim();
+        Object.assign(patchBody, apiImageFields(updated.image));
 
         if (API_BASE_URL && getAuthSession()?.accessToken) {
           try {
+            const serverId = await resolveServerLostItemId(target, normalizedId);
             const data = await apiJson<Record<string, unknown>>(
-              `/api/lost-items/${encodeURIComponent(normalizedId)}`,
+              `/api/lost-items/${encodeURIComponent(serverId)}`,
               {
                 method: "PATCH",
                 body: JSON.stringify(patchBody),
               }
             );
             const mapped =
-              mapApiLostItem({ ...data, id: normalizedId }) ??
+              mapApiLostItem({ ...data, id: serverId }) ??
               updated;
             const merged: PublishedLostItem = {
               ...updated,
               ...mapped,
+              id: serverId,
               createdAt: pickRicherDateTimeLabel(updated.createdAt, mapped.createdAt) ?? updated.createdAt,
               foundAt: pickRicherDateTimeLabel(updated.foundAt, mapped.foundAt) ?? updated.foundAt,
-              time: mapped.foundAt ?? mapped.time ?? updated.time,
+              time: mapped.createdAt ?? updated.createdAt ?? mapped.foundAt ?? updated.time,
             };
+            rememberItemRegistrationTime(serverId, toApiDateTime(merged.createdAt));
             upsertPublishedLostItem(merged);
             setHomeLostItems((prev) =>
               sortLostItemsNewestFirst(
-                prev.map((it) => (String(it.id) === normalizedId ? merged : it))
+                prev.map((it) =>
+                  String(it.id) === normalizedId || String(it.id) === serverId ? merged : it
+                )
               )
             );
             setCatalogVersion((v) => v + 1);
@@ -1153,17 +1218,24 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
         if (API_BASE_URL && getAuthSession()?.accessToken) {
           try {
-            await apiJson<object>(`/api/lost-items/${encodeURIComponent(normalizedId)}`, {
+            const serverId = await resolveServerLostItemId(target, normalizedId);
+            await apiJson<object>(`/api/lost-items/${encodeURIComponent(serverId)}`, {
               method: "DELETE",
             });
+            idsToDrop.add(serverId);
           } catch (error) {
-            return {
-              ok: false,
-              message:
-                error instanceof Error
-                  ? `서버 삭제에 실패했습니다. (${error.message})`
+            const message = error instanceof Error ? error.message : "";
+            const alreadyGone =
+              /찾을 수 없|not found|404/i.test(message) ||
+              message.includes("분실물을 찾을 수 없습니다");
+            if (!alreadyGone) {
+              return {
+                ok: false,
+                message: message
+                  ? `서버 삭제에 실패했습니다. (${message})`
                   : "서버 삭제에 실패했습니다.",
-            };
+              };
+            }
           }
         }
 

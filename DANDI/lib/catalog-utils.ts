@@ -54,13 +54,10 @@ function extractLostItemList(payload: unknown): PublishedLostItem[] {
 }
 
 function parseSortTimestamp(item: PublishedLostItem): number {
-  const candidates = [item.createdAt, item.foundAt, item.time].filter(Boolean) as string[];
-  for (const raw of candidates) {
-    const ms = parseDateTimeMs(raw);
-    if (ms > 0) return ms;
-  }
+  const createdMs = parseDateTimeMs(item.createdAt);
+  if (createdMs > 0) return createdMs;
   const idNum = Number(item.id);
-  return Number.isNaN(idNum) ? 0 : idNum;
+  return Number.isNaN(idNum) || idNum <= 0 ? 0 : idNum;
 }
 
 /** 홈·관리자 목록: 최신 등록(또는 id) 우선 */

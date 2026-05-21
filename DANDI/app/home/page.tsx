@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
-import { formatCatalogTimeLine } from "@/lib/format-display";
+import { formatCatalogCardDate } from "@/lib/format-display";
 import { buildings, categories, lostItems } from "@/lib/mock-data";
 
 const ITEMS_PER_PAGE = 8;
@@ -206,7 +206,7 @@ export default function HomePage() {
           ) : null}
           {!catalogLoading
             ? paginatedItems.map((item) => {
-            const timeLabel = formatCatalogTimeLine(item);
+            const timeLabel = formatCatalogCardDate(item);
             return (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">

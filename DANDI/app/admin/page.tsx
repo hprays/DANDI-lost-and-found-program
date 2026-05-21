@@ -22,7 +22,8 @@ import { attachStreamToVideo, requestCameraStream } from "@/lib/camera-stream";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
 import {
-  displayDateTimeLabels,
+  displayFoundDateTime,
+  displayRegistrationDateTime,
   formatDateTimeLabel,
   sanitizeLocation,
   toDatetimeLocalValue,
@@ -1202,13 +1203,12 @@ export default function AdminPage() {
                           <div>
                             <p className="text-sm font-semibold text-slate-700">물품 ID: {item.id}</p>
                             {(() => {
-                              const { registered, found } = displayDateTimeLabels(item);
+                              const registered = displayRegistrationDateTime(item);
+                              const found = displayFoundDateTime(item);
                               return (
                                 <p className="text-xs text-muted-foreground">
-                                  {registered ? `등록 ${registered}` : null}
-                                  {registered && found && registered !== found ? " · " : null}
-                                  {found && registered !== found ? `습득 ${found}` : null}
-                                  {!registered && !found ? "시간 정보 없음" : null}
+                                  {registered ? `등록 ${registered}` : "등록 시간 정보 없음"}
+                                  {found ? ` · 습득 ${found}` : null}
                                 </p>
                               );
                             })()}

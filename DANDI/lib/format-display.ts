@@ -196,33 +196,63 @@ export function toApiDateTime(value: string | undefined | null): string {
   return new Date().toISOString();
 }
 
-/** 카드·목록용 등록·습득 시각 라벨 */
+/** 상세·관리 화면용 등록(created_at) 시각 — 습득은 별도 표시 */
+export function displayRegistrationDateTime(item: {
+  createdAt?: string | null;
+  time?: string | null;
+}): string {
+  const raw = item.createdAt?.trim();
+  if (!raw) return "";
+  return formatDateTimeLabel(raw) || raw;
+}
+
+/** 상세 화면용 습득 시각 (등록과 다를 때만) */
+export function displayFoundDateTime(item: {
+  foundAt?: string | null;
+  time?: string | null;
+  createdAt?: string | null;
+}): string {
+  const foundRaw = (item.foundAt ?? item.time)?.trim();
+  if (!foundRaw) return "";
+  const found = formatDateTimeLabel(foundRaw) || foundRaw;
+  const registered = displayRegistrationDateTime(item);
+  if (registered && found === registered) return "";
+  return found;
+}
+
+/** @deprecated 상세는 displayRegistrationDateTime / displayFoundDateTime 사용 */
 export function displayDateTimeLabels(item: {
   createdAt?: string;
   time?: string;
   foundAt?: string;
 }): { registered: string; found: string } {
-  const registered =
-    formatDateTimeLabel(item.createdAt) || item.createdAt?.trim() || "";
-  const found =
-    formatDateTimeLabel(item.foundAt ?? item.time) ||
-    item.foundAt?.trim() ||
-    item.time?.trim() ||
-    "";
+  const registered = displayRegistrationDateTime(item);
+  const found = displayFoundDateTime(item);
   return { registered, found };
 }
 
-/** 홈 카드용 한 줄 시각 (등록·습득 모두 표시) */
-export function formatCatalogTimeLine(item: {
-  createdAt?: string;
-  time?: string;
-  foundAt?: string;
-}): string {
-  const { registered, found } = displayDateTimeLabels(item);
-  if (registered && found && registered !== found) {
-    return `등록 ${registered} · 습득 ${found}`;
+/** 홈·검색 카드용 등록일(날짜만) — createdAt 우선, 없으면 날짜 정보 없음 */
+export function formatCatalogCardDate(item: { createdAt?: string; time?: string }): string {
+  const raw = item.createdAt?.trim();
+  if (!raw) return "날짜 정보 없음";
+  const ms = parseDateTimeMs(raw);
+  if (ms > 0) {
+    return new Date(ms).toLocaleDateString("ko-KR", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
   }
-  return registered || found || "시간 정보 없음";
+  const labeled = formatDateTimeLabel(raw) || raw;
+  const dateOnly = labeled.match(/^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/);
+  if (dateOnly) return `${dateOnly[1]}. ${dateOnly[2]}. ${dateOnly[3]}.`;
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  return labeled;
+}
+
+/** @deprecated formatCatalogCardDate 사용 */
+export function formatCatalogTimeLine(item: { createdAt?: string }): string {
+  return formatCatalogCardDate(item);
 }
 
 /**

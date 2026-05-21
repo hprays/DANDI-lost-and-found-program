@@ -7,6 +7,8 @@ import {
   pickRicherDateTimeLabel,
   sanitizeLocation,
 } from "@/lib/format-display";
+import { canonicalLostItemId, normalizeCatalogItemIdentity } from "@/lib/catalog-identity";
+import { enrichWithRegistrationMeta } from "@/lib/registration-meta";
 import { pickImageFromRaw, resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { imageForLocalStorage, safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
@@ -114,7 +116,7 @@ export function dedupePublishedCatalog(items: PublishedLostItem[]): PublishedLos
     const groupKey = existingGroup ?? (item.reportId ? `report:${item.reportId}` : `item:${item.id}`);
     const existing = groups.get(groupKey);
     const merged = existing ? mergePublishedItems(item, existing) : item;
-    groups.set(groupKey, merged);
+    groups.set(groupKey, normalizeCatalogItemIdentity(merged));
     linkAliases(groupKey, item);
     linkAliases(groupKey, merged);
   }
@@ -154,7 +156,7 @@ export function mergePublishedItems(
     secondary.image;
   const foundAt = pickRicherDateTimeLabel(primary.foundAt ?? primary.time, secondary.foundAt ?? secondary.time);
   const createdAt = pickRicherDateTimeLabel(primary.createdAt, secondary.createdAt);
-  return {
+  const merged: PublishedLostItem = {
     ...secondary,
     ...primary,
     image,
@@ -166,16 +168,20 @@ export function mergePublishedItems(
     type: primary.type ?? secondary.type,
     foundAt,
     createdAt,
-    time: foundAt || primary.time || secondary.time,
+    time: createdAt || foundAt || primary.time || secondary.time,
     reportId: primary.reportId ?? secondary.reportId,
+    id: canonicalLostItemId(primary, secondary),
   };
+  return merged;
 }
 
-export function reportToPublishedItem(report: LostReport): PublishedLostItem {
+/** 검수 완료 직후·API 미동기화 시에만 사용 — id는 lost_item PK가 확정되면 교체 */
+export function reportToPublishedItem(report: LostReport, lostItemId?: string): PublishedLostItem {
   const lostAtLabel = formatDateTimeLabel(report.lostAt) || report.lostAt;
   const createdLabel = formatDateTimeLabel(report.createdAt) || report.createdAt;
+  const catalogId = lostItemId?.trim() ? String(lostItemId) : `report-${report.id}`;
   return {
-    id: report.id,
+    id: catalogId,
     reportId: report.id,
     name: report.itemName,
     category: report.category,
@@ -247,10 +253,9 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
     "createdAt",
     "created_at",
     "registeredAt",
-    "registered_at",
-    "updatedAt",
-    "updated_at"
+    "registered_at"
   );
+  const reportIdRaw = raw.reportId ?? raw.report_id;
 
   const foundAt = foundAtRaw ? formatDateTimeLabel(foundAtRaw) || foundAtRaw : "";
   const createdAt = createdAtRaw ? formatDateTimeLabel(createdAtRaw) || createdAtRaw : undefined;
@@ -258,7 +263,7 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
 
   return {
     id: String(id),
-    reportId: raw.reportId != null ? String(raw.reportId) : undefined,
+    reportId: reportIdRaw != null ? String(reportIdRaw) : undefined,
     name,
     category,
     type: type && type !== category ? type : undefined,
@@ -270,4 +275,11 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
     storage,
     image: pickImageFromRaw(raw),
   };
+}
+
+/** API에 createdAt이 없을 때 로컬 등록 시각 복원 */
+export function finalizeCatalogItems(items: PublishedLostItem[]): PublishedLostItem[] {
+  return enrichWithRegistrationMeta(
+    dedupePublishedCatalog(items.map(normalizeCatalogItemIdentity))
+  ) as PublishedLostItem[];
 }
