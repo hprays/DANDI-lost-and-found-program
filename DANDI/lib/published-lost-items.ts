@@ -36,6 +36,9 @@ export type PublishedLostItem = {
   reportId?: string;
   createdAt?: string;
   foundAt?: string;
+  /** lost_item.status — STORED | ACQUIRED | PENDING_RECEIPT | RECEIVED */
+  catalogStatus?: string;
+  pickedUpAt?: string;
 };
 
 const PUBLISHED_KEY = "dandi.published.lostItems";
@@ -76,18 +79,22 @@ export function setPublishedLostItems(items: PublishedLostItem[]) {
 
   // 용량 초과 시 키를 비우고 메타데이터만 다시 저장 (UI 크래시 방지)
   safeRemoveLocalStorage(PUBLISHED_KEY);
-  const minimal = slim.map(({ id, name, category, place, time, reportId, storage, type, image, lostItemId }) => ({
-    id,
-    name,
-    category,
-    place,
-    time,
-    reportId,
-    storage,
-    type,
-    lostItemId,
-    image: resolveItemImageUrl(image) ?? imageForLocalStorage(image),
-  }));
+  const minimal = slim.map(
+    ({ id, name, category, place, time, reportId, storage, type, image, lostItemId, catalogStatus, pickedUpAt }) => ({
+      id,
+      name,
+      category,
+      place,
+      time,
+      reportId,
+      storage,
+      type,
+      lostItemId,
+      catalogStatus,
+      pickedUpAt,
+      image: resolveItemImageUrl(image) ?? imageForLocalStorage(image),
+    })
+  );
   safeSetLocalStorage(PUBLISHED_KEY, JSON.stringify(minimal));
 }
 
@@ -222,8 +229,27 @@ export function mergePublishedItems(
     reportId: primary.reportId ?? secondary.reportId ?? apiRow.reportId,
     id,
     lostItemId: lostItemId ?? (/^\d+$/.test(id) ? id : undefined),
+    catalogStatus: pickRicherCatalogStatus(primary.catalogStatus, secondary.catalogStatus),
+    pickedUpAt: pickRicherDateTimeLabel(primary.pickedUpAt, secondary.pickedUpAt) ?? primary.pickedUpAt ?? secondary.pickedUpAt,
   };
   return merged;
+}
+
+function catalogStatusRank(status?: string): number {
+  const s = String(status ?? "").trim().toUpperCase();
+  if (s === "RECEIVED" || s === "PICKED_UP") return 4;
+  if (s === "PENDING_RECEIPT") return 3;
+  if (s === "ACQUIRED" || s === "RESOLVED") return 2;
+  if (s === "STORED" || s === "PUBLISHED") return 1;
+  return 0;
+}
+
+export function pickRicherCatalogStatus(a?: string, b?: string): string | undefined {
+  const left = a?.trim();
+  const right = b?.trim();
+  if (!left) return right;
+  if (!right) return left;
+  return catalogStatusRank(left) >= catalogStatusRank(right) ? left : right;
 }
 
 /** 검수 완료 직후·API 미동기화 시에만 사용 — id는 lost_item PK가 확정되면 교체 */
@@ -244,26 +270,44 @@ export function reportToPublishedItem(report: LostReport, lostItemId?: string): 
     storage: report.storage ? sanitizeLocation(report.storage) : undefined,
     image: resolveDisplayImageUrl(report.image) ?? resolveItemImageUrl(report.image),
     createdAt: createdLabel,
+    catalogStatus: "ACQUIRED",
   };
 }
 
 export function enrichPublishedItemsWithReports(
   items: PublishedLostItem[],
-  reports: Array<{ id: string; image?: string; reportId?: string }>
+  reports: Array<{
+    id: string;
+    image?: string;
+    reportId?: string;
+    status?: string;
+    pickedUpAt?: string;
+  }>
 ): PublishedLostItem[] {
   const byId = new Map(reports.map((r) => [String(r.id), r]));
   return items.map((item) => {
-    const resolvedImage = resolveItemImageUrl(item.image);
-    if (resolvedImage && !resolvedImage.startsWith("data:")) {
-      return { ...item, image: resolvedImage };
-    }
     const linked =
       (item.reportId ? byId.get(String(item.reportId)) : undefined) ?? byId.get(String(item.id));
-    if (linked?.image) {
+    let next: PublishedLostItem = { ...item };
+    const resolvedImage = resolveItemImageUrl(item.image);
+    if (resolvedImage && !resolvedImage.startsWith("data:")) {
+      next = { ...next, image: resolvedImage };
+    } else if (linked?.image) {
       const fromReport = resolveDisplayImageUrl(linked.image) ?? resolveItemImageUrl(linked.image);
-      if (fromReport) return { ...item, image: fromReport };
+      if (fromReport) next = { ...next, image: fromReport };
     }
-    return { ...item, image: resolvedImage?.startsWith("data:") ? resolvedImage : undefined };
+    if (linked?.status === "resolved") {
+      next = { ...next, catalogStatus: pickRicherCatalogStatus(next.catalogStatus, "ACQUIRED") };
+    }
+    if (linked?.status === "picked_up") {
+      next = {
+        ...next,
+        catalogStatus: pickRicherCatalogStatus(next.catalogStatus, "RECEIVED"),
+        pickedUpAt:
+          formatDateTimeLabel(linked.pickedUpAt ?? "") || linked.pickedUpAt || next.pickedUpAt,
+      };
+    }
+    return next;
   });
 }
 
@@ -331,6 +375,7 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
     createdAt,
     storage,
     image: pickImageFromRaw(raw),
+    catalogStatus: readString(raw, "status", "itemStatus", "item_status")?.toUpperCase(),
   };
 }
 

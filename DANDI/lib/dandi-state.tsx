@@ -30,6 +30,7 @@ import {
   dedupePublishedCatalog,
   isSameCatalogItem,
   mergePublishedItems,
+  pickRicherCatalogStatus,
   removePublishedLostItem,
   removePublishedLostItemByTarget,
   reportToPublishedItem,
@@ -42,6 +43,7 @@ import {
   sortLostItemsNewestFirst,
 } from '@/lib/catalog-utils';
 import {
+  rememberCatalogStatus,
   rememberItemImage,
   rememberItemRegistrationTime,
   rememberItemTimes,
@@ -632,29 +634,36 @@ export function DandiStateProvider({
     invalidateRemoteLostItemsCache();
   }, []);
 
-  const removeLostItemAfterPickup = useCallback(
-    async (lostItemId: string) => {
+  /** 수령 인증 후 DB RECEIVED 유지 — DELETE·로컬 삭제 없음 */
+  const markLostItemReceivedAfterPickup = useCallback(
+    (lostItemId: string, usedAt?: string) => {
       if (!lostItemId) return;
       const hint = String(lostItemId);
       const pools = [...homeLostItemsRef.current, ...getPublishedLostItems()];
       const target = findCatalogItemByHint(hint, pools);
-      purgeCatalogItem(target ?? null, hint);
+      if (!target) return;
 
-      const serverId = target
-        ? resolveServerLostItemId(target, hint, pools)
-        : hint;
-      if (API_BASE_URL && getAuthSession()?.accessToken && /^\d+$/.test(serverId)) {
-        try {
-          await apiJson<object>(
-            `/api/lost-items/${encodeURIComponent(serverId)}`,
-            { method: 'DELETE' },
-          );
-        } catch {
-          // 화면에서는 이미 제거됨
-        }
-      }
+      const receivedLabel = usedAt
+        ? formatDateTimeLabel(usedAt) || usedAt
+        : shortDateTime();
+      const updated: PublishedLostItem = {
+        ...target,
+        catalogStatus: 'RECEIVED',
+        pickedUpAt: receivedLabel,
+      };
+
+      rememberCatalogStatus(target.id, 'RECEIVED', receivedLabel);
+      if (target.reportId) rememberCatalogStatus(target.reportId, 'RECEIVED', receivedLabel);
+      if (target.lostItemId) rememberCatalogStatus(target.lostItemId, 'RECEIVED', receivedLabel);
+
+      upsertPublishedLostItem(updated);
+      setHomeLostItems((prev) =>
+        prev.map((it) => (isSameCatalogItem(it, updated) ? updated : it)),
+      );
+      setCatalogVersion((v) => v + 1);
+      invalidateRemoteLostItemsCache();
     },
-    [purgeCatalogItem],
+    [],
   );
 
   const applyCatalogMerge = useCallback(
@@ -1140,11 +1149,13 @@ export function DandiStateProvider({
               ...mapped,
               createdAt: mapped.createdAt ?? createdAtDisplay,
               reportId: mapped.reportId ?? linkedReport,
+              catalogStatus: pickRicherCatalogStatus(mapped.catalogStatus, 'ACQUIRED'),
               image:
                 resolveDisplayImageUrl(mapped.image) ??
                 resolveItemImageUrl(mapped.image) ??
                 displayImage,
             };
+            rememberCatalogStatus(itemId, mapped.catalogStatus ?? 'ACQUIRED');
             const regIso = toApiDateTime(createdAtDisplay);
             const foundIso = toApiDateTime(lostAtDisplay);
             rememberItemTimes(itemId, { createdAt: regIso, foundAt: foundIso });
@@ -1278,11 +1289,16 @@ export function DandiStateProvider({
                 resolveItemImageUrl(resolvedReport.image),
             };
           }
-          published.createdAt = registeredLabel;
+          published = {
+            ...published,
+            createdAt: registeredLabel,
+            catalogStatus: 'ACQUIRED',
+          };
           rememberItemTimes(resolvedReport.id, {
             createdAt: registeredAtIso,
             foundAt: toApiDateTime(resolvedReport.lostAt),
           });
+          rememberCatalogStatus(resolvedReport.id, 'ACQUIRED');
           rememberItemImage(resolvedReport.id, published.image);
           upsertPublishedLostItem(published);
           setHomeLostItems((prev) =>
@@ -1350,7 +1366,12 @@ export function DandiStateProvider({
                     ...mapped,
                     id: postedId,
                     reportId: resolvedReport.id,
+                    catalogStatus: pickRicherCatalogStatus(
+                      mapped.catalogStatus,
+                      'ACQUIRED',
+                    ),
                   };
+                  rememberCatalogStatus(postedId, published.catalogStatus ?? 'ACQUIRED');
                   if (
                     !resolveItemImageUrl(published.image) &&
                     resolvedReport.image
@@ -1687,7 +1708,7 @@ export function DandiStateProvider({
           }
           const pickupLostId = String(pass.lostItemId ?? '').trim();
           if (pickupLostId) {
-            void removeLostItemAfterPickup(pickupLostId);
+            markLostItemReceivedAfterPickup(pickupLostId, usedAt);
           }
           invalidateRemoteLostItemsCache();
           scheduleHomeCatalogRefresh();
@@ -1917,7 +1938,6 @@ export function DandiStateProvider({
       appendLocalNotice,
       refreshReports,
       reports,
-      removeLostItemAfterPickup,
       pickupPasses,
     ],
   );

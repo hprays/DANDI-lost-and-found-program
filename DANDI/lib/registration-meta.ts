@@ -8,6 +8,8 @@ export type ItemTimeMeta = {
   createdAt?: string;
   foundAt?: string;
   imageUrl?: string;
+  catalogStatus?: string;
+  pickedUpAt?: string;
 };
 
 type MetaMap = Record<string, ItemTimeMeta>;
@@ -49,7 +51,20 @@ function mergeMetaEntry(existing: ItemTimeMeta | undefined, patch: ItemTimeMeta)
     createdAt: patch.createdAt ?? existing?.createdAt,
     foundAt: patch.foundAt ?? existing?.foundAt,
     imageUrl: patch.imageUrl ?? existing?.imageUrl,
+    catalogStatus: patch.catalogStatus ?? existing?.catalogStatus,
+    pickedUpAt: patch.pickedUpAt ?? existing?.pickedUpAt,
   };
+}
+
+export function rememberCatalogStatus(
+  itemId: string,
+  catalogStatus: string,
+  pickedUpAt?: string
+) {
+  rememberItemTimes(itemId, {
+    catalogStatus: catalogStatus.trim().toUpperCase(),
+    ...(pickedUpAt ? { pickedUpAt } : {}),
+  });
 }
 
 export function rememberItemImage(itemId: string, image?: string | null) {
@@ -95,13 +110,22 @@ function applyMetaToItem<
   const createdLabel = createdAt ? formatDateTimeLabel(createdAt) || createdAt : undefined;
   const foundLabel = foundAt ? formatDateTimeLabel(foundAt) || foundAt : undefined;
 
+  const itemExt = item as T & { catalogStatus?: string; pickedUpAt?: string };
+  const pickedUpLabel = merged.pickedUpAt
+    ? formatDateTimeLabel(merged.pickedUpAt) || merged.pickedUpAt
+    : itemExt.pickedUpAt
+      ? formatDateTimeLabel(itemExt.pickedUpAt) || itemExt.pickedUpAt
+      : undefined;
+
   return {
     ...item,
     createdAt: createdLabel ?? item.createdAt,
     foundAt: foundLabel ?? item.foundAt,
     time: createdLabel ?? foundLabel ?? item.time,
     image,
-  };
+    catalogStatus: itemExt.catalogStatus ?? merged.catalogStatus,
+    pickedUpAt: pickedUpLabel,
+  } as T;
 }
 
 /** API·새로고침 후에도 등록·습득 시각·사진 URL 유지 */

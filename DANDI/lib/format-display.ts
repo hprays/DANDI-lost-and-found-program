@@ -241,16 +241,33 @@ export function displayDateTimeLabels(item: {
   return { registered, found };
 }
 
+/** 홈 카드 — catalogStatus 라벨 (습득완료 / 수령완료 등) */
+export function catalogStatusDisplayLabel(status?: string | null): string | null {
+  const s = String(status ?? "").trim().toUpperCase();
+  if (s === "ACQUIRED" || s === "RESOLVED") return "습득완료";
+  if (s === "RECEIVED" || s === "PICKED_UP") return "수령완료";
+  if (s === "PENDING_RECEIPT") return "수령대기";
+  return null;
+}
+
 /** 홈·검색 카드용 시각 (등록 우선, 습득과 다르면 함께 표시) */
 export function formatCatalogTimeLine(item: {
   createdAt?: string | null;
   foundAt?: string | null;
   time?: string | null;
+  catalogStatus?: string | null;
 }): string {
   const registered = displayRegistrationDateTime(item);
   const found = displayFoundDateTime(item);
-  if (registered && found) return `등록 ${registered} · 습득 ${found}`;
-  return registered || found || "시간 정보 없음";
+  let base =
+    registered && found
+      ? `등록 ${registered} · 습득 ${found}`
+      : registered || found || "시간 정보 없음";
+  const statusLabel = catalogStatusDisplayLabel(item.catalogStatus);
+  if (statusLabel) {
+    base = base === "시간 정보 없음" ? statusLabel : `${base} · ${statusLabel}`;
+  }
+  return base;
 }
 
 /** 홈 카드용 등록일(날짜만) */
