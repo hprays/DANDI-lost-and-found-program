@@ -2,7 +2,7 @@
 
 import type { LostReport } from "@/lib/dandi-state";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
-import { pickImageFromRaw, resolveItemImageUrl } from "@/lib/media-url";
+import { pickImageFromRaw, resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { imageForLocalStorage, safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
 export type PublishedLostItem = {
@@ -173,7 +173,7 @@ export function reportToPublishedItem(report: LostReport): PublishedLostItem {
     time: lostAtLabel || createdLabel,
     foundAt: lostAtLabel,
     storage: report.storage ? sanitizeLocation(report.storage) : undefined,
-    image: resolveItemImageUrl(report.image),
+    image: resolveDisplayImageUrl(report.image) ?? resolveItemImageUrl(report.image),
     createdAt: createdLabel,
   };
 }
@@ -191,7 +191,7 @@ export function enrichPublishedItemsWithReports(
     const linked =
       (item.reportId ? byId.get(String(item.reportId)) : undefined) ?? byId.get(String(item.id));
     if (linked?.image) {
-      const fromReport = resolveItemImageUrl(linked.image);
+      const fromReport = resolveDisplayImageUrl(linked.image) ?? resolveItemImageUrl(linked.image);
       if (fromReport) return { ...item, image: fromReport };
     }
     return { ...item, image: resolvedImage?.startsWith("data:") ? resolvedImage : undefined };

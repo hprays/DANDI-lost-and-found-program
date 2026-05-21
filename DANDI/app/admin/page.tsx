@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { MAX_IMAGE_BYTES } from "@/lib/constants";
 import { applyLostItemAdminChanges, markLostItemDeleted, setLostItemOverride } from "@/lib/custom-lost-items";
 import { enrichPublishedItemsWithReports } from "@/lib/published-lost-items";
-import { resolveItemImageUrl } from "@/lib/media-url";
+import { resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { useDandiState, type LostReport, type PendingReportPatch } from "@/lib/dandi-state";
 import { attachStreamToVideo, requestCameraStream } from "@/lib/camera-stream";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
@@ -208,7 +208,7 @@ export default function AdminPage() {
     regStorageLocation.applyFromLocation(report.storage ?? report.location);
     setRegFoundAt(toDatetimeLocalValue(report.lostAt));
     setRegMemo(report.memo ?? "");
-    const image = resolveItemImageUrl(report.image) ?? null;
+    const image = resolveDisplayImageUrl(report.image) ?? null;
     setVisionPreview(image);
     setVisionDataUrl(image);
     setVisionFile(null);
@@ -309,7 +309,7 @@ export default function AdminPage() {
       location: regFoundLocation.composed,
       storage: regStorageLocation.composed,
       memo: regMemo.trim(),
-      image: visionDataUrl ?? undefined,
+      image: visionDataUrl ?? visionPreview ?? undefined,
     });
 
     if (!publishResult.ok) {
@@ -1298,12 +1298,15 @@ export default function AdminPage() {
               pendingReports.map((report) => (
                 <Card key={report.id}>
                   <CardContent className="space-y-3 p-4">
-                    {report.image ? (
-                      <div className="overflow-hidden rounded-lg border bg-slate-50">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={report.image} alt={report.itemName} className="mx-auto max-h-56 w-full object-contain" />
-                      </div>
-                    ) : null}
+                    {(() => {
+                      const pendingImg = resolveDisplayImageUrl(report.image);
+                      return pendingImg ? (
+                        <div className="overflow-hidden rounded-lg border bg-slate-50">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={pendingImg} alt={report.itemName} className="mx-auto max-h-56 w-full object-contain" />
+                        </div>
+                      ) : null;
+                    })()}
                     <div className="flex items-center justify-between">
                       <p className="font-semibold">{report.itemName}</p>
                       <Badge>{report.category}</Badge>

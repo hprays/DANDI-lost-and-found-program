@@ -16,6 +16,7 @@ import {
   type PublishedLostItem,
 } from "@/lib/published-lost-items";
 import { fetchRemoteLostItems, sortLostItemsNewestFirst } from "@/lib/catalog-utils";
+import { postLostItemCreate, postReportCreate } from "@/lib/api-upload";
 import { apiJson, getApiBaseUrl, patchReportDetails, patchReportStatus } from "@/lib/api-json";
 import {
   formatDateTimeLabel,
@@ -24,7 +25,13 @@ import {
   toApiDateTime,
 } from "@/lib/format-display";
 import { normalizePickupToken } from "@/lib/pickup-token";
-import { apiImageFields, pickImageFromRaw, resolveItemImageUrl, resolveMediaUrl } from "@/lib/media-url";
+import {
+  apiImageFields,
+  pickImageFromRaw,
+  resolveDisplayImageUrl,
+  resolveItemImageUrl,
+  resolveMediaUrl,
+} from "@/lib/media-url";
 import { compactDandiLocalStorage, imageForLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 import { getStoredLocalNotices, setStoredLocalNotices } from "@/lib/user-preferences";
 
@@ -160,17 +167,29 @@ function mergeReportRecords(existing: LostReport, incoming: LostReport): LostRep
     ...secondary,
     ...primary,
     status: keepExistingStatus ? existing.status : incoming.status,
-    image: primary.image ?? secondary.image,
+    image:
+      resolveDisplayImageUrl(primary.image) ??
+      resolveDisplayImageUrl(secondary.image) ??
+      primary.image ??
+      secondary.image,
     ownerName: primary.ownerName ?? secondary.ownerName,
     ownerEmail: primary.ownerEmail ?? secondary.ownerEmail,
   };
+}
+
+function imageForReportStorage(image?: string): string | undefined {
+  if (!image?.trim()) return undefined;
+  if (image.startsWith("data:")) {
+    return image.length <= 700_000 ? image : undefined;
+  }
+  return imageForLocalStorage(image) ?? image;
 }
 
 function persistReportsLocal(reports: LostReport[]) {
   if (typeof window === "undefined") return;
   const slim = reports.slice(0, 120).map((r) => ({
     ...r,
-    image: imageForLocalStorage(r.image),
+    image: imageForReportStorage(r.image),
   }));
   safeSetLocalStorage(REPORTS_LOCAL_KEY, JSON.stringify(slim));
 }
@@ -307,14 +326,16 @@ function extractReportList(payload: unknown): LostReport[] {
     .filter((row): row is LostReport => row !== null);
 }
 
-async function publishLostItemToApi(report: LostReport): Promise<{ id?: string; lostItemId?: string } | void> {
+async function publishLostItemToApi(
+  report: LostReport,
+  imageSource?: string | null
+): Promise<{ id?: string; lostItemId?: string } | void> {
   if (!API_BASE_URL) return;
   const foundAtIso = toApiDateTime(report.lostAt);
   const createdAtIso = nowISO();
-  const imageFields = apiImageFields(report.image);
-  return apiJson<{ id?: string; lostItemId?: string; message?: string }>("/api/lost-items", {
-    method: "POST",
-    body: JSON.stringify({
+  const image = imageSource ?? report.image;
+  const data = await postLostItemCreate(
+    {
       reportId: report.id,
       name: report.itemName,
       itemName: report.itemName,
@@ -329,20 +350,21 @@ async function publishLostItemToApi(report: LostReport): Promise<{ id?: string; 
       memo: report.memo,
       itemType: report.itemType,
       storage: report.storage,
-      ...imageFields,
       status: "published",
-    }),
-  });
+    },
+    image
+  );
+  return data;
 }
 
 async function publishAdminLostItemToApi(
-  payload: Omit<LostReport, "id" | "status" | "createdAt">
+  payload: Omit<LostReport, "id" | "status" | "createdAt">,
+  imageSource?: string | null
 ): Promise<{ id?: string; lostItemId?: string; message?: string } & Record<string, unknown>> {
   const foundAtIso = toApiDateTime(payload.lostAt);
   const createdAtIso = nowISO();
-  return apiJson("/api/lost-items", {
-    method: "POST",
-    body: JSON.stringify({
+  return postLostItemCreate(
+    {
       name: payload.itemName,
       itemName: payload.itemName,
       category: payload.category,
@@ -356,10 +378,10 @@ async function publishAdminLostItemToApi(
       memo: payload.memo,
       itemType: payload.itemType,
       storage: payload.storage,
-      ...apiImageFields(payload.image),
       status: "published",
-    }),
-  });
+    },
+    imageSource ?? payload.image
+  );
 }
 
 function normalizePendingPatch(patch: PendingReportPatch): PendingReportPatch {
@@ -367,7 +389,7 @@ function normalizePendingPatch(patch: PendingReportPatch): PendingReportPatch {
   if (next.location != null) next.location = sanitizeLocation(next.location);
   if (next.storage != null) next.storage = sanitizeLocation(next.storage);
   if (next.lostAt != null) next.lostAt = formatDateTimeLabel(next.lostAt) || next.lostAt;
-  if (next.image != null) next.image = resolveItemImageUrl(next.image);
+  if (next.image != null) next.image = resolveDisplayImageUrl(next.image) ?? next.image;
   return next;
 }
 
@@ -451,11 +473,17 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         return !pendingIds.has(reportKey);
       })
       .forEach((item) => {
-        collected.push({ ...item, image: resolveItemImageUrl(item.image) ?? item.image });
+        collected.push({
+          ...item,
+          image: resolveDisplayImageUrl(item.image) ?? resolveItemImageUrl(item.image) ?? item.image,
+        });
       });
 
     getPublishedLostItems().forEach((item) => {
-      collected.push({ ...item, image: resolveItemImageUrl(item.image) ?? item.image });
+      collected.push({
+        ...item,
+        image: resolveDisplayImageUrl(item.image) ?? resolveItemImageUrl(item.image) ?? item.image,
+      });
     });
 
     reportList
@@ -663,32 +691,37 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           undefined;
         const lostAtDisplay = formatDateTimeLabel(payload.lostAt) || payload.lostAt;
         const lostAtIso = toApiDateTime(payload.lostAt);
+        const displayImage = resolveDisplayImageUrl(payload.image) ?? payload.image?.trim();
         const normalizedPayload = {
           ...payload,
           location: sanitizeLocation(payload.location),
           lostAt: lostAtDisplay,
           storage: payload.storage ? sanitizeLocation(payload.storage) : payload.storage,
-          image: resolveItemImageUrl(payload.image),
+          image: displayImage,
         };
         try {
-          const data = await apiJson<Record<string, unknown>>("/api/reports", {
-            method: "POST",
-            body: JSON.stringify({
-              ...normalizedPayload,
+          const data = await postReportCreate(
+            {
+              itemName: normalizedPayload.itemName,
+              category: normalizedPayload.category,
+              location: normalizedPayload.location,
+              place: normalizedPayload.location,
+              storage: normalizedPayload.storage,
+              memo: normalizedPayload.memo,
               lostAt: lostAtIso,
               foundAt: lostAtIso,
               ownerEmail,
               ownerName,
               reporterName: ownerName,
               reporterEmail: ownerEmail,
-              ...apiImageFields(normalizedPayload.image),
-            }),
-          });
+            },
+            payload.image
+          );
           const reportId = String(data.id ?? data.reportId ?? `r-${Date.now()}`);
           const report: LostReport = {
             id: reportId,
             ...normalizedPayload,
-            image: pickImageFromRaw(data) ?? normalizedPayload.image ?? undefined,
+            image: pickImageFromRaw(data) ?? displayImage ?? undefined,
             status: normalizeReportStatus(data.status),
             createdAt: formatDateTimeLabel(String(data.createdAt ?? "")) || shortDateTime(),
             ownerEmail,
@@ -747,12 +780,13 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
       publishAdminLostItem: async (payload) => {
         const lostAtDisplay = formatDateTimeLabel(payload.lostAt) || payload.lostAt;
         const createdAtDisplay = shortDateTime();
+        const displayImage = resolveDisplayImageUrl(payload.image) ?? payload.image?.trim();
         const normalizedPayload = {
           ...payload,
           location: sanitizeLocation(payload.location),
           lostAt: lostAtDisplay,
           storage: payload.storage ? sanitizeLocation(payload.storage) : payload.storage,
-          image: resolveItemImageUrl(payload.image),
+          image: displayImage,
         };
 
         const buildLocalItem = (id: string): PublishedLostItem => ({
@@ -771,13 +805,13 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
         if (API_BASE_URL && getAuthSession()?.accessToken) {
           try {
-            const data = await publishAdminLostItemToApi(normalizedPayload);
+            const data = await publishAdminLostItemToApi(normalizedPayload, payload.image);
             const itemId = String(data.id ?? data.lostItemId ?? `adm-${Date.now()}`);
             let mapped =
               mapApiLostItem({ ...data, id: itemId, ...normalizedPayload, itemName: normalizedPayload.itemName }) ??
               buildLocalItem(itemId);
-            if (!resolveItemImageUrl(mapped.image) && normalizedPayload.image) {
-              mapped = { ...mapped, image: normalizedPayload.image };
+            if (!resolveDisplayImageUrl(mapped.image) && displayImage) {
+              mapped = { ...mapped, image: displayImage };
             }
             upsertPublishedLostItem(mapped);
             setHomeLostItems((prev) =>
@@ -789,7 +823,6 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               )
             );
             setCatalogVersion((v) => v + 1);
-            scheduleHomeCatalogRefresh();
             setAdminAuditLogs((prev) => [
               {
                 id: `a-${Date.now()}`,
@@ -944,7 +977,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           );
           setCatalogVersion((v) => v + 1);
           try {
-            const posted = await publishLostItemToApi(resolvedReport);
+            const posted = await publishLostItemToApi(resolvedReport, resolvedReport.image);
             const postedId = posted?.id ?? posted?.lostItemId;
             if (postedId && String(postedId) !== String(published.id)) {
               const withServerId = { ...published, id: String(postedId), reportId: resolvedReport.id };

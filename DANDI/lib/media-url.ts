@@ -39,6 +39,14 @@ export function resolveItemImageUrl(value: string | undefined | null): string | 
   return resolveMediaUrl(value);
 }
 
+/** 화면 표시용 — data URL·업로드 직후 미리보기 포함 (localStorage 백업용) */
+export function resolveDisplayImageUrl(value: string | undefined | null): string | undefined {
+  if (!value?.trim()) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.startsWith("data:")) return trimmed;
+  return resolveItemImageUrl(trimmed);
+}
+
 function pickImageValue(value: unknown): string | undefined {
   if (typeof value === "string" && value.trim()) {
     return resolveMediaUrl(value);

@@ -12,6 +12,7 @@ import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
 import { useDandiState } from "@/lib/dandi-state";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import { resolveDisplayImageUrl } from "@/lib/media-url";
 import { MAX_IMAGE_BYTES } from "@/lib/constants";
 import { categories } from "@/lib/mock-data";
 
@@ -218,12 +219,15 @@ export default function RegisterItemPage() {
               .filter((report) => report.status === "pending")
               .map((report) => (
                 <div key={report.id} className="flex items-center justify-between gap-3 rounded-xl border p-3 text-sm">
-                  {report.image ? (
-                    <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-slate-50">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={report.image} alt={report.itemName} className="h-full w-full object-contain" />
-                    </div>
-                  ) : null}
+                  {(() => {
+                    const thumb = resolveDisplayImageUrl(report.image);
+                    return thumb ? (
+                      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-slate-50">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={thumb} alt={report.itemName} className="h-full w-full object-contain" />
+                      </div>
+                    ) : null;
+                  })()}
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold">{report.itemName}</p>
                     <p className="text-muted-foreground">
