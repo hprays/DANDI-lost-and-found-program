@@ -45,7 +45,10 @@ const MAX_STORED_ITEMS = 200;
 function sanitizePublishedForStorage(item: PublishedLostItem): PublishedLostItem {
   return {
     ...item,
-    image: imageForLocalStorage(item.image),
+    image:
+      resolveItemImageUrl(item.image) ??
+      resolveDisplayImageUrl(item.image) ??
+      imageForLocalStorage(item.image),
     memo: item.memo && item.memo.length > 500 ? `${item.memo.slice(0, 500)}…` : item.memo,
   };
 }
@@ -73,7 +76,7 @@ export function setPublishedLostItems(items: PublishedLostItem[]) {
 
   // 용량 초과 시 키를 비우고 메타데이터만 다시 저장 (UI 크래시 방지)
   safeRemoveLocalStorage(PUBLISHED_KEY);
-  const minimal = slim.map(({ id, name, category, place, time, reportId, storage, type }) => ({
+  const minimal = slim.map(({ id, name, category, place, time, reportId, storage, type, image, lostItemId }) => ({
     id,
     name,
     category,
@@ -82,6 +85,8 @@ export function setPublishedLostItems(items: PublishedLostItem[]) {
     reportId,
     storage,
     type,
+    lostItemId,
+    image: resolveItemImageUrl(image) ?? imageForLocalStorage(image),
   }));
   safeSetLocalStorage(PUBLISHED_KEY, JSON.stringify(minimal));
 }
@@ -89,11 +94,30 @@ export function setPublishedLostItems(items: PublishedLostItem[]) {
 /** 같은 신고·분실물을 id/reportId 조합으로 판별 */
 export function isSameCatalogItem(a: PublishedLostItem, b: PublishedLostItem): boolean {
   if (String(a.id) === String(b.id)) return true;
+  const aLost = a.lostItemId ? String(a.lostItemId) : null;
+  const bLost = b.lostItemId ? String(b.lostItemId) : null;
+  if (aLost && (aLost === String(b.id) || aLost === bLost)) return true;
+  if (bLost && (bLost === String(a.id) || bLost === aLost)) return true;
   const aReport = a.reportId ? String(a.reportId) : null;
   const bReport = b.reportId ? String(b.reportId) : null;
   if (aReport && (aReport === String(b.id) || aReport === bReport)) return true;
   if (bReport && (bReport === String(a.id) || bReport === aReport)) return true;
   return false;
+}
+
+/** 삭제·수령 시 id / lostItemId / reportId 전부 수집 */
+export function collectCatalogAliasIds(item: {
+  id: string;
+  lostItemId?: string;
+  reportId?: string;
+}): string[] {
+  return Array.from(
+    new Set(
+      [item.id, item.lostItemId, item.reportId]
+        .map((v) => String(v ?? "").trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 /** reportId·lostItemId가 달라도 홈에 카드 1장만 */
@@ -147,9 +171,21 @@ export function upsertPublishedLostItem(item: PublishedLostItem) {
 
 export function removePublishedLostItem(id: string) {
   const targetId = String(id);
-  const next = getPublishedLostItems().filter(
-    (it) => String(it.id) !== targetId && String(it.reportId ?? "") !== targetId
-  );
+  const next = getPublishedLostItems().filter((it) => {
+    if (String(it.id) === targetId) return false;
+    if (String(it.lostItemId ?? "") === targetId) return false;
+    if (String(it.reportId ?? "") === targetId) return false;
+    return true;
+  });
+  setPublishedLostItems(next);
+  return next;
+}
+
+/** 로컬 published 캐시에서 동일 카드 전부 제거 */
+export function removePublishedLostItemByTarget(
+  target: PublishedLostItem | { id: string; lostItemId?: string; reportId?: string }
+) {
+  const next = getPublishedLostItems().filter((it) => !isSameCatalogItem(it, target as PublishedLostItem));
   setPublishedLostItems(next);
   return next;
 }

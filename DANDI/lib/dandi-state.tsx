@@ -16,6 +16,7 @@ import {
   getDeletedLostItemIds,
   isLostItemMarkedDeleted,
   markLostItemDeleted,
+  markLostItemDeletedForTarget,
 } from '@/lib/custom-lost-items';
 import {
   findCatalogItemByHint,
@@ -30,6 +31,7 @@ import {
   isSameCatalogItem,
   mergePublishedItems,
   removePublishedLostItem,
+  removePublishedLostItemByTarget,
   reportToPublishedItem,
   upsertPublishedLostItem,
   type PublishedLostItem,
@@ -461,15 +463,46 @@ async function publishAdminLostItemToApi(
   payload: Omit<LostReport, 'id' | 'status' | 'createdAt'>,
   imageSource?: string | null,
 ): Promise<
-  { id?: string; lostItemId?: string; message?: string } & Record<
+  { id?: string; lostItemId?: string; reportId?: string; message?: string } & Record<
     string,
     unknown
   >
 > {
   const foundAtIso = toApiDateTime(payload.lostAt);
   const createdAtIso = nowISO();
-  return postLostItemCreate(
+  const image = imageSource ?? payload.image;
+  let linkedReportId: string | undefined;
+
+  try {
+    const reportData = await postReportCreate(
+      {
+        itemName: payload.itemName,
+        category: payload.category,
+        location: payload.location,
+        place: payload.location,
+        storage: payload.storage,
+        memo: payload.memo,
+        lostAt: foundAtIso,
+        foundAt: foundAtIso,
+      },
+      image,
+    );
+    const rid = String(reportData.id ?? reportData.reportId ?? reportData.report_id ?? '').trim();
+    if (/^\d+$/.test(rid)) {
+      linkedReportId = rid;
+      try {
+        await patchReportStatus(rid, 'resolved');
+      } catch {
+        // lost_item 등록 시 reportId만 연결해도 됨
+      }
+    }
+  } catch {
+    // 신고 생성 실패 시 분실물만 등록
+  }
+
+  const data = await postLostItemCreate(
     {
+      reportId: linkedReportId,
       name: payload.itemName,
       itemName: payload.itemName,
       category: payload.category,
@@ -485,8 +518,16 @@ async function publishAdminLostItemToApi(
       storage: payload.storage,
       status: 'published',
     },
-    imageSource ?? payload.image,
+    image,
   );
+  const rawReportId = data.reportId ?? data.report_id ?? linkedReportId;
+  return {
+    ...data,
+    reportId:
+      rawReportId != null && String(rawReportId).trim()
+        ? String(rawReportId).trim()
+        : linkedReportId,
+  };
 }
 
 function normalizePendingPatch(patch: PendingReportPatch): PendingReportPatch {
@@ -570,25 +611,51 @@ export function DandiStateProvider({
     );
   }, [pickupPasses]);
 
-  const removeLostItemAfterPickup = useCallback(async (lostItemId: string) => {
-    if (!lostItemId) return;
-    markLostItemDeleted(lostItemId);
-    removePublishedLostItem(lostItemId);
-    setHomeLostItems((prev) =>
-      prev.filter((it) => String(it.id) !== String(lostItemId)),
-    );
-    setCatalogVersion((v) => v + 1);
-    if (API_BASE_URL && getAuthSession()?.accessToken) {
-      try {
-        await apiJson<object>(
-          `/api/lost-items/${encodeURIComponent(lostItemId)}`,
-          { method: 'DELETE' },
-        );
-      } catch {
-        // 삭제 API 미구현 시 화면만 반영
-      }
+  const purgeCatalogItem = useCallback((target: PublishedLostItem | null, hintId: string) => {
+    if (target) {
+      markLostItemDeletedForTarget(target);
+      removePublishedLostItemByTarget(target);
+      setHomeLostItems((prev) => prev.filter((it) => !isSameCatalogItem(it, target)));
+    } else {
+      markLostItemDeleted(hintId);
+      removePublishedLostItem(hintId);
+      setHomeLostItems((prev) =>
+        prev.filter(
+          (it) =>
+            String(it.id) !== hintId &&
+            String(it.lostItemId ?? '') !== hintId &&
+            String(it.reportId ?? '') !== hintId,
+        ),
+      );
     }
+    setCatalogVersion((v) => v + 1);
+    invalidateRemoteLostItemsCache();
   }, []);
+
+  const removeLostItemAfterPickup = useCallback(
+    async (lostItemId: string) => {
+      if (!lostItemId) return;
+      const hint = String(lostItemId);
+      const pools = [...homeLostItemsRef.current, ...getPublishedLostItems()];
+      const target = findCatalogItemByHint(hint, pools);
+      purgeCatalogItem(target ?? null, hint);
+
+      const serverId = target
+        ? resolveServerLostItemId(target, hint, pools)
+        : hint;
+      if (API_BASE_URL && getAuthSession()?.accessToken && /^\d+$/.test(serverId)) {
+        try {
+          await apiJson<object>(
+            `/api/lost-items/${encodeURIComponent(serverId)}`,
+            { method: 'DELETE' },
+          );
+        } catch {
+          // 화면에서는 이미 제거됨
+        }
+      }
+    },
+    [purgeCatalogItem],
+  );
 
   const applyCatalogMerge = useCallback(
     (reportList: LostReport[], remoteItems: PublishedLostItem[]) => {
@@ -603,8 +670,11 @@ export function DandiStateProvider({
 
       remoteItems
         .filter((item) => {
-          if (isLostItemMarkedDeleted(item) || deletedIds.has(String(item.id)))
-            return false;
+          if (isLostItemMarkedDeleted(item)) return false;
+          const aliases = [item.id, item.lostItemId, item.reportId]
+            .map((v) => String(v ?? '').trim())
+            .filter(Boolean);
+          if (aliases.some((key) => deletedIds.has(key))) return false;
           if (!item.reportId) return true;
           const linked = reportList.find(
             (r) => String(r.id) === String(item.reportId),
@@ -626,17 +696,20 @@ export function DandiStateProvider({
           });
         });
 
-      const remoteIdSet = new Set(remoteItems.map((item) => String(item.id)));
-      const remoteReportSet = new Set(
-        remoteItems
-          .map((item) => (item.reportId ? String(item.reportId) : ''))
-          .filter(Boolean),
-      );
+      const remoteKeys = new Set<string>();
+      remoteItems.forEach((item) => {
+        [item.id, item.lostItemId, item.reportId]
+          .map((v) => String(v ?? '').trim())
+          .filter(Boolean)
+          .forEach((key) => remoteKeys.add(key));
+      });
 
       getPublishedLostItems().forEach((item) => {
         if (isLostItemMarkedDeleted(item)) return;
-        if (remoteIdSet.has(String(item.id))) return;
-        if (item.reportId && remoteReportSet.has(String(item.reportId))) return;
+        const localKeys = [item.id, item.lostItemId, item.reportId]
+          .map((v) => String(v ?? '').trim())
+          .filter(Boolean);
+        if (localKeys.some((key) => remoteKeys.has(key))) return;
         collected.push({
           ...item,
           image:
@@ -1057,16 +1130,21 @@ export function DandiStateProvider({
                 ...normalizedPayload,
                 itemName: normalizedPayload.itemName,
               }) ?? buildLocalItem(itemId);
+            const linkedReport =
+              data.reportId != null
+                ? String(data.reportId)
+                : data.report_id != null
+                  ? String(data.report_id)
+                  : undefined;
             mapped = {
               ...mapped,
               createdAt: mapped.createdAt ?? createdAtDisplay,
-              reportId:
-                mapped.reportId ??
-                (data.reportId != null ? String(data.reportId) : undefined),
+              reportId: mapped.reportId ?? linkedReport,
+              image:
+                resolveDisplayImageUrl(mapped.image) ??
+                resolveItemImageUrl(mapped.image) ??
+                displayImage,
             };
-            if (!resolveDisplayImageUrl(mapped.image) && displayImage) {
-              mapped = { ...mapped, image: displayImage };
-            }
             const regIso = toApiDateTime(createdAtDisplay);
             const foundIso = toApiDateTime(lostAtDisplay);
             rememberItemTimes(itemId, { createdAt: regIso, foundAt: foundIso });
@@ -1440,24 +1518,35 @@ export function DandiStateProvider({
         const serverId = target
           ? resolveServerLostItemId(target, normalizedId, pools)
           : normalizedId;
-        const idsToDrop = new Set<string>([normalizedId, serverId]);
-        if (target?.reportId) idsToDrop.add(String(target.reportId));
         if (target) {
-          idsToDrop.add(String(target.lostItemId ?? ''));
-          idsToDrop.add(String(target.id));
+          markLostItemDeletedForTarget(target);
+          removePublishedLostItemByTarget(target);
+          clearLostItemOverridesForIds([
+            target.id,
+            target.lostItemId,
+            target.reportId,
+            serverId,
+            normalizedId,
+          ]);
+          deleteCustomLostItem(target.id);
+          setHomeLostItems((prev) => prev.filter((it) => !isSameCatalogItem(it, target)));
+        } else {
+          markLostItemDeleted(normalizedId);
+          markLostItemDeleted(serverId);
+          removePublishedLostItem(normalizedId);
+          removePublishedLostItem(serverId);
+          clearLostItemOverridesForIds([normalizedId, serverId]);
+          deleteCustomLostItem(normalizedId);
+          setHomeLostItems((prev) =>
+            prev.filter(
+              (it) =>
+                String(it.id) !== normalizedId &&
+                String(it.id) !== serverId &&
+                String(it.lostItemId ?? '') !== serverId &&
+                String(it.reportId ?? '') !== normalizedId,
+            ),
+          );
         }
-        idsToDrop.forEach((id) => markLostItemDeleted(id));
-        clearLostItemOverridesForIds(Array.from(idsToDrop));
-        idsToDrop.forEach((id) => deleteCustomLostItem(id));
-        idsToDrop.forEach((id) => removePublishedLostItem(id));
-        setHomeLostItems((prev) =>
-          prev.filter(
-            (it) =>
-              !isLostItemMarkedDeleted(it) &&
-              !idsToDrop.has(String(it.id)) &&
-              !(target && isSameCatalogItem(it, target)),
-          ),
-        );
         setCatalogVersion((v) => v + 1);
         invalidateRemoteLostItemsCache();
 
@@ -1596,8 +1685,9 @@ export function DandiStateProvider({
               ),
             );
           }
-          if (pass.lostItemId) {
-            void removeLostItemAfterPickup(pass.lostItemId);
+          const pickupLostId = String(pass.lostItemId ?? '').trim();
+          if (pickupLostId) {
+            void removeLostItemAfterPickup(pickupLostId);
           }
           invalidateRemoteLostItemsCache();
           scheduleHomeCatalogRefresh();
@@ -1642,7 +1732,10 @@ export function DandiStateProvider({
 
           const usedAt = data.usedAt ?? shortDateTime();
           const lostItemIdFromApi = String(
-            data.lostItemId ?? data.reportId ?? localPass?.lostItemId ?? '',
+            data.lostItemId ??
+              (/^\d+$/.test(String(data.reportId ?? '')) ? data.reportId : '') ??
+              localPass?.lostItemId ??
+              '',
           );
           const merged: PickupPass = {
             id: localPass?.id ?? `p-${Date.now()}`,

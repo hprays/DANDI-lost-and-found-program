@@ -133,11 +133,28 @@ export function markLostItemDeleted(id: string) {
   safeSetLocalStorage(LOST_ITEM_DELETED_IDS_KEY, JSON.stringify(Array.from(current).slice(0, 200)));
 }
 
-export function isLostItemMarkedDeleted(item: { id: string; reportId?: string }): boolean {
+export function isLostItemMarkedDeleted(item: {
+  id: string;
+  reportId?: string;
+  lostItemId?: string;
+}): boolean {
   const deleted = new Set(getDeletedLostItemIds());
-  if (deleted.has(String(item.id))) return true;
-  if (item.reportId && deleted.has(String(item.reportId))) return true;
-  return false;
+  const aliases = [item.id, item.lostItemId, item.reportId]
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean);
+  return aliases.some((key) => deleted.has(key));
+}
+
+/** 삭제 표시 — id / lostItemId / reportId 모두 기록 */
+export function markLostItemDeletedForTarget(item: {
+  id: string;
+  reportId?: string;
+  lostItemId?: string;
+}) {
+  const aliases = [item.id, item.lostItemId, item.reportId]
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean);
+  aliases.forEach((id) => markLostItemDeleted(id));
 }
 
 export function applyLostItemAdminChanges<T extends { id: string; reportId?: string }>(
