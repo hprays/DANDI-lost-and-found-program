@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { ChevronLeft, ChevronRight, CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -35,16 +35,11 @@ function getVisiblePages(current: number, total: number): Array<number | "ellips
 }
 
 export default function HomePage() {
-  const { homeLostItems, catalogLoading, refreshHomeCatalog } = useDandiState();
+  const { homeLostItems, catalogLoading } = useDandiState();
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [selectedBuilding, setSelectedBuilding] = useState<string>("전체");
   const [searchKeyword, setSearchKeyword] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
-
-  useEffect(() => {
-    void refreshHomeCatalog();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 홈 진입 시 1회만 목록 로드
-  }, []);
 
   const mergedItems = useMemo(() => {
     const published = applyLostItemAdminChanges(homeLostItems);
@@ -193,18 +188,18 @@ export default function HomePage() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          {catalogLoading ? (
+          {catalogLoading && mergedItems.length === 0 ? (
             <div className="md:col-span-2 flex items-center justify-center gap-2 rounded-xl border bg-white p-8 text-sm text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
               분실물 목록을 불러오는 중…
             </div>
           ) : null}
-          {!catalogLoading && filteredItems.length === 0 ? (
+          {(!catalogLoading || mergedItems.length > 0) && filteredItems.length === 0 ? (
             <div className="md:col-span-2 rounded-xl border bg-white p-6 text-center text-sm text-muted-foreground">
               습득 완료 처리된 분실물만 표시됩니다. 관리자 검수 후 목록에 노출됩니다.
             </div>
           ) : null}
-          {!catalogLoading
+          {(!catalogLoading || mergedItems.length > 0)
             ? paginatedItems.map((item) => {
             const timeLabel = formatCatalogTimeLine(item);
             return (

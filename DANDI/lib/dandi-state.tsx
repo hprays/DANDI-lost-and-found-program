@@ -22,7 +22,11 @@ import {
   upsertPublishedLostItem,
   type PublishedLostItem,
 } from "@/lib/published-lost-items";
-import { fetchRemoteLostItems, sortLostItemsNewestFirst } from "@/lib/catalog-utils";
+import {
+  fetchRemoteLostItems,
+  invalidateRemoteLostItemsCache,
+  sortLostItemsNewestFirst,
+} from "@/lib/catalog-utils";
 import { rememberItemRegistrationTime, rememberItemTimes } from "@/lib/registration-meta";
 import { postLostItemCreate, postReportCreate } from "@/lib/api-upload";
 import { apiJson, getApiBaseUrl, patchReportDetails, patchReportStatus } from "@/lib/api-json";
@@ -537,8 +541,15 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
         });
       });
 
+    const remoteIdSet = new Set(remoteItems.map((item) => String(item.id)));
+    const remoteReportSet = new Set(
+      remoteItems.map((item) => (item.reportId ? String(item.reportId) : "")).filter(Boolean)
+    );
+
     getPublishedLostItems().forEach((item) => {
       if (isLostItemMarkedDeleted(item)) return;
+      if (remoteIdSet.has(String(item.id))) return;
+      if (item.reportId && remoteReportSet.has(String(item.reportId))) return;
       collected.push({
         ...item,
         image: resolveDisplayImageUrl(item.image) ?? resolveItemImageUrl(item.image) ?? item.image,
@@ -908,7 +919,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               )
             );
             setCatalogVersion((v) => v + 1);
-            void refreshReportsList();
+            scheduleReportsSync();
             setAdminAuditLogs((prev) => [
               {
                 id: `a-${Date.now()}`,
@@ -1170,7 +1181,11 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
         if (API_BASE_URL && getAuthSession()?.accessToken) {
           try {
-            const serverId = await resolveServerLostItemId(target, normalizedId);
+            const serverId = resolveServerLostItemId(
+              target,
+              normalizedId,
+              homeLostItemsRef.current
+            );
             const data = await apiJson<Record<string, unknown>>(
               `/api/lost-items/${encodeURIComponent(serverId)}`,
               {
@@ -1207,7 +1222,9 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
                 )
               )
             );
+            invalidateRemoteLostItemsCache();
             setCatalogVersion((v) => v + 1);
+            scheduleHomeCatalogRefresh();
             return { ok: true, message: "서버에 반영되어 저장되었습니다." };
           } catch (error) {
             return {
@@ -1243,11 +1260,16 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
         if (API_BASE_URL && getAuthSession()?.accessToken) {
           try {
-            const serverId = await resolveServerLostItemId(target, normalizedId);
+            const serverId = resolveServerLostItemId(
+              target,
+              normalizedId,
+              homeLostItemsRef.current
+            );
             await apiJson<object>(`/api/lost-items/${encodeURIComponent(serverId)}`, {
               method: "DELETE",
             });
             idsToDrop.add(serverId);
+            invalidateRemoteLostItemsCache();
           } catch (error) {
             const message = error instanceof Error ? error.message : "";
             const alreadyGone =
@@ -1332,13 +1354,14 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           });
           return finalize(pass, data.message ?? "수령 QR이 발급되었습니다.");
         } catch (error) {
-          const pass = buildPass();
-          return finalize(
-            pass,
-            error instanceof Error
-              ? `백엔드 연동 실패로 QR을 임시 발급했습니다. (${error.message})`
-              : "백엔드 연동 실패로 QR을 임시 발급했습니다."
-          );
+          return {
+            ok: false,
+            message:
+              error instanceof Error
+                ? `QR 발급에 실패했습니다. (${error.message})`
+                : "QR 발급에 실패했습니다.",
+            token: undefined,
+          };
         }
       },
       verifyPickupPass: async (token) => {
@@ -1388,6 +1411,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
 
         try {
           const data = await apiJson<{
+            ok?: boolean;
             reportId?: string;
             usedAt?: string;
             message?: string;
@@ -1395,10 +1419,18 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             itemName?: string;
             claimantName?: string;
             claimantEmail?: string;
+            requesterEmail?: string;
           }>("/api/pickup-passes/verify", {
             method: "POST",
             body: JSON.stringify({ token: normalized }),
           });
+
+          if (data.ok === false) {
+            return {
+              ok: false,
+              message: data.message ?? "QR 인증에 실패했습니다.",
+            };
+          }
 
           const usedAt = data.usedAt ?? shortDateTime();
           const merged: PickupPass = {
@@ -1408,29 +1440,31 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             itemImage: localPass?.itemImage,
             itemLocation: localPass?.itemLocation,
             claimantName: data.claimantName ?? localPass?.claimantName,
-            claimantEmail: data.claimantEmail ?? localPass?.claimantEmail,
+            claimantEmail:
+              data.claimantEmail ?? data.requesterEmail ?? localPass?.claimantEmail,
             token: localPass?.token ?? normalized,
             issuedAt: localPass?.issuedAt ?? shortDateTime(),
             expiresAt: localPass?.expiresAt ?? minutesLaterISO(10),
             usedAt,
             reportId: data.reportId ?? localPass?.reportId,
           };
+          invalidateRemoteLostItemsCache();
           return await finalize(merged, usedAt, data.message ?? "QR 인증 완료: 최종 수령 처리되었습니다.");
         } catch (error) {
-          if (!localPass) {
-            return {
-              ok: false,
-              message: error instanceof Error ? error.message : "QR 인증 처리에 실패했습니다.",
-            };
+          const message = error instanceof Error ? error.message : "QR 인증 처리에 실패했습니다.";
+          if (/403|권한|admin/i.test(message)) {
+            return { ok: false, message: "관리자 권한이 필요합니다. 관리자 계정으로 로그인해 주세요." };
           }
-          const usedAt = shortDateTime();
-          return await finalize(
-            localPass,
-            usedAt,
-            error instanceof Error
-              ? `백엔드 연동 실패로 로컬 인증만 진행했습니다. (${error.message})`
-              : "백엔드 연동 실패로 로컬 인증만 진행했습니다."
-          );
+          if (/409|이미 사용|already/i.test(message)) {
+            return { ok: false, message: "이미 사용된 수령 코드입니다." };
+          }
+          if (/404|찾을 수 없|not found/i.test(message)) {
+            return { ok: false, message: "유효하지 않은 QR 코드입니다." };
+          }
+          if (/400|만료|expired/i.test(message)) {
+            return { ok: false, message: "만료되었거나 잘못된 QR 코드입니다." };
+          }
+          return { ok: false, message };
         }
       },
       deleteReport: async (reportId) => {

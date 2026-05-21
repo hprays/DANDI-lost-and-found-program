@@ -110,9 +110,6 @@ function buildLostItemMultipartForm(
     itemType: fields.itemType?.trim() || category,
   };
   appendFormFields(form, merged, LOST_ITEM_MULTIPART_KEYS);
-  if (category && !fields.itemType?.trim()) {
-    form.append("itemType", category);
-  }
   appendImageFile(form, image);
   return form;
 }

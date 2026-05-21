@@ -1,8 +1,15 @@
 import type { PublishedLostItem } from "@/lib/published-lost-items";
 import { mapApiLostItem } from "@/lib/published-lost-items";
+import {
+  getCachedRemoteLostItems,
+  invalidateRemoteLostItemsCache,
+  setCachedRemoteLostItems,
+} from "@/lib/catalog-cache";
 import { apiJson } from "@/lib/api-json";
 import { getApiBaseUrl } from "@/lib/api-json";
 import { parseDateTimeMs } from "@/lib/format-display";
+
+export { invalidateRemoteLostItemsCache };
 
 export async function fetchLostItemById(id: string): Promise<PublishedLostItem | null> {
   const base = getApiBaseUrl();
@@ -25,7 +32,7 @@ export async function fetchLostItemById(id: string): Promise<PublishedLostItem |
   return null;
 }
 
-export async function fetchRemoteLostItems(): Promise<PublishedLostItem[]> {
+async function fetchRemoteLostItemsFromNetwork(): Promise<PublishedLostItem[]> {
   const base = getApiBaseUrl();
   if (!base) return [];
   try {
@@ -37,6 +44,16 @@ export async function fetchRemoteLostItems(): Promise<PublishedLostItem[]> {
       return [];
     }
   }
+}
+
+export async function fetchRemoteLostItems(force = false): Promise<PublishedLostItem[]> {
+  if (!force) {
+    const cached = getCachedRemoteLostItems();
+    if (cached) return cached;
+  }
+  const items = await fetchRemoteLostItemsFromNetwork();
+  setCachedRemoteLostItems(items);
+  return items;
 }
 
 function extractLostItemList(payload: unknown): PublishedLostItem[] {

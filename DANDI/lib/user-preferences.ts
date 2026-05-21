@@ -6,7 +6,7 @@ const KEYWORDS_STORAGE_KEY = "dandi.userPrefs.keywords";
 const ALERT_ENABLED_KEY = "dandi.userPrefs.alertEnabled";
 const LOCAL_NOTICES_KEY = "dandi.userPrefs.localNotices";
 
-const DEFAULT_KEYWORDS = ["에어팟", "검정", "지갑"];
+const DEFAULT_KEYWORDS: string[] = [];
 
 export const KEYWORDS_CHANGED_EVENT = "dandi-keywords-changed";
 

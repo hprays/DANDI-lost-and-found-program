@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
-import { useBuildingLocationField } from "@/lib/building-location";
+import {
+  BUILDING_CUSTOM,
+  composeBuildingLocation,
+  parseBuildingLocation,
+  type BuildingLocationValue,
+} from "@/lib/building-location";
 
 type ManageLocationPickersProps = {
   idPrefix: string;
@@ -12,7 +17,7 @@ type ManageLocationPickersProps = {
   onStorageChange: (value: string) => void;
 };
 
-/** 물품 관리 — 습득·보관 위치를 등록 폼과 동일한 건물 선택(스크롤) UI로 편집 */
+/** 물품 관리 — 위치 변경 시에만 부모 draft 갱신 (effect 루프 없음) */
 export function ManageLocationPickers({
   idPrefix,
   place,
@@ -20,38 +25,26 @@ export function ManageLocationPickers({
   onPlaceChange,
   onStorageChange,
 }: ManageLocationPickersProps) {
-  const found = useBuildingLocationField(place);
-  const storageLoc = useBuildingLocationField(storage);
-  const syncingPlaceRef = useRef(false);
-  const syncingStorageRef = useRef(false);
+  const [found, setFound] = useState<BuildingLocationValue>(() => parseBuildingLocation(place));
+  const [stor, setStor] = useState<BuildingLocationValue>(() => parseBuildingLocation(storage));
 
   useEffect(() => {
-    if (syncingPlaceRef.current) return;
-    if (place !== found.composed) {
-      found.applyFromLocation(place);
-    }
-  }, [place, found.composed, found.applyFromLocation]);
+    setFound(parseBuildingLocation(place));
+  }, [place]);
 
   useEffect(() => {
-    if (found.composed === place) return;
-    syncingPlaceRef.current = true;
-    onPlaceChange(found.composed);
-    syncingPlaceRef.current = false;
-  }, [found.composed, onPlaceChange, place]);
+    setStor(parseBuildingLocation(storage));
+  }, [storage]);
 
-  useEffect(() => {
-    if (syncingStorageRef.current) return;
-    if (storage !== storageLoc.composed) {
-      storageLoc.applyFromLocation(storage);
-    }
-  }, [storage, storageLoc.composed, storageLoc.applyFromLocation]);
+  const updateFound = (next: BuildingLocationValue) => {
+    setFound(next);
+    onPlaceChange(composeBuildingLocation(next));
+  };
 
-  useEffect(() => {
-    if (storageLoc.composed === storage) return;
-    syncingStorageRef.current = true;
-    onStorageChange(storageLoc.composed);
-    syncingStorageRef.current = false;
-  }, [storageLoc.composed, onStorageChange, storage]);
+  const updateStor = (next: BuildingLocationValue) => {
+    setStor(next);
+    onStorageChange(composeBuildingLocation(next));
+  };
 
   return (
     <>
@@ -61,20 +54,32 @@ export function ManageLocationPickers({
         building={found.building}
         detail={found.detail}
         customText={found.customText}
-        onBuildingChange={found.setBuilding}
-        onDetailChange={found.setDetail}
-        onCustomTextChange={found.setCustomText}
+        onBuildingChange={(building) => {
+          updateFound({
+            building,
+            detail: building === BUILDING_CUSTOM ? "" : found.detail,
+            customText: building === BUILDING_CUSTOM ? found.customText : "",
+          });
+        }}
+        onDetailChange={(detail) => updateFound({ ...found, detail })}
+        onCustomTextChange={(customText) => updateFound({ ...found, customText })}
         detailPlaceholder="예: 1층 북카페, 307호"
       />
       <BuildingLocationPicker
         idPrefix={`${idPrefix}-storage`}
         label="보관 장소"
-        building={storageLoc.building}
-        detail={storageLoc.detail}
-        customText={storageLoc.customText}
-        onBuildingChange={storageLoc.setBuilding}
-        onDetailChange={storageLoc.setDetail}
-        onCustomTextChange={storageLoc.setCustomText}
+        building={stor.building}
+        detail={stor.detail}
+        customText={stor.customText}
+        onBuildingChange={(building) => {
+          updateStor({
+            building,
+            detail: building === BUILDING_CUSTOM ? "" : stor.detail,
+            customText: building === BUILDING_CUSTOM ? stor.customText : "",
+          });
+        }}
+        onDetailChange={(detail) => updateStor({ ...stor, detail })}
+        onCustomTextChange={(customText) => updateStor({ ...stor, customText })}
         detailPlaceholder="예: 학생팀 425호, 분실물 보관함"
       />
     </>

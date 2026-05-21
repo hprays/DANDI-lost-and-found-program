@@ -7,13 +7,24 @@ import {
   pickRicherDateTimeLabel,
   sanitizeLocation,
 } from "@/lib/format-display";
-import { canonicalLostItemId, normalizeCatalogItemIdentity } from "@/lib/catalog-identity";
+import {
+  canonicalLostItemId,
+  normalizeCatalogItemIdentity,
+} from "@/lib/catalog-identity";
+
+function isLostItemPkRow(item: PublishedLostItem): boolean {
+  const id = String(item.id);
+  const reportId = item.reportId ? String(item.reportId) : "";
+  return /^\d+$/.test(id) && (!reportId || reportId !== id);
+}
 import { enrichWithRegistrationMeta } from "@/lib/registration-meta";
 import { pickImageFromRaw, resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { imageForLocalStorage, safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
 export type PublishedLostItem = {
   id: string;
+  /** API PATCH/DELETE용 lost_item PK */
+  lostItemId?: string;
   name: string;
   category: string;
   type?: string;
@@ -156,6 +167,9 @@ export function mergePublishedItems(
     secondary.image;
   const foundAt = pickRicherDateTimeLabel(primary.foundAt ?? primary.time, secondary.foundAt ?? secondary.time);
   const createdAt = pickRicherDateTimeLabel(primary.createdAt, secondary.createdAt);
+  const apiRow = [primary, secondary].find(isLostItemPkRow) ?? secondary ?? primary;
+  const id = canonicalLostItemId(primary, secondary);
+  const lostItemId = /^\d+$/.test(id) ? id : apiRow.lostItemId;
   const merged: PublishedLostItem = {
     ...secondary,
     ...primary,
@@ -169,8 +183,9 @@ export function mergePublishedItems(
     foundAt,
     createdAt,
     time: createdAt || foundAt || primary.time || secondary.time,
-    reportId: primary.reportId ?? secondary.reportId,
-    id: canonicalLostItemId(primary, secondary),
+    reportId: primary.reportId ?? secondary.reportId ?? apiRow.reportId,
+    id,
+    lostItemId: lostItemId ?? (/^\d+$/.test(id) ? id : undefined),
   };
   return merged;
 }
@@ -265,8 +280,10 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
       : undefined;
   const time = createdAt || foundAt || "";
 
+  const lostItemId = String(id);
   return {
-    id: String(id),
+    id: lostItemId,
+    lostItemId,
     reportId: reportIdRaw != null ? String(reportIdRaw) : undefined,
     name,
     category,

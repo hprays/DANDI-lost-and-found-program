@@ -1,58 +1,74 @@
 import type { PublishedLostItem } from "@/lib/published-lost-items";
-import { fetchRemoteLostItems } from "@/lib/catalog-utils";
 
-/** 분실물 PK — 신고 ID와 다를 때 신고 ID가 아닌 lost_item.id를 사용 */
+function isLostItemPkRow(item: PublishedLostItem): boolean {
+  const id = String(item.id);
+  const reportId = item.reportId ? String(item.reportId) : "";
+  return /^\d+$/.test(id) && (!reportId || reportId !== id);
+}
+
+/** 분실물 PK — API lost_item.id 우선 (신고 id로 덮지 않음) */
 export function canonicalLostItemId(
   primary: PublishedLostItem,
   secondary?: PublishedLostItem | null
 ): string {
   const candidates = [primary, secondary].filter(Boolean) as PublishedLostItem[];
+  const lostRows = candidates.filter(isLostItemPkRow);
+  if (lostRows.length) {
+    const nums = lostRows.map((it) => Number(it.id)).filter((n) => !Number.isNaN(n));
+    return String(Math.max(...nums));
+  }
   for (const item of candidates) {
     const reportId = item.reportId ? String(item.reportId) : "";
     const id = String(item.id);
-    if (reportId && reportId !== id) return id;
+    if (reportId && reportId !== id && /^\d+$/.test(id)) return id;
   }
-  for (const item of candidates) {
-    const other = item === primary ? secondary : primary;
-    if (!other) continue;
-    const reportId = item.reportId ? String(item.reportId) : "";
-    if (reportId && reportId === String(other.id)) return String(other.id);
-  }
-  const nums = candidates
-    .map((it) => Number(it.id))
-    .filter((n) => !Number.isNaN(n) && n > 0);
+  const nums = candidates.map((it) => Number(it.id)).filter((n) => !Number.isNaN(n) && n > 0);
   if (nums.length) return String(Math.max(...nums));
   return String(primary.id);
 }
 
 export function normalizeCatalogItemIdentity(item: PublishedLostItem): PublishedLostItem {
-  const id = canonicalLostItemId(item);
-  const reportId = item.reportId ?? (String(item.id) !== id ? String(item.id) : undefined);
-  if (String(item.id) === id && item.reportId === reportId) return item;
-  return { ...item, id, reportId: reportId ?? item.reportId };
+  const id = isLostItemPkRow(item)
+    ? String(item.id)
+    : item.lostItemId && /^\d+$/.test(String(item.lostItemId))
+      ? String(item.lostItemId)
+      : /^\d+$/.test(String(item.id))
+        ? String(item.id)
+        : String(item.id);
+  const reportId =
+    item.reportId ??
+    (String(item.id) !== id && /^\d+$/.test(String(item.id)) === false ? String(item.id) : undefined);
+  const lostItemId = /^\d+$/.test(id) ? id : item.lostItemId;
+  if (String(item.id) === id && item.reportId === reportId && item.lostItemId === lostItemId) {
+    return item;
+  }
+  return { ...item, id, lostItemId: lostItemId ?? (/^\d+$/.test(id) ? id : undefined), reportId };
 }
 
-/** PATCH/DELETE용 서버 lost_item PK (신고 ID로 잘못 호출하는 경우 보정) */
-export async function resolveServerLostItemId(
+/** PATCH/DELETE·수령 QR용 lost_item 숫자 PK */
+export function resolveServerLostItemId(
   item: PublishedLostItem | undefined,
-  hintId: string
-): Promise<string> {
-  const normalized = normalizeCatalogItemIdentity(
-    item ?? { id: hintId, name: "", category: "", place: "", time: "" }
-  );
+  hintId: string,
+  lookupItems: PublishedLostItem[] = []
+): string {
+  const stub = item ?? { id: hintId, name: "", category: "", place: "", time: "" };
+  const normalized = normalizeCatalogItemIdentity(stub);
+  if (normalized.lostItemId && /^\d+$/.test(String(normalized.lostItemId))) {
+    return String(normalized.lostItemId);
+  }
   if (normalized.reportId && String(normalized.reportId) !== String(normalized.id)) {
     return String(normalized.id);
   }
 
-  const remote = await fetchRemoteLostItems();
   const hint = String(hintId);
-  const byLost = remote.find((r) => String(r.id) === hint);
-  if (byLost) return String(byLost.id);
+  const byLost = lookupItems.find((r) => String(r.id) === hint || String(r.lostItemId) === hint);
+  if (byLost) return String(byLost.lostItemId ?? byLost.id);
 
-  const byReport = remote.find(
-    (r) => String(r.reportId ?? "") === hint || String(r.id) === hint
+  const byReport = lookupItems.find(
+    (r) => String(r.reportId ?? "") === hint && /^\d+$/.test(String(r.id))
   );
-  if (byReport) return String(byReport.id);
+  if (byReport) return String(byReport.lostItemId ?? byReport.id);
 
-  return hint;
+  if (/^\d+$/.test(hint)) return hint;
+  return String(normalized.id);
 }

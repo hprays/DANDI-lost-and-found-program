@@ -499,10 +499,38 @@ export default function AdminPage() {
       const raw = await decodeQrFromVideo(video);
       if (!raw) return;
 
-      const ok = applyScannedQrToken(raw);
-      if (!ok || cancelled) return;
+      const normalized = normalizePickupToken(raw);
+      if (!isValidPickupToken(normalized)) return;
 
+      scanHandledRef.current = true;
       closeCamera();
+      setPickupVerifying(true);
+      try {
+        const result = await verifyPickupPass(normalized);
+        setPickupMessage(result.message);
+        if (result.ok) {
+          setPickupToken("");
+          setScanToken(normalized);
+          if (result.pass) {
+            setLastVerifiedPass({
+              itemName: result.pass.itemName,
+              claimantName: result.pass.claimantName,
+              claimantEmail: result.pass.claimantEmail,
+              usedAt: result.pass.usedAt,
+            });
+            setScannedPass({
+              itemName: result.pass.itemName,
+              claimantName: result.pass.claimantName,
+              claimantEmail: result.pass.claimantEmail,
+              usedAt: result.pass.usedAt,
+            });
+          }
+        } else {
+          setCameraError(result.message);
+        }
+      } finally {
+        if (!cancelled) setPickupVerifying(false);
+      }
     };
 
     scanLoopTimerRef.current = window.setInterval(() => {
@@ -516,8 +544,8 @@ export default function AdminPage() {
         scanLoopTimerRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 스캔 성공 시 카메라 종료
-  }, [cameraOpen, cameraStream, pickupPasses]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 스캔 성공 시 verify 호출
+  }, [cameraOpen, cameraStream, verifyPickupPass]);
 
   // 페이지 떠날 때 카메라 자원 정리
   useEffect(() => {
@@ -786,7 +814,8 @@ export default function AdminPage() {
       createdAt: origin.createdAt,
     };
 
-    const result = await updateHomeLostItem(itemId, patch);
+    const apiId = String((origin as { lostItemId?: string }).lostItemId ?? origin.id ?? itemId);
+    const result = await updateHomeLostItem(apiId, patch);
     if (!result.ok) {
       setManageMessage(result.message);
       return;
@@ -1193,7 +1222,16 @@ export default function AdminPage() {
                       <div key={item.id} className="space-y-4 rounded-xl border bg-white p-4">
                         <div className="flex items-center justify-between gap-2">
                           <div>
-                            <p className="text-sm font-semibold text-slate-700">물품 ID: {item.id}</p>
+                            <p className="text-sm font-semibold text-slate-700">
+                              분실물 ID: {(item as { lostItemId?: string }).lostItemId ?? item.id}
+                            </p>
+                            {(item as { reportId?: string }).reportId &&
+                            String((item as { reportId?: string }).reportId) !==
+                              String((item as { lostItemId?: string }).lostItemId ?? item.id) ? (
+                              <p className="text-xs text-muted-foreground">
+                                신고 ID: {(item as { reportId?: string }).reportId}
+                              </p>
+                            ) : null}
                             {(() => {
                               const registered = displayRegistrationDateTime(item);
                               const found = displayFoundDateTime(item);
@@ -1442,10 +1480,10 @@ export default function AdminPage() {
                   </Button>
                 ) : (
                   <div className="space-y-3">
-                    <div className="relative overflow-hidden rounded-lg border bg-black">
-                      {cameraError || videoPlayError ? (
-                        <div className="flex h-48 items-center justify-center bg-slate-900 px-4 text-center text-xs text-red-200">
-                          {cameraError ?? videoPlayError}
+                    <div className="relative h-56 overflow-hidden rounded-lg border bg-black">
+                      {cameraError ? (
+                        <div className="flex h-full items-center justify-center bg-slate-900 px-4 text-center text-xs text-red-200">
+                          {cameraError}
                         </div>
                       ) : (
                         <>
@@ -1459,8 +1497,13 @@ export default function AdminPage() {
                             autoPlay
                             playsInline
                             muted
-                            className="h-56 w-full bg-black object-cover"
+                            className="h-full w-full bg-black object-cover"
                           />
+                          {videoPlayError ? (
+                            <div className="absolute inset-x-0 bottom-0 bg-red-950/80 px-2 py-1 text-center text-[10px] text-red-100">
+                              {videoPlayError}
+                            </div>
+                          ) : null}
                         </>
                       )}
                       <div className="pointer-events-none absolute inset-6 rounded-md border-2 border-white/70" />
@@ -1487,8 +1530,8 @@ export default function AdminPage() {
                         </Button>
                       </div>
                       <p className="text-[11px] text-muted-foreground">
-                        QR이 인식되면 카메라가 자동으로 꺼지고 토큰이 아래·빠른 인증란에 채워집니다. 신분증 확인 후 「최종 수령
-                        인증 완료」를 눌러 주세요.
+                        QR이 인식되면 카메라가 꺼지고 서버 검증(/api/pickup-passes/verify)이 자동 실행됩니다. 실패 시
+                        메시지를 확인한 뒤 토큰을 수정해 「최종 수령 인증 완료」로 재시도할 수 있습니다.
                       </p>
                     </div>
 

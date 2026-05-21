@@ -21,6 +21,12 @@ import {
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
 import {
+  addUserKeyword,
+  deleteUserKeyword,
+  fetchUserKeywords,
+  type UserKeyword,
+} from "@/lib/user-keywords-api";
+import {
   getStoredAlertEnabled,
   getStoredKeywords,
   KEYWORDS_CHANGED_EVENT,
@@ -42,8 +48,10 @@ export default function MyPage() {
   const [profileMessage, setProfileMessage] = useState("");
 
   const [keyword, setKeyword] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
+  const [keywordRows, setKeywordRows] = useState<UserKeyword[]>([]);
   const [tagsReady, setTagsReady] = useState(false);
+  const [keywordMessage, setKeywordMessage] = useState("");
+  const [keywordBusy, setKeywordBusy] = useState(false);
   const [alertEnabled, setAlertEnabled] = useState(true);
   const [noticeMessage, setNoticeMessage] = useState("");
   const [readingNoticeId, setReadingNoticeId] = useState<string | null>(null);
@@ -54,28 +62,60 @@ export default function MyPage() {
       setSession(s);
       setEditName(s?.name ?? "");
       setEditDepartment(s?.department ?? "");
-      setTags(getStoredKeywords());
       setAlertEnabled(getStoredAlertEnabled());
-      setTagsReady(true);
+      setTagsReady(false);
     });
     return () => window.cancelAnimationFrame(rafId);
   }, []);
 
   useEffect(() => {
+    if (!session?.accessToken) return;
+    let cancelled = false;
+    const load = async () => {
+      if (!API_BASE_URL) {
+        const local = getStoredKeywords();
+        if (!cancelled) {
+          setKeywordRows(local.map((k, i) => ({ id: `local-${i}`, keyword: k })));
+          setTagsReady(true);
+        }
+        return;
+      }
+      try {
+        const rows = await fetchUserKeywords();
+        if (!cancelled) {
+          setKeywordRows(rows);
+          setStoredKeywords(rows.map((r) => r.keyword));
+          setTagsReady(true);
+        }
+      } catch {
+        if (!cancelled) {
+          const local = getStoredKeywords();
+          setKeywordRows(local.map((k, i) => ({ id: `local-${i}`, keyword: k })));
+          setTagsReady(true);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.accessToken]);
+
+  useEffect(() => {
     const onKeywordsChanged = (event: Event) => {
       const detail = (event as CustomEvent<string[]>).detail;
-      if (Array.isArray(detail)) setTags(detail);
-      else setTags(getStoredKeywords());
+      if (Array.isArray(detail)) {
+        setKeywordRows(detail.map((k, i) => ({ id: `local-${i}`, keyword: k })));
+      }
     };
     window.addEventListener(KEYWORDS_CHANGED_EVENT, onKeywordsChanged);
     return () => window.removeEventListener(KEYWORDS_CHANGED_EVENT, onKeywordsChanged);
   }, []);
 
-  // 키워드는 로드 완료 후에만 저장 (빈 배열로 덮어쓰기 방지)
   useEffect(() => {
     if (!tagsReady) return;
-    setStoredKeywords(tags);
-  }, [tags, tagsReady]);
+    setStoredKeywords(keywordRows.map((r) => r.keyword));
+  }, [keywordRows, tagsReady]);
 
   useEffect(() => {
     if (!tagsReady) return;
@@ -94,15 +134,43 @@ export default function MyPage() {
 
   const studentId = session?.studentId ?? extractStudentIdFromEmail(session?.email);
 
-  const addTag = () => {
+  const addTag = async () => {
     const trimmed = keyword.trim();
-    if (!trimmed || tags.includes(trimmed)) return;
-    setTags((prev) => [...prev, trimmed]);
-    setKeyword("");
+    if (!trimmed || keywordRows.some((r) => r.keyword === trimmed)) return;
+    if (!session?.accessToken) {
+      setKeywordMessage("로그인이 필요합니다.");
+      return;
+    }
+    setKeywordBusy(true);
+    setKeywordMessage("");
+    try {
+      if (API_BASE_URL) {
+        const row = await addUserKeyword(trimmed);
+        setKeywordRows((prev) => [...prev, row]);
+      } else {
+        setKeywordRows((prev) => [...prev, { id: `local-${Date.now()}`, keyword: trimmed }]);
+      }
+      setKeyword("");
+    } catch (error) {
+      setKeywordMessage(error instanceof Error ? error.message : "키워드 등록에 실패했습니다.");
+    } finally {
+      setKeywordBusy(false);
+    }
   };
 
-  const removeTag = (tag: string) => {
-    setTags((prev) => prev.filter((it) => it !== tag));
+  const removeTag = async (row: UserKeyword) => {
+    setKeywordBusy(true);
+    setKeywordMessage("");
+    try {
+      if (API_BASE_URL && session?.accessToken && !row.id.startsWith("local-")) {
+        await deleteUserKeyword(row.id);
+      }
+      setKeywordRows((prev) => prev.filter((it) => it.id !== row.id));
+    } catch (error) {
+      setKeywordMessage(error instanceof Error ? error.message : "키워드 삭제에 실패했습니다.");
+    } finally {
+      setKeywordBusy(false);
+    }
   };
 
   const onSaveProfile = async () => {
@@ -244,7 +312,8 @@ export default function MyPage() {
           <CardHeader>
             <CardTitle>관심 키워드 알림 설정</CardTitle>
             <p className="text-sm text-muted-foreground">
-              내가 등록한 키워드와 일치하는 전체 분실물이 올라오면 알림을 받습니다. 로그아웃 후에도 키워드는 유지됩니다.
+              등록한 키워드는 계정에 저장되어 기기·브라우저 간에 동기화됩니다. 일치하는 분실물이 등록되면 알림을 받을 수
+              있습니다.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -260,18 +329,26 @@ export default function MyPage() {
                   }
                 }}
               />
-              <Button size="icon" onClick={addTag} aria-label="태그 추가">
-                <Plus className="h-4 w-4" />
+              <Button size="icon" onClick={() => void addTag()} disabled={keywordBusy} aria-label="태그 추가">
+                {keywordBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               </Button>
             </div>
+            {keywordMessage ? <p className="text-xs text-primary">{keywordMessage}</p> : null}
             <div className="flex flex-wrap gap-2">
-              {tags.length === 0 ? (
+              {!tagsReady ? (
+                <p className="text-xs text-muted-foreground">키워드를 불러오는 중…</p>
+              ) : keywordRows.length === 0 ? (
                 <p className="text-xs text-muted-foreground">등록된 키워드가 없습니다.</p>
               ) : null}
-              {tags.map((tag) => (
-                <Badge key={tag} variant="secondary" className="flex items-center gap-1 px-3 py-1">
-                  {tag}
-                  <button type="button" onClick={() => removeTag(tag)} aria-label={`${tag} 삭제`}>
+              {keywordRows.map((row) => (
+                <Badge key={row.id} variant="secondary" className="flex items-center gap-1 px-3 py-1">
+                  {row.keyword}
+                  <button
+                    type="button"
+                    onClick={() => void removeTag(row)}
+                    disabled={keywordBusy}
+                    aria-label={`${row.keyword} 삭제`}
+                  >
                     <X className="h-3 w-3" />
                   </button>
                 </Badge>

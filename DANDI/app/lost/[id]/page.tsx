@@ -71,8 +71,15 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
     setIssuingPickup(true);
     setPickupMessage("");
     try {
+      const lostItemId =
+        (item as { lostItemId?: string }).lostItemId &&
+        /^\d+$/.test(String((item as { lostItemId?: string }).lostItemId))
+          ? String((item as { lostItemId?: string }).lostItemId)
+          : /^\d+$/.test(String(item.id))
+            ? String(item.id)
+            : item.id;
       const result = await issuePickupPass({
-        lostItemId: item.id,
+        lostItemId,
         itemName: item.name,
         itemImage: item.image,
         itemLocation: item.place,
