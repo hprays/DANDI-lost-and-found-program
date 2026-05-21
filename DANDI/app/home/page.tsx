@@ -223,7 +223,7 @@ export default function HomePage() {
                   <div className="flex flex-wrap items-baseline gap-2">
                     <h3 className="text-base font-bold">{item.name}</h3>
                     {receivedBadge ? (
-                      <span className="text-[15px] font-bold leading-tight text-slate-900">
+                      <span className="text-lg font-bold leading-tight text-red-600">
                         {receivedBadge}
                       </span>
                     ) : null}
