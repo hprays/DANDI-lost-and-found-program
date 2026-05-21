@@ -2,7 +2,13 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { extractStudentIdFromEmail, getAuthSession } from "@/lib/auth-session";
-import { getDeletedLostItemIds, isLostItemMarkedDeleted, markLostItemDeleted } from "@/lib/custom-lost-items";
+import {
+  clearLostItemOverridesForIds,
+  deleteCustomLostItem,
+  getDeletedLostItemIds,
+  isLostItemMarkedDeleted,
+  markLostItemDeleted,
+} from "@/lib/custom-lost-items";
 import {
   enrichPublishedItemsWithReports,
   getPublishedLostItems,
@@ -21,6 +27,7 @@ import { apiJson, getApiBaseUrl, patchReportDetails, patchReportStatus } from "@
 import {
   formatDateTimeLabel,
   normalizeReportStatus,
+  pickRicherDateTimeLabel,
   sanitizeLocation,
   toApiDateTime,
 } from "@/lib/format-display";
@@ -123,8 +130,11 @@ type DandiStateContextValue = {
     status: Extract<ReportStatus, "resolved" | "unavailable">,
     overrides?: PendingReportPatch
   ) => Promise<{ ok: boolean; message: string }>;
-  updateHomeLostItem: (itemId: string, patch: Partial<PublishedLostItem>) => void;
-  removeHomeLostItem: (itemId: string) => void | Promise<void>;
+  updateHomeLostItem: (
+    itemId: string,
+    patch: Partial<PublishedLostItem>
+  ) => Promise<{ ok: boolean; message: string }>;
+  removeHomeLostItem: (itemId: string) => Promise<{ ok: boolean; message: string }>;
   issuePickupPass: (payload: PickupIssuePayload) => Promise<{ ok: boolean; message: string; token?: string; pass?: PickupPass }>;
   verifyPickupPass: (token: string) => Promise<PickupVerifyResult>;
   deleteReport: (reportId: string) => Promise<{ ok: boolean; message: string }>;
@@ -497,13 +507,19 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
     });
 
     reportList
-      .filter((r) => r.status === "resolved")
+      .filter(
+        (r) =>
+          r.status === "resolved" &&
+          !isLostItemMarkedDeleted({ id: String(r.id), reportId: String(r.id) })
+      )
       .map(reportToPublishedItem)
-      .filter((item) => !isLostItemMarkedDeleted(item))
+      .filter((item) => !isLostItemMarkedDeleted(item) && Boolean(item.name?.trim()))
       .forEach((item) => collected.push(item));
 
     const deduped = dedupePublishedCatalog(collected);
-    const next = sortLostItemsNewestFirst(enrichPublishedItemsWithReports(deduped, reportList));
+    const next = sortLostItemsNewestFirst(enrichPublishedItemsWithReports(deduped, reportList)).filter(
+      (item) => !isLostItemMarkedDeleted(item) && Boolean(item.name?.trim())
+    );
     setHomeLostItems(next);
     setCatalogVersion((v) => v + 1);
   }, []);
@@ -1035,68 +1051,128 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             : "상태 변경이 완료되었습니다. 홈 목록에 반영되었습니다.",
         };
       },
-      updateHomeLostItem: (itemId, patch) => {
+      updateHomeLostItem: async (itemId, patch) => {
+        const normalizedId = String(itemId);
         const current = getPublishedLostItems();
-        const target = current.find((it) => it.id === itemId) ?? homeLostItems.find((it) => it.id === itemId);
-        if (!target) return;
+        const target =
+          current.find((it) => String(it.id) === normalizedId) ??
+          homeLostItemsRef.current.find((it) => String(it.id) === normalizedId);
+        if (!target) {
+          return { ok: false, message: "수정할 물품을 찾을 수 없습니다." };
+        }
+
         const foundAtLabel = patch.foundAt ?? patch.time ?? target.foundAt ?? target.time;
         const createdAtLabel = patch.createdAt ?? target.createdAt;
-        const updated = {
+        const category = (patch.category ?? target.category)?.trim() || "기타";
+        const detailType = patch.type?.trim() || category;
+
+        const updated: PublishedLostItem = {
           ...target,
           ...patch,
+          category,
+          type: patch.type?.trim() || target.type,
           time: formatDateTimeLabel(foundAtLabel) || foundAtLabel || target.time,
           foundAt: formatDateTimeLabel(foundAtLabel) || foundAtLabel,
           createdAt: formatDateTimeLabel(createdAtLabel) || createdAtLabel,
         };
+
+        const patchBody: Record<string, string> = {
+          itemName: updated.name,
+          name: updated.name,
+          category,
+          itemType: detailType,
+          place: updated.place,
+          location: updated.place,
+          foundAt: toApiDateTime(updated.foundAt ?? updated.time),
+          storage: updated.storage ?? "",
+          memo: updated.memo ?? "",
+          ...apiImageFields(updated.image),
+        };
+        Object.keys(patchBody).forEach((key) => {
+          if (patchBody[key] === "") delete patchBody[key];
+        });
+
+        if (API_BASE_URL && getAuthSession()?.accessToken) {
+          try {
+            const data = await apiJson<Record<string, unknown>>(
+              `/api/lost-items/${encodeURIComponent(normalizedId)}`,
+              {
+                method: "PATCH",
+                body: JSON.stringify(patchBody),
+              }
+            );
+            const mapped =
+              mapApiLostItem({ ...data, id: normalizedId }) ??
+              updated;
+            const merged: PublishedLostItem = {
+              ...updated,
+              ...mapped,
+              createdAt: pickRicherDateTimeLabel(updated.createdAt, mapped.createdAt) ?? updated.createdAt,
+              foundAt: pickRicherDateTimeLabel(updated.foundAt, mapped.foundAt) ?? updated.foundAt,
+              time: mapped.foundAt ?? mapped.time ?? updated.time,
+            };
+            upsertPublishedLostItem(merged);
+            setHomeLostItems((prev) =>
+              sortLostItemsNewestFirst(
+                prev.map((it) => (String(it.id) === normalizedId ? merged : it))
+              )
+            );
+            setCatalogVersion((v) => v + 1);
+            return { ok: true, message: "서버에 반영되어 저장되었습니다." };
+          } catch (error) {
+            return {
+              ok: false,
+              message:
+                error instanceof Error
+                  ? `저장에 실패했습니다. (${error.message})`
+                  : "저장에 실패했습니다.",
+            };
+          }
+        }
+
         upsertPublishedLostItem(updated);
         setHomeLostItems((prev) =>
-          sortLostItemsNewestFirst(prev.map((it) => (it.id === itemId ? updated : it)))
+          sortLostItemsNewestFirst(
+            prev.map((it) => (String(it.id) === normalizedId ? updated : it))
+          )
         );
         setCatalogVersion((v) => v + 1);
-        if (API_BASE_URL) {
-          void apiJson(`/api/lost-items/${itemId}`, {
-            method: "PATCH",
-            body: JSON.stringify({
-              name: updated.name,
-              itemName: updated.name,
-              category: updated.category,
-              location: updated.place,
-              place: updated.place,
-              foundAt: toApiDateTime(updated.foundAt ?? updated.time),
-              lostAt: toApiDateTime(updated.foundAt ?? updated.time),
-              createdAt: updated.createdAt ? toApiDateTime(updated.createdAt) : undefined,
-              registeredAt: updated.createdAt ? toApiDateTime(updated.createdAt) : undefined,
-              memo: updated.memo,
-              itemType: updated.type,
-              storage: updated.storage,
-              ...apiImageFields(updated.image),
-            }),
-          }).catch(() => undefined);
-        }
+        return { ok: true, message: "로컬에 저장되었습니다. (API 미연동)" };
       },
       removeHomeLostItem: async (itemId) => {
         const normalizedId = String(itemId);
-        markLostItemDeleted(normalizedId);
-        const current = homeLostItemsRef.current.find((it) => String(it.id) === normalizedId);
-        if (current?.reportId) markLostItemDeleted(String(current.reportId));
+        const target =
+          homeLostItemsRef.current.find((it) => String(it.id) === normalizedId) ??
+          getPublishedLostItems().find((it) => String(it.id) === normalizedId);
+
+        const idsToDrop = new Set<string>([normalizedId]);
+        if (target?.reportId) idsToDrop.add(String(target.reportId));
+        idsToDrop.forEach((id) => markLostItemDeleted(id));
+        clearLostItemOverridesForIds(Array.from(idsToDrop));
+        idsToDrop.forEach((id) => deleteCustomLostItem(id));
 
         if (API_BASE_URL && getAuthSession()?.accessToken) {
           try {
             await apiJson<object>(`/api/lost-items/${encodeURIComponent(normalizedId)}`, {
               method: "DELETE",
             });
-          } catch {
-            // 삭제 API 미구현 시 로컬·화면에서만 제거
+          } catch (error) {
+            return {
+              ok: false,
+              message:
+                error instanceof Error
+                  ? `서버 삭제에 실패했습니다. (${error.message})`
+                  : "서버 삭제에 실패했습니다.",
+            };
           }
         }
-        removePublishedLostItem(normalizedId);
+
+        idsToDrop.forEach((id) => removePublishedLostItem(id));
         setHomeLostItems((prev) =>
-          prev.filter(
-            (it) =>
-              String(it.id) !== normalizedId && String(it.reportId ?? "") !== normalizedId
-          )
+          prev.filter((it) => !isLostItemMarkedDeleted(it) && !idsToDrop.has(String(it.id)))
         );
         setCatalogVersion((v) => v + 1);
+        return { ok: true, message: "물품이 삭제되어 홈·검색에서 제외되었습니다." };
       },
       issuePickupPass: async (payload) => {
         if (!payload?.lostItemId) {

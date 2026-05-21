@@ -1,7 +1,12 @@
 "use client";
 
 import type { LostReport } from "@/lib/dandi-state";
-import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import { isLostItemMarkedDeleted } from "@/lib/custom-lost-items";
+import {
+  formatDateTimeLabel,
+  pickRicherDateTimeLabel,
+  sanitizeLocation,
+} from "@/lib/format-display";
 import { pickImageFromRaw, resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { imageForLocalStorage, safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
@@ -114,7 +119,9 @@ export function dedupePublishedCatalog(items: PublishedLostItem[]): PublishedLos
     linkAliases(groupKey, merged);
   }
 
-  return Array.from(groups.values());
+  return Array.from(groups.values()).filter(
+    (item) => isLostItemMarkedDeleted(item) === false && Boolean(item.name?.trim())
+  );
 }
 
 export function upsertPublishedLostItem(item: PublishedLostItem) {
@@ -145,6 +152,8 @@ export function mergePublishedItems(
     resolveItemImageUrl(secondary.image) ??
     primary.image ??
     secondary.image;
+  const foundAt = pickRicherDateTimeLabel(primary.foundAt ?? primary.time, secondary.foundAt ?? secondary.time);
+  const createdAt = pickRicherDateTimeLabel(primary.createdAt, secondary.createdAt);
   return {
     ...secondary,
     ...primary,
@@ -155,9 +164,9 @@ export function mergePublishedItems(
     storage: primary.storage ?? secondary.storage,
     memo: primary.memo ?? secondary.memo,
     type: primary.type ?? secondary.type,
-    time: primary.time || secondary.time,
-    foundAt: primary.foundAt ?? secondary.foundAt,
-    createdAt: primary.createdAt ?? secondary.createdAt,
+    foundAt,
+    createdAt,
+    time: foundAt || primary.time || secondary.time,
     reportId: primary.reportId ?? secondary.reportId,
   };
 }
@@ -201,31 +210,64 @@ export function enrichPublishedItemsWithReports(
   });
 }
 
+function readString(raw: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+/** DANDI_Backend LostItemResponse / lost_item 컬럼 매핑 */
 export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem | null {
-  const id = raw.id ?? raw.lostItemId ?? raw.reportId;
-  const name = raw.name ?? raw.itemName;
-  if (id == null || name == null) return null;
-  const foundAtRaw = raw.foundAt ?? raw.lostAt ?? raw.acquiredAt ?? raw.time;
-  const createdAtRaw = raw.createdAt ?? raw.registeredAt ?? raw.storedDate ?? raw.updatedAt;
-  const foundAt =
-    typeof foundAtRaw === "string" ? formatDateTimeLabel(foundAtRaw) || foundAtRaw.trim() : "";
-  const createdAt =
-    typeof createdAtRaw === "string"
-      ? formatDateTimeLabel(createdAtRaw) || createdAtRaw.trim()
-      : foundAt || undefined;
+  const id = raw.id ?? raw.lostItemId;
+  const name = readString(raw, "itemName", "name", "item_name");
+  if (id == null || !name) return null;
+
+  const category =
+    readString(raw, "category", "itemType", "item_type") ?? "기타";
+  const type = readString(raw, "type", "itemType", "item_type");
+  const memo = readString(raw, "memo", "contact", "description");
+  const place = sanitizeLocation(
+    readString(raw, "place", "location", "foundLocation", "found_location", "lostLocation", "lost_location") ?? ""
+  );
+  const storage = readString(raw, "storage", "storedLocation", "stored_location");
+
+  const foundAtRaw = readString(
+    raw,
+    "foundAt",
+    "lostAt",
+    "storedDate",
+    "stored_date",
+    "acquiredAt",
+    "time"
+  );
+  const createdAtRaw = readString(
+    raw,
+    "createdAt",
+    "created_at",
+    "registeredAt",
+    "registered_at",
+    "updatedAt",
+    "updated_at"
+  );
+
+  const foundAt = foundAtRaw ? formatDateTimeLabel(foundAtRaw) || foundAtRaw : "";
+  const createdAt = createdAtRaw ? formatDateTimeLabel(createdAtRaw) || createdAtRaw : undefined;
   const time = foundAt || createdAt || "";
+
   return {
     id: String(id),
     reportId: raw.reportId != null ? String(raw.reportId) : undefined,
-    name: String(name),
-    category: String(raw.category ?? "기타"),
-    type: raw.type != null ? String(raw.type) : raw.itemType != null ? String(raw.itemType) : undefined,
-    memo: raw.memo != null ? String(raw.memo) : raw.description != null ? String(raw.description) : undefined,
-    place: sanitizeLocation(String(raw.place ?? raw.location ?? "")),
+    name,
+    category,
+    type: type && type !== category ? type : undefined,
+    memo,
+    place,
     time,
     foundAt: foundAt || undefined,
     createdAt,
-    storage: raw.storage != null ? String(raw.storage) : undefined,
+    storage,
     image: pickImageFromRaw(raw),
   };
 }

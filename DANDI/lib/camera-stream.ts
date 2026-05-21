@@ -3,8 +3,16 @@ export type CameraOpenResult =
   | { ok: false; error: string };
 
 const VIDEO_CONSTRAINT_ATTEMPTS: MediaStreamConstraints[] = [
-  { video: { facingMode: { ideal: "environment" } }, audio: false },
-  { video: { facingMode: "environment" }, audio: false },
+  {
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+    },
+    audio: false,
+  },
+  { video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+  { video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
   { video: true, audio: false },
 ];
 
@@ -58,7 +66,11 @@ export async function attachStreamToVideo(
 ): Promise<string | null> {
   video.srcObject = stream;
   video.muted = true;
+  video.defaultMuted = true;
+  video.autoplay = true;
   video.playsInline = true;
+  video.setAttribute("playsinline", "true");
+  video.setAttribute("webkit-playsinline", "true");
 
   try {
     await video.play();

@@ -90,7 +90,57 @@ export function formatDateTimeLabel(value: string | undefined | null): string {
       return parsed.toLocaleString('ko-KR', { hour12: false });
     }
   }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const parsed = new Date(`${trimmed}T00:00:00`);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+    }
+  }
   return trimmed;
+}
+
+/** datetime-local 입력용 (관리자 습득 시간) */
+export function toDatetimeLocalValue(timeStr: string | undefined | null): string {
+  if (!timeStr?.trim()) return '';
+  const trimmed = timeStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)) return trimmed.slice(0, 16);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00`;
+  const ms = parseDateTimeMs(trimmed);
+  if (ms > 0) {
+    const d = new Date(ms);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+function hasTimeDetail(value: string | undefined | null): boolean {
+  if (!value?.trim()) return false;
+  const t = value.trim();
+  return /T\d{2}:\d{2}/.test(t) || /\d{1,2}:\d{2}/.test(t) || /\d{1,2}시/.test(t);
+}
+
+/** API가 날짜만 줄 때 로컬에 저장된 상세 시각 유지 */
+export function pickRicherDateTimeLabel(
+  primary?: string | null,
+  secondary?: string | null
+): string | undefined {
+  const a = primary?.trim();
+  const b = secondary?.trim();
+  if (!a && !b) return undefined;
+  if (a && b) {
+    if (hasTimeDetail(a) && !hasTimeDetail(b)) return formatDateTimeLabel(a) || a;
+    if (hasTimeDetail(b) && !hasTimeDetail(a)) return formatDateTimeLabel(b) || b;
+    const msA = parseDateTimeMs(a);
+    const msB = parseDateTimeMs(b);
+    if (msA >= msB) return formatDateTimeLabel(a) || a;
+    return formatDateTimeLabel(b) || b;
+  }
+  const only = a || b;
+  return only ? formatDateTimeLabel(only) || only : undefined;
 }
 
 /** datetime-local·한국어 표기·ISO를 밀리초로 변환 (정렬용) */
@@ -160,6 +210,19 @@ export function displayDateTimeLabels(item: {
     item.time?.trim() ||
     "";
   return { registered, found };
+}
+
+/** 홈 카드용 한 줄 시각 (등록·습득 모두 표시) */
+export function formatCatalogTimeLine(item: {
+  createdAt?: string;
+  time?: string;
+  foundAt?: string;
+}): string {
+  const { registered, found } = displayDateTimeLabels(item);
+  if (registered && found && registered !== found) {
+    return `등록 ${registered} · 습득 ${found}`;
+  }
+  return registered || found || "시간 정보 없음";
 }
 
 /**

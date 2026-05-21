@@ -14,14 +14,19 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { MAX_IMAGE_BYTES } from "@/lib/constants";
-import { applyLostItemAdminChanges, markLostItemDeleted, setLostItemOverride } from "@/lib/custom-lost-items";
+import { applyLostItemAdminChanges, setLostItemOverride } from "@/lib/custom-lost-items";
 import { enrichPublishedItemsWithReports } from "@/lib/published-lost-items";
 import { resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { useDandiState, type LostReport, type PendingReportPatch } from "@/lib/dandi-state";
 import { attachStreamToVideo, requestCameraStream } from "@/lib/camera-stream";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
-import { displayDateTimeLabels, formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import {
+  displayDateTimeLabels,
+  formatDateTimeLabel,
+  sanitizeLocation,
+  toDatetimeLocalValue,
+} from "@/lib/format-display";
 import {
   decodeQrFromVideo,
   isBarcodeDetectorSupported,
@@ -51,15 +56,6 @@ type ManageDraft = {
   memo: string;
   image: string;
 };
-
-function toDatetimeLocalValue(timeStr: string): string {
-  if (!timeStr) return "";
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(timeStr)) return timeStr.slice(0, 16);
-  const parsed = new Date(timeStr);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
-}
 
 function formatFoundAtLabel(foundAt: string): string {
   if (!foundAt) return "";
@@ -508,7 +504,7 @@ export default function AdminPage() {
 
     scanLoopTimerRef.current = window.setInterval(() => {
       void tick();
-    }, 280);
+    }, 350);
 
     return () => {
       cancelled = true;
@@ -530,7 +526,20 @@ export default function AdminPage() {
     };
   }, [cameraStream]);
 
+  const bindVideoElement = (node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (!node || !cameraStream) return;
+    void attachStreamToVideo(node, cameraStream).then((playError) => {
+      if (playError) setVideoPlayError(playError);
+      else setVideoPlayError(null);
+    });
+  };
+
   const openCamera = async () => {
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setCameraError("카메라는 https:// 또는 http://localhost 에서만 사용할 수 있습니다.");
+      return;
+    }
     setCameraError(null);
     setVideoPlayError(null);
     setScannedPass(null);
@@ -540,7 +549,8 @@ export default function AdminPage() {
     setPickupToken("");
     scanHandledRef.current = false;
     stopCameraStream();
-    setCameraOpen(false);
+    setCameraStream(null);
+    setCameraOpen(true);
 
     const result = await requestCameraStream();
     if (!result.ok) {
@@ -550,7 +560,6 @@ export default function AdminPage() {
       return;
     }
     setCameraStream(result.stream);
-    setCameraOpen(true);
   };
 
   const onScanFromCamera = () => {
@@ -757,14 +766,14 @@ export default function AdminPage() {
     }
   };
 
-  const onSaveManagedItem = (itemId: string) => {
+  const onSaveManagedItem = async (itemId: string) => {
     const origin = managedItems.find((it) => it.id === itemId);
     if (!origin) return;
     const draft = manageDrafts[itemId] ?? buildManageDraft(origin);
 
     const savedTime = draft.foundAt.trim()
-      ? formatFoundAtLabel(draft.foundAt) || draft.foundAt.trim()
-      : (origin.time?.trim() ?? "");
+      ? formatFoundAtLabel(draft.foundAt) || formatDateTimeLabel(draft.foundAt) || draft.foundAt.trim()
+      : origin.foundAt?.trim() || origin.time?.trim() || "";
 
     if (!draft.name.trim() || !draft.category.trim() || !draft.place.trim()) {
       setManageMessage("물품명, 카테고리, 습득 위치를 입력해 주세요.");
@@ -774,36 +783,47 @@ export default function AdminPage() {
     const patch = {
       name: draft.name.trim(),
       category: draft.category.trim(),
-      type: draft.type.trim() || undefined,
+      type: draft.type.trim() || draft.category.trim(),
       place: draft.place.trim(),
       time: savedTime,
       foundAt: savedTime,
       storage: draft.storage.trim(),
       memo: draft.memo.trim(),
       image: draft.image || undefined,
+      createdAt: origin.createdAt,
     };
 
-    updateHomeLostItem(itemId, patch);
+    const result = await updateHomeLostItem(itemId, patch);
+    if (!result.ok) {
+      setManageMessage(result.message);
+      return;
+    }
     setLostItemOverride(itemId, patch);
     setManageDrafts((prev) => {
       const next = { ...prev };
       delete next[itemId];
       return next;
     });
-    setManageMessage("관리자 수정이 저장되었습니다.");
+    setManageMessage(result.message);
   };
 
   const onDeleteManagedItem = async (itemId: string) => {
     const target = managedItems.find((it) => it.id === itemId);
-    markLostItemDeleted(itemId);
-    if (target?.reportId) markLostItemDeleted(String(target.reportId));
-    await removeHomeLostItem(itemId);
+    if (!target) {
+      setManageMessage("삭제할 물품을 찾을 수 없습니다.");
+      return;
+    }
+    const result = await removeHomeLostItem(itemId);
+    if (!result.ok) {
+      setManageMessage(result.message);
+      return;
+    }
     setManageDrafts((prev) => {
       const next = { ...prev };
       delete next[itemId];
       return next;
     });
-    setManageMessage("해당 물품이 삭제되어 홈·검색 목록에서 제외되었습니다.");
+    setManageMessage(result.message);
   };
 
   const onManageDraftChange = (itemId: string, field: keyof ManageDraft, value: string) => {
@@ -1453,11 +1473,11 @@ export default function AdminPage() {
                         </div>
                       ) : (
                         <video
-                          ref={videoRef}
+                          ref={bindVideoElement}
                           autoPlay
                           playsInline
                           muted
-                          className="h-56 w-full object-cover"
+                          className="h-56 w-full bg-black object-cover"
                         />
                       )}
                       <div className="pointer-events-none absolute inset-6 rounded-md border-2 border-white/70" />

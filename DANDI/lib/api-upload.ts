@@ -55,80 +55,109 @@ async function apiFormDataPost<T>(path: string, formData: FormData, method = "PO
   }
 }
 
-function firstNonEmpty(...values: Array<string | undefined | null>): string | undefined {
-  for (const value of values) {
-    const trimmed = value?.trim();
-    if (trimmed) return trimmed;
+function appendFormFields(form: FormData, fields: Record<string, string | undefined>, keys: readonly string[]) {
+  for (const key of keys) {
+    const value = fields[key];
+    if (value != null && value !== "") form.append(key, value);
   }
-  return undefined;
 }
 
-/**
- * 백엔드 createMultipart 계약 (Option B)
- * itemName, foundLocation, storedLocation, storedDate, contact, itemType, image(file)
- */
+function appendImageFile(form: FormData, image?: string | null) {
+  const trimmed = image?.trim();
+  if (!trimmed?.startsWith("data:")) return;
+  const file = dataUrlToFile(trimmed);
+  if (file) {
+    form.append("image", file, file.name);
+    form.append("file", file, file.name);
+  }
+}
+
+/** DANDI_Backend LostItemController.createMultipart — 프론트 필드명 그대로 + image/file */
+const LOST_ITEM_MULTIPART_KEYS = [
+  "reportId",
+  "name",
+  "itemName",
+  "category",
+  "itemType",
+  "location",
+  "place",
+  "foundLocation",
+  "storage",
+  "storedLocation",
+  "memo",
+  "contact",
+  "lostAt",
+  "foundAt",
+  "acquiredAt",
+  "createdAt",
+  "registeredAt",
+  "storedDate",
+  "status",
+  "color",
+  "imageUrl",
+  "photoUrl",
+  "mosaicImageUrl",
+] as const;
+
 function buildLostItemMultipartForm(
   fields: Record<string, string | undefined>,
   image?: string | null
 ): FormData {
   const form = new FormData();
-
-  const itemName = firstNonEmpty(fields.itemName, fields.name);
-  if (itemName) form.append("itemName", itemName);
-
-  const foundLocation = firstNonEmpty(fields.foundLocation, fields.location, fields.place);
-  if (foundLocation) form.append("foundLocation", foundLocation);
-
-  const storedLocation = firstNonEmpty(fields.storedLocation, fields.storage);
-  if (storedLocation) form.append("storedLocation", storedLocation);
-
-  const storedDate = firstNonEmpty(
-    fields.storedDate,
-    fields.foundAt,
-    fields.lostAt,
-    fields.acquiredAt,
-    fields.createdAt,
-    fields.registeredAt
-  );
-  if (storedDate) form.append("storedDate", storedDate);
-
-  const contact = firstNonEmpty(fields.contact, fields.memo);
-  if (contact) form.append("contact", contact);
-
-  const itemType = fields.itemType?.trim();
-  if (itemType) form.append("itemType", itemType);
-
-  const color = fields.color?.trim();
-  if (color) form.append("color", color);
-
-  const trimmedImage = image?.trim();
-  if (trimmedImage?.startsWith("data:")) {
-    const file = dataUrlToFile(trimmedImage);
-    if (file) form.append("image", file, file.name);
+  const category = fields.category?.trim();
+  const merged: Record<string, string | undefined> = {
+    ...fields,
+    itemType: fields.itemType?.trim() || category,
+  };
+  appendFormFields(form, merged, LOST_ITEM_MULTIPART_KEYS);
+  if (category && !fields.itemType?.trim()) {
+    form.append("itemType", category);
   }
-
+  appendImageFile(form, image);
   return form;
 }
 
-/** 분실물 등록 — base64 미리보기는 multipart(백엔드 필드명), URL만 있으면 JSON */
+/** DANDI_Backend ReportController.createMultipart */
+const REPORT_MULTIPART_KEYS = [
+  "itemName",
+  "name",
+  "category",
+  "lostAt",
+  "foundAt",
+  "location",
+  "place",
+  "storage",
+  "memo",
+  "ownerEmail",
+  "ownerName",
+  "reporterEmail",
+  "reporterName",
+  "imageUrl",
+  "photoUrl",
+  "mosaicImageUrl",
+] as const;
+
+function buildReportMultipartForm(
+  fields: Record<string, string | undefined>,
+  image?: string | null
+): FormData {
+  const form = new FormData();
+  appendFormFields(form, fields, REPORT_MULTIPART_KEYS);
+  appendImageFile(form, image);
+  return form;
+}
+
+/** 분실물 등록 — 사진(data URL)은 multipart, URL만 있으면 JSON */
 export async function postLostItemCreate(
   fields: Record<string, string | undefined>,
   image?: string | null
 ): Promise<Record<string, unknown>> {
-  const paths = ["/api/lost-items", "/api/admin/lost-items"];
+  const path = "/api/lost-items";
   const hasDataImage = Boolean(image?.trim().startsWith("data:"));
 
   if (hasDataImage) {
-    let lastError: Error | null = null;
-    for (const path of paths) {
-      const form = buildLostItemMultipartForm(fields, image);
-      try {
-        return await apiFormDataPost<Record<string, unknown>>(path, form);
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-      }
-    }
-    if (lastError) throw lastError;
+    const form = buildLostItemMultipartForm(fields, image);
+    return apiFormDataPost<Record<string, unknown>>(path, form);
   }
 
   const { apiJson } = await import("@/lib/api-json");
@@ -140,19 +169,28 @@ export async function postLostItemCreate(
   if (url) {
     body.image = url;
     body.imageUrl = url;
+    body.photoUrl = url;
     body.mosaicImageUrl = url;
   }
-  return apiJson<Record<string, unknown>>(paths[0], {
+  return apiJson<Record<string, unknown>>(path, {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-/** 신고 등록 — 백엔드는 JSON @RequestBody만 수신 (multipart 미지원) */
+/** 신고 등록 — 사진(data URL)은 multipart(S3 업로드), 없으면 JSON */
 export async function postReportCreate(
   fields: Record<string, string | undefined>,
   image?: string | null
 ): Promise<Record<string, unknown>> {
+  const path = "/api/reports";
+  const hasDataImage = Boolean(image?.trim().startsWith("data:"));
+
+  if (hasDataImage) {
+    const form = buildReportMultipartForm(fields, image);
+    return apiFormDataPost<Record<string, unknown>>(path, form);
+  }
+
   const { apiJson } = await import("@/lib/api-json");
   const { apiImageFields } = await import("@/lib/media-url");
   const body: Record<string, string> = {};
@@ -160,7 +198,7 @@ export async function postReportCreate(
     if (value != null && value !== "") body[key] = value;
   });
   Object.assign(body, apiImageFields(image));
-  return apiJson<Record<string, unknown>>("/api/reports", {
+  return apiJson<Record<string, unknown>>(path, {
     method: "POST",
     body: JSON.stringify(body),
   });

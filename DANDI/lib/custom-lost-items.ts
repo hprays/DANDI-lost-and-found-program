@@ -96,6 +96,22 @@ export function setLostItemOverride(id: string, patch: Partial<CustomLostItem>) 
   persistOverrides(current);
 }
 
+/** 삭제 후 홈에 사진만 남는 현상 방지 — override에 image만 남아 재적용되는 경우 제거 */
+export function clearLostItemOverridesForIds(ids: Array<string | undefined | null>) {
+  if (typeof window === "undefined") return;
+  const drop = new Set(ids.map((id) => String(id ?? "").trim()).filter(Boolean));
+  if (drop.size === 0) return;
+  const current = getLostItemOverridesRaw();
+  let changed = false;
+  for (const key of Object.keys(current)) {
+    if (drop.has(key)) {
+      delete current[key];
+      changed = true;
+    }
+  }
+  if (changed) persistOverrides(current);
+}
+
 export function getDeletedLostItemIds(): string[] {
   if (typeof window === "undefined") return [];
   const raw = window.localStorage.getItem(LOST_ITEM_DELETED_IDS_KEY);
