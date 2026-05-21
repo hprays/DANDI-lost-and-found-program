@@ -1,53 +1,62 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Search } from "lucide-react";
-import { signInWithPopup, type AuthError } from "firebase/auth";
-import { firebaseAuth, googleProvider } from "@/lib/firebase-client";
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Search } from 'lucide-react';
+import { signInWithPopup, type AuthError } from 'firebase/auth';
+import { firebaseAuth, googleProvider } from '@/lib/firebase-client';
 import {
   extractStudentIdFromEmail,
   isAdminEmail,
   isDankookEmail,
   setAuthSession,
-} from "@/lib/auth-session";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+} from '@/lib/auth-session';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
-const AUTH_DEMO_MODE = process.env.NEXT_PUBLIC_AUTH_DEMO_MODE === "true";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, '') ?? '';
+const AUTH_DEMO_MODE = process.env.NEXT_PUBLIC_AUTH_DEMO_MODE === 'true';
 
 function toKoreanFirebaseError(error: unknown): string {
   const code = (error as AuthError | undefined)?.code;
   switch (code) {
-    case "auth/popup-closed-by-user":
-      return "로그인 창이 닫혔습니다. 다시 시도해 주세요.";
-    case "auth/cancelled-popup-request":
-    case "auth/popup-blocked":
-      return "팝업이 차단되었습니다. 브라우저 팝업 차단을 해제한 뒤 다시 시도해 주세요.";
-    case "auth/network-request-failed":
-      return "네트워크 연결이 불안정합니다. 잠시 후 다시 시도해 주세요.";
-    case "auth/internal-error":
-      return "내부 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+    case 'auth/popup-closed-by-user':
+      return '로그인 창이 닫혔습니다. 다시 시도해 주세요.';
+    case 'auth/cancelled-popup-request':
+    case 'auth/popup-blocked':
+      return '팝업이 차단되었습니다. 브라우저 팝업 차단을 해제한 뒤 다시 시도해 주세요.';
+    case 'auth/network-request-failed':
+      return '네트워크 연결이 불안정합니다. 잠시 후 다시 시도해 주세요.';
+    case 'auth/internal-error':
+      return '내부 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
     default:
       if (error instanceof Error) return error.message;
-      return "Google 로그인 중 오류가 발생했습니다.";
+      return 'Google 로그인 중 오류가 발생했습니다.';
   }
 }
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState('');
 
   const onGoogleLogin = async () => {
     if (!AUTH_DEMO_MODE && !API_BASE_URL) {
-      setMessage("백엔드 주소가 설정되지 않았습니다. 관리자에게 문의해 주세요.");
+      setMessage(
+        '백엔드 주소가 설정되지 않았습니다. 관리자에게 문의해 주세요.',
+      );
       return;
     }
 
     setLoading(true);
-    setMessage("");
+    setMessage('');
     try {
       const credential = await signInWithPopup(firebaseAuth, googleProvider);
       const userEmail = credential.user.email ?? undefined;
@@ -59,7 +68,7 @@ export default function LoginPage() {
         } catch {
           // ignore sign-out error
         }
-        setMessage("단국대 이메일(@dankook.ac.kr)만 로그인 가능합니다.");
+        setMessage('단국대 이메일(@dankook.ac.kr)만 로그인 가능합니다.');
         return;
       }
 
@@ -73,30 +82,33 @@ export default function LoginPage() {
         setAuthSession({
           accessToken: firebaseIdToken,
           profileCompleted: true,
-          provider: "firebase-google",
+          provider: 'firebase-google',
           name: userName,
           email: userEmail,
           studentId,
           isAdmin: demoAdmin,
         });
-        router.replace(demoAdmin ? "/admin" : "/home");
-        window.dispatchEvent(new CustomEvent("dandi-auth-changed"));
+        router.replace(demoAdmin ? '/admin' : '/home');
+        window.dispatchEvent(new CustomEvent('dandi-auth-changed'));
         return;
       }
 
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${firebaseIdToken}`,
         },
         body: JSON.stringify({ idToken: firebaseIdToken }),
       });
 
       if (!response.ok) {
-        let serverMessage = "로그인 처리에 실패했습니다.";
+        let serverMessage = '로그인 처리에 실패했습니다.';
         try {
-          const err = (await response.json()) as { message?: string; error?: string };
+          const err = (await response.json()) as {
+            message?: string;
+            error?: string;
+          };
           serverMessage = err.message || err.error || serverMessage;
         } catch {
           // ignore parse error
@@ -115,11 +127,14 @@ export default function LoginPage() {
 
       const accessToken = data.accessToken ?? firebaseIdToken;
       const profileCompleted = Boolean(data.profileCompleted);
-      const backendAdmin = Boolean(data.isAdmin) || data.role === "ADMIN" || data.role === "ROLE_ADMIN";
+      const backendAdmin =
+        Boolean(data.isAdmin) ||
+        data.role === 'ADMIN' ||
+        data.role === 'ROLE_ADMIN';
       setAuthSession({
         accessToken,
         profileCompleted,
-        provider: "firebase-google",
+        provider: 'firebase-google',
         name: userName,
         email: userEmail,
         studentId,
@@ -129,9 +144,9 @@ export default function LoginPage() {
 
       const isAdmin = backendAdmin || adminFlag;
       if (profileCompleted) {
-        router.replace(isAdmin ? "/admin" : "/home");
+        router.replace(isAdmin ? '/admin' : '/home');
       } else {
-        router.replace("/onboarding");
+        router.replace('/onboarding');
       }
     } catch (error) {
       setMessage(toKoreanFirebaseError(error));
@@ -148,16 +163,24 @@ export default function LoginPage() {
             <Search className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-3xl">단디 로그인</CardTitle>
-          <CardDescription>단국대학교 계정(@dankook.ac.kr)으로 안전하게 로그인하세요.</CardDescription>
+          <CardDescription>
+            단국대학교 계정(@dankook.ac.kr)으로 안전하게 로그인하세요.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Button className="w-full" onClick={onGoogleLogin} disabled={loading}>
-            {loading ? "로그인 진행 중..." : "학교 계정으로 로그인"}
+            {loading ? '로그인 진행 중...' : '학교 계정으로 로그인'}
           </Button>
           {AUTH_DEMO_MODE ? (
-            <p className="text-center text-xs text-amber-700">임시 데모 모드: 백엔드 로그인 API 없이 홈으로 이동합니다.</p>
+            <p className="text-center text-xs text-amber-700">
+              임시 데모 모드: 백엔드 로그인 API 없이 홈으로 이동합니다.
+            </p>
           ) : null}
-          {message ? <p className="text-center text-sm font-medium text-red-600">{message}</p> : null}
+          {message ? (
+            <p className="text-center text-sm font-medium text-red-600">
+              {message}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </div>

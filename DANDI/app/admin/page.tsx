@@ -1,54 +1,83 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
-import { Camera, CameraOff, CheckCircle2, CircleX, Clock3, Loader2, ShieldAlert } from "lucide-react";
-import { AppShell } from "@/components/app-shell";
-import { extractStudentIdFromEmail, getAuthSession, type AuthSession } from "@/lib/auth-session";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import { MAX_IMAGE_BYTES } from "@/lib/constants";
-import { applyLostItemAdminChanges, setLostItemOverride } from "@/lib/custom-lost-items";
-import { enrichPublishedItemsWithReports } from "@/lib/published-lost-items";
-import { resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
-import { getPublishedLostItems, dedupePublishedCatalog } from "@/lib/published-lost-items";
-import { useDandiState, type LostReport, type PendingReportPatch } from "@/lib/dandi-state";
-import { attachStreamToVideo, requestCameraStream } from "@/lib/camera-stream";
-import { BuildingLocationPicker } from "@/components/building-location-picker";
-import { ManageLocationPickers } from "@/components/manage-location-pickers";
-import { useBuildingLocationField } from "@/lib/building-location";
+import Link from 'next/link';
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import Image from 'next/image';
+import {
+  Camera,
+  CameraOff,
+  CheckCircle2,
+  CircleX,
+  Clock3,
+  Loader2,
+  ShieldAlert,
+} from 'lucide-react';
+import { AppShell } from '@/components/app-shell';
+import {
+  extractStudentIdFromEmail,
+  getAuthSession,
+  type AuthSession,
+} from '@/lib/auth-session';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { MAX_IMAGE_BYTES } from '@/lib/constants';
+import {
+  findCatalogItemByHint,
+  resolveServerLostItemId,
+} from '@/lib/catalog-identity';
+import {
+  applyLostItemAdminChanges,
+  setLostItemOverride,
+} from '@/lib/custom-lost-items';
+import { compressImageFile } from '@/lib/image-compress';
+import { getAuthorizationHeaders } from '@/lib/auth-token';
+import { enrichPublishedItemsWithReports } from '@/lib/published-lost-items';
+import { resolveDisplayImageUrl, resolveItemImageUrl } from '@/lib/media-url';
+import {
+  getPublishedLostItems,
+  dedupePublishedCatalog,
+} from '@/lib/published-lost-items';
+import {
+  useDandiState,
+  type LostReport,
+  type PendingReportPatch,
+} from '@/lib/dandi-state';
+import { attachStreamToVideo, requestCameraStream } from '@/lib/camera-stream';
+import { BuildingLocationPicker } from '@/components/building-location-picker';
+import { ManageLocationPickers } from '@/components/manage-location-pickers';
+import { useBuildingLocationField } from '@/lib/building-location';
 import {
   displayFoundDateTime,
   displayRegistrationDateTime,
   formatDateTimeLabel,
   sanitizeLocation,
   toDatetimeLocalValue,
-} from "@/lib/format-display";
+} from '@/lib/format-display';
 import {
   decodeQrFromVideo,
   isBarcodeDetectorSupported,
   isQrAutoScanSupported,
   isValidPickupToken,
   normalizePickupToken,
-} from "@/lib/qr-scanner";
+} from '@/lib/qr-scanner';
 import {
   buildVisionFormData,
   fetchVisionResult,
   normalizeVisionResult,
+  pickMosaicImageUrl,
   resolveVisionDocumentType,
   resolveVisionPublishImage,
   wantsVisionMask,
   type NormalizedVisionResult,
-} from "@/lib/vision-utils";
-import { categories } from "@/lib/mock-data";
+} from '@/lib/vision-utils';
+import { categories } from '@/lib/mock-data';
 
-const selectableCategories = categories.filter((c) => c !== "전체");
+const selectableCategories = categories.filter((c) => c !== '전체');
 type ManageDraft = {
   name: string;
   category: string;
@@ -61,10 +90,10 @@ type ManageDraft = {
 };
 
 function formatFoundAtLabel(foundAt: string): string {
-  if (!foundAt) return "";
+  if (!foundAt) return '';
   const parsed = new Date(foundAt);
   if (Number.isNaN(parsed.getTime())) return foundAt;
-  return parsed.toLocaleString("ko-KR", { hour12: false });
+  return parsed.toLocaleString('ko-KR', { hour12: false });
 }
 
 function buildManageDraft(item: {
@@ -79,19 +108,20 @@ function buildManageDraft(item: {
   storage?: string;
 }): ManageDraft {
   return {
-    name: item.name ?? "",
-    category: item.category ?? selectableCategories[0] ?? "기타",
-    type: item.type ?? "",
-    place: item.place ?? "",
-    foundAt: toDatetimeLocalValue(item.foundAt ?? item.time ?? ""),
-    storage: item.storage ?? "",
-    memo: item.memo ?? "",
-    image: resolveItemImageUrl(item.image) ?? "",
+    name: item.name ?? '',
+    category: item.category ?? selectableCategories[0] ?? '기타',
+    type: item.type ?? '',
+    place: item.place ?? '',
+    foundAt: toDatetimeLocalValue(item.foundAt ?? item.time ?? ''),
+    storage: item.storage ?? '',
+    memo: item.memo ?? '',
+    image: resolveItemImageUrl(item.image) ?? '',
   };
 }
 
 export default function AdminPage() {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
+  const API_BASE_URL =
+    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, '') ?? '';
   const {
     reports,
     resolveReport,
@@ -110,7 +140,8 @@ export default function AdminPage() {
     refreshHomeCatalog,
   } = useDandiState();
 
-  const [adminCheckSession, setAdminCheckSession] = useState<AuthSession | null>(null);
+  const [adminCheckSession, setAdminCheckSession] =
+    useState<AuthSession | null>(null);
   const [adminChecked, setAdminChecked] = useState(false);
   useEffect(() => {
     const rafId = window.requestAnimationFrame(() => {
@@ -128,39 +159,61 @@ export default function AdminPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 관리자 탭: 검수 목록만 조용히 동기화(홈 카탈로그·스크롤 튐 방지)
   }, [isAdmin, apiConfigured]);
-  const [regName, setRegName] = useState("");
-  const [regCategory, setRegCategory] = useState(selectableCategories[0] ?? "기타");
+  const [regName, setRegName] = useState('');
+  const [regCategory, setRegCategory] = useState(
+    selectableCategories[0] ?? '기타',
+  );
   const regFoundLocation = useBuildingLocationField();
   const regStorageLocation = useBuildingLocationField();
-  const [regFoundAt, setRegFoundAt] = useState("");
-  const [regMemo, setRegMemo] = useState("");
-  const [regMessage, setRegMessage] = useState("");
-  const [actionMessage, setActionMessage] = useState("");
-  const [pickupToken, setPickupToken] = useState("");
-  const [pickupMessage, setPickupMessage] = useState("");
+  const [regFoundAt, setRegFoundAt] = useState('');
+  const [regMemo, setRegMemo] = useState('');
+  const [regMessage, setRegMessage] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
+  const [pickupToken, setPickupToken] = useState('');
+  const [pickupMessage, setPickupMessage] = useState('');
   const [visionFile, setVisionFile] = useState<File | null>(null);
   const [visionPreview, setVisionPreview] = useState<string | null>(null);
   const [visionDataUrl, setVisionDataUrl] = useState<string | null>(null);
   const [visionLoading, setVisionLoading] = useState(false);
-  const [visionMessage, setVisionMessage] = useState("");
-  const [visionResultId, setVisionResultId] = useState("");
-  const [visionResult, setVisionResult] = useState<NormalizedVisionResult | null>(null);
+  const [visionMessage, setVisionMessage] = useState('');
+  const [visionResultId, setVisionResultId] = useState('');
+  const [visionResult, setVisionResult] =
+    useState<NormalizedVisionResult | null>(null);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
-  const [statusUpdatingType, setStatusUpdatingType] = useState<"resolved" | "unavailable" | null>(null);
-  const [pickupVerifying, setPickupVerifying] = useState(false);
-  const [pickupSearch, setPickupSearch] = useState("");
-  const [pickupTokens, setPickupTokens] = useState<Record<string, string>>({});
-  const [lastVerifiedPass, setLastVerifiedPass] = useState<
-    { itemName?: string; claimantName?: string; claimantEmail?: string; usedAt: string | null } | null
+  const [statusUpdatingType, setStatusUpdatingType] = useState<
+    'resolved' | 'unavailable' | null
   >(null);
+  const [pickupVerifyingKey, setPickupVerifyingKey] = useState<string | null>(
+    null,
+  );
+  const [pickupSearch, setPickupSearch] = useState('');
+  const [pickupTokens, setPickupTokens] = useState<Record<string, string>>({});
+  const [lastVerifiedPass, setLastVerifiedPass] = useState<{
+    itemName?: string;
+    claimantName?: string;
+    claimantEmail?: string;
+    usedAt: string | null;
+  } | null>(null);
   const [registering, setRegistering] = useState(false);
   const [registeredItems, setRegisteredItems] = useState<
-    Array<{ id: string; name: string; category: string; location: string; storage: string; createdAt: string }>
+    Array<{
+      id: string;
+      name: string;
+      category: string;
+      location: string;
+      storage: string;
+      createdAt: string;
+    }>
   >([]);
-  const [manageMessage, setManageMessage] = useState("");
-  const [manageDrafts, setManageDrafts] = useState<Record<string, ManageDraft>>({});
-  const [adminTab, setAdminTab] = useState("register");
-  const [editingPendingReportId, setEditingPendingReportId] = useState<string | null>(null);
+  const [manageMessage, setManageMessage] = useState('');
+  const [manageBusyId, setManageBusyId] = useState<string | null>(null);
+  const [manageDrafts, setManageDrafts] = useState<Record<string, ManageDraft>>(
+    {},
+  );
+  const [adminTab, setAdminTab] = useState('register');
+  const [editingPendingReportId, setEditingPendingReportId] = useState<
+    string | null
+  >(null);
   const [pendingSaveLoading, setPendingSaveLoading] = useState(false);
   const [videoPlayError, setVideoPlayError] = useState<string | null>(null);
 
@@ -169,15 +222,17 @@ export default function AdminPage() {
       homeLostItems
         .map((item) => item.reportId)
         .filter(Boolean)
-        .map(String)
+        .map(String),
     );
     return reports.filter(
-      (report) => report.status === "pending" && !publishedReportIds.has(String(report.id))
+      (report) =>
+        report.status === 'pending' &&
+        !publishedReportIds.has(String(report.id)),
     );
   }, [reports, homeLostItems]);
   const editingPendingReport = useMemo(
     () => pendingReports.find((r) => r.id === editingPendingReportId) ?? null,
-    [pendingReports, editingPendingReportId]
+    [pendingReports, editingPendingReportId],
   );
 
   const buildPendingPatchFromRegisterForm = (): PendingReportPatch => ({
@@ -191,18 +246,18 @@ export default function AdminPage() {
   });
 
   const resetRegisterFormForAdmin = () => {
-    setRegName("");
-    setRegCategory(selectableCategories[0] ?? "기타");
+    setRegName('');
+    setRegCategory(selectableCategories[0] ?? '기타');
     regFoundLocation.reset();
     regStorageLocation.reset();
-    setRegFoundAt("");
-    setRegMemo("");
+    setRegFoundAt('');
+    setRegMemo('');
     setVisionDataUrl(null);
     setVisionPreview(null);
     setVisionFile(null);
     setVisionResult(null);
-    setVisionResultId("");
-    setVisionMessage("");
+    setVisionResultId('');
+    setVisionMessage('');
     setVisionImageMasked(false);
     setVisionMaskId(false);
     setVisionMaskCard(false);
@@ -210,44 +265,55 @@ export default function AdminPage() {
 
   const openPendingReportForEdit = (report: LostReport) => {
     setEditingPendingReportId(report.id);
-    setAdminTab("register");
+    setAdminTab('register');
     setRegName(report.itemName);
-    setRegCategory(report.category || selectableCategories[0] || "기타");
+    setRegCategory(report.category || selectableCategories[0] || '기타');
     regFoundLocation.applyFromLocation(report.location);
     regStorageLocation.applyFromLocation(report.storage ?? report.location);
     setRegFoundAt(toDatetimeLocalValue(report.lostAt));
-    setRegMemo(report.memo ?? "");
+    setRegMemo(report.memo ?? '');
     const image = resolveDisplayImageUrl(report.image) ?? null;
     setVisionPreview(image);
     setVisionDataUrl(image);
     setVisionFile(null);
     setVisionImageMasked(Boolean(image));
     setVisionResult(null);
-    setVisionResultId("");
-    setVisionMessage("");
-    setRegMessage("");
-    setActionMessage("");
+    setVisionResultId('');
+    setVisionMessage('');
+    setRegMessage('');
+    setActionMessage('');
   };
 
   const cancelPendingEdit = () => {
     setEditingPendingReportId(null);
     resetRegisterFormForAdmin();
-    setRegMessage("검수 수정을 취소했습니다.");
+    setRegMessage('검수 수정을 취소했습니다.');
   };
 
   const savePendingReviewDraft = async () => {
     if (!editingPendingReportId) return;
-    if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {
-      setRegMessage("물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.");
+    if (
+      !regName.trim() ||
+      !regCategory.trim() ||
+      !regFoundLocation.isValid ||
+      !regFoundAt ||
+      !regStorageLocation.isValid
+    ) {
+      setRegMessage(
+        '물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.',
+      );
       return;
     }
     setPendingSaveLoading(true);
-    setRegMessage("");
+    setRegMessage('');
     try {
-      const result = await updatePendingReport(editingPendingReportId, buildPendingPatchFromRegisterForm());
+      const result = await updatePendingReport(
+        editingPendingReportId,
+        buildPendingPatchFromRegisterForm(),
+      );
       if (result.ok) {
         setActionMessage(result.message);
-        setAdminTab("pending");
+        setAdminTab('pending');
       } else {
         setRegMessage(result.message);
       }
@@ -256,14 +322,27 @@ export default function AdminPage() {
     }
   };
 
-  const resolvePendingWithForm = async (reportId: string, status: "resolved" | "unavailable") => {
+  const resolvePendingWithForm = async (
+    reportId: string,
+    status: 'resolved' | 'unavailable',
+  ) => {
     const useFormOverrides = editingPendingReportId === reportId;
     const overrides =
-      useFormOverrides && status === "resolved" ? buildPendingPatchFromRegisterForm() : undefined;
-    if (useFormOverrides && status === "resolved") {
-      if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {
-        setActionMessage("습득 완료 전에 물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.");
-        setAdminTab("register");
+      useFormOverrides && status === 'resolved'
+        ? buildPendingPatchFromRegisterForm()
+        : undefined;
+    if (useFormOverrides && status === 'resolved') {
+      if (
+        !regName.trim() ||
+        !regCategory.trim() ||
+        !regFoundLocation.isValid ||
+        !regFoundAt ||
+        !regStorageLocation.isValid
+      ) {
+        setActionMessage(
+          '습득 완료 전에 물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.',
+        );
+        setAdminTab('register');
         return;
       }
     }
@@ -277,10 +356,10 @@ export default function AdminPage() {
           setEditingPendingReportId(null);
           resetRegisterFormForAdmin();
         }
-        setAdminTab(status === "resolved" ? "processed" : "pending");
+        setAdminTab(status === 'resolved' ? 'processed' : 'pending');
         void refreshReportsList();
-        if (status === "resolved") {
-          await refreshHomeCatalog();
+        if (status === 'resolved') {
+          void refreshHomeCatalog();
         }
       }
     } finally {
@@ -288,8 +367,11 @@ export default function AdminPage() {
       setStatusUpdatingType(null);
     }
   };
-  const processedReports = useMemo(() => reports.filter((report) => report.status !== "pending"), [reports]);
-  const needsCatalogLists = adminTab === "manage" || adminTab === "pickup";
+  const processedReports = useMemo(
+    () => reports.filter((report) => report.status !== 'pending'),
+    [reports],
+  );
+  const needsCatalogLists = adminTab === 'manage' || adminTab === 'pickup';
   const managedItems = useMemo(() => {
     if (!needsCatalogLists) return [];
     const merged = dedupePublishedCatalog([
@@ -300,24 +382,43 @@ export default function AdminPage() {
   }, [homeLostItems, reports, needsCatalogLists]);
 
   useEffect(() => {
-    if (!isAdmin || !apiConfigured || adminTab !== "manage") return;
+    if (!isAdmin || !apiConfigured || adminTab !== 'manage') return;
     if (homeLostItems.length === 0) {
       void refreshHomeCatalog();
     }
-  }, [isAdmin, apiConfigured, adminTab, homeLostItems.length, refreshHomeCatalog]);
+  }, [
+    isAdmin,
+    apiConfigured,
+    adminTab,
+    homeLostItems.length,
+    refreshHomeCatalog,
+  ]);
+
+  const pickupItemPool = useMemo(() => {
+    if (adminTab !== 'pickup') return [];
+    return dedupePublishedCatalog(applyLostItemAdminChanges(homeLostItems));
+  }, [adminTab, homeLostItems]);
 
   const registerItem = async () => {
-    if (!regName.trim() || !regCategory.trim() || !regFoundLocation.isValid || !regFoundAt || !regStorageLocation.isValid) {
-      setRegMessage("물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.");
+    if (
+      !regName.trim() ||
+      !regCategory.trim() ||
+      !regFoundLocation.isValid ||
+      !regFoundAt ||
+      !regStorageLocation.isValid
+    ) {
+      setRegMessage(
+        '물품명, 카테고리, 습득 위치, 습득시간, 보관 장소를 입력해 주세요.',
+      );
       return;
     }
     if (
       wantsVisionMask({ maskId: visionMaskId, maskCard: visionMaskCard }) &&
-      visionFile &&
-      !visionImageMasked
+      !visionImageMasked &&
+      !(visionDataUrl || visionPreview)
     ) {
       setRegMessage(
-        "신분증/카드는 체크 후 Vision 분석이 성공하고 마스킹 이미지가 적용된 뒤 등록해 주세요."
+        '신분증/카드는 Vision 분석 후 마스킹 이미지가 적용된 뒤 등록해 주세요.',
       );
       return;
     }
@@ -339,7 +440,7 @@ export default function AdminPage() {
       return;
     }
 
-    const registeredAt = new Date().toLocaleString("ko-KR", { hour12: false });
+    const registeredAt = new Date().toLocaleString('ko-KR', { hour12: false });
     setRegisteredItems((prev) => [
       {
         id: publishResult.itemId ?? `adm-${Date.now()}`,
@@ -352,40 +453,48 @@ export default function AdminPage() {
       ...prev,
     ]);
 
-    setRegName("");
-    setRegCategory(selectableCategories[0] ?? "기타");
+    setRegName('');
+    setRegCategory(selectableCategories[0] ?? '기타');
     regFoundLocation.reset();
     regStorageLocation.reset();
-    setRegFoundAt("");
-    setRegMemo("");
+    setRegFoundAt('');
+    setRegMemo('');
     setVisionDataUrl(null);
     setVisionPreview(null);
     setVisionFile(null);
-    setRegMessage("등록 완료. 홈·검색에 바로 반영되었습니다.");
+    setRegMessage('등록 완료. 홈·검색에 바로 반영되었습니다.');
     setRegistering(false);
   };
 
   const clearLastRegistered = () => {
     setRegisteredItems((prev) => prev.slice(1));
-    setRegMessage("최근 등록 항목을 삭제했습니다.");
+    setRegMessage('최근 등록 항목을 삭제했습니다.');
   };
 
-  const onVerifyPickup = async (token: string, itemId?: string) => {
+  const onVerifyPickup = async (
+    token: string,
+    itemId?: string,
+    busyKey = 'quick',
+  ) => {
     const normalized = normalizePickupToken(token);
     if (!normalized) {
-      setPickupMessage("QR 코드를 입력해 주세요.");
+      setPickupMessage('QR 코드를 입력해 주세요.');
       return;
     }
     if (!isValidPickupToken(normalized)) {
-      setPickupMessage("올바른 수령 코드 형식이 아닙니다. (DKU-로 시작하는 발급 코드)");
+      setPickupMessage(
+        '올바른 수령 코드가 아닙니다. DKU-로 시작하는 전체 코드 또는 숫자·영문 코드만 입력해 주세요.',
+      );
       return;
     }
-    setPickupVerifying(true);
+    setPickupVerifyingKey(busyKey);
+    setPickupMessage('');
     try {
       const result = await verifyPickupPass(normalized);
       setPickupMessage(result.message);
       if (result.ok) {
-        setPickupToken("");
+        setPickupToken('');
+        setScanToken(normalized);
         if (itemId) {
           setPickupTokens((prev) => {
             const next = { ...prev };
@@ -394,16 +503,18 @@ export default function AdminPage() {
           });
         }
         if (result.pass) {
-          setLastVerifiedPass({
+          const verified = {
             itemName: result.pass.itemName,
             claimantName: result.pass.claimantName,
             claimantEmail: result.pass.claimantEmail,
             usedAt: result.pass.usedAt,
-          });
+          };
+          setLastVerifiedPass(verified);
+          setScannedPass(verified);
         }
       }
     } finally {
-      setPickupVerifying(false);
+      setPickupVerifyingKey(null);
     }
   };
 
@@ -411,7 +522,7 @@ export default function AdminPage() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [scanToken, setScanToken] = useState("");
+  const [scanToken, setScanToken] = useState('');
   const [confirmIdCheck, setConfirmIdCheck] = useState(false);
   const [confirmCardCheck, setConfirmCardCheck] = useState(false);
   const [visionMaskId, setVisionMaskId] = useState(false);
@@ -430,11 +541,13 @@ export default function AdminPage() {
     setScanToken(normalized);
     setPickupToken(normalized);
     setCameraError(null);
-    setPickupMessage("QR이 인식되었습니다. 토큰이 입력란에 채워졌습니다.");
+    setPickupMessage('QR이 인식되었습니다. 토큰이 입력란에 채워졌습니다.');
 
-    const target = pickupPasses.find((p) => p.token.toUpperCase() === normalized);
+    const target = pickupPasses.find(
+      (p) => p.token.toUpperCase() === normalized,
+    );
     if (target?.usedAt) {
-      setCameraError("이미 수령 인증이 완료된 QR입니다.");
+      setCameraError('이미 수령 인증이 완료된 QR입니다.');
       setScannedPass(null);
       return true;
     }
@@ -452,7 +565,7 @@ export default function AdminPage() {
             claimantName: undefined,
             claimantEmail: undefined,
             usedAt: null,
-          }
+          },
     );
     setConfirmIdCheck(false);
     setConfirmCardCheck(false);
@@ -486,7 +599,9 @@ export default function AdminPage() {
       const video = videoRef.current;
       if (!video) {
         if (attempt < 40) {
-          rafId = window.requestAnimationFrame(() => void tryAttach(attempt + 1));
+          rafId = window.requestAnimationFrame(
+            () => void tryAttach(attempt + 1),
+          );
         }
         return;
       }
@@ -516,7 +631,11 @@ export default function AdminPage() {
     const tick = async () => {
       if (cancelled || scanHandledRef.current || !videoRef.current) return;
       const video = videoRef.current;
-      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) return;
+      if (
+        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+        !video.videoWidth
+      )
+        return;
 
       const raw = await decodeQrFromVideo(video);
       if (!raw) return;
@@ -526,32 +645,28 @@ export default function AdminPage() {
 
       scanHandledRef.current = true;
       closeCamera();
-      setPickupVerifying(true);
+      setPickupVerifyingKey('scan');
       try {
         const result = await verifyPickupPass(normalized);
         setPickupMessage(result.message);
         if (result.ok) {
-          setPickupToken("");
+          setPickupToken('');
           setScanToken(normalized);
           if (result.pass) {
-            setLastVerifiedPass({
+            const verified = {
               itemName: result.pass.itemName,
               claimantName: result.pass.claimantName,
               claimantEmail: result.pass.claimantEmail,
               usedAt: result.pass.usedAt,
-            });
-            setScannedPass({
-              itemName: result.pass.itemName,
-              claimantName: result.pass.claimantName,
-              claimantEmail: result.pass.claimantEmail,
-              usedAt: result.pass.usedAt,
-            });
+            };
+            setLastVerifiedPass(verified);
+            setScannedPass(verified);
           }
         } else {
           setCameraError(result.message);
         }
       } finally {
-        if (!cancelled) setPickupVerifying(false);
+        if (!cancelled) setPickupVerifyingKey(null);
       }
     };
 
@@ -580,8 +695,10 @@ export default function AdminPage() {
   }, [cameraStream]);
 
   const openCamera = async () => {
-    if (typeof window !== "undefined" && !window.isSecureContext) {
-      setCameraError("카메라는 https:// 또는 http://localhost 에서만 사용할 수 있습니다.");
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      setCameraError(
+        '카메라는 https:// 또는 http://localhost 에서만 사용할 수 있습니다.',
+      );
       return;
     }
     setCameraError(null);
@@ -589,103 +706,131 @@ export default function AdminPage() {
     setScannedPass(null);
     setConfirmIdCheck(false);
     setConfirmCardCheck(false);
-    setScanToken("");
-    setPickupToken("");
+    setScanToken('');
+    setPickupToken('');
     scanHandledRef.current = false;
-    setCameraOpen(true);
+    stopCameraStream();
 
     const result = await requestCameraStream();
     if (!result.ok) {
       setCameraError(result.error);
-      stopCameraStream();
       setCameraOpen(false);
       return;
     }
-    cameraStream?.getTracks().forEach((track) => track.stop());
     setCameraStream(result.stream);
+    setCameraOpen(true);
   };
 
   const onScanFromCamera = () => {
     if (!scanToken.trim()) {
-      setCameraError("스캔된 QR 토큰을 입력해 주세요. (예: DKU-123456)");
+      setCameraError(
+        '수령 코드를 입력해 주세요. (예: DKU-123456 또는 발급된 전체 코드)',
+      );
       return;
     }
-    applyScannedQrToken(scanToken);
+    if (!applyScannedQrToken(scanToken)) {
+      setCameraError('올바른 수령 코드 형식이 아닙니다.');
+      return;
+    }
     setCameraError(null);
   };
 
-  const onFinalizePickup = async () => {
-    const token = normalizePickupToken(scanToken);
+  const onVerifyScanTokenDirect = async () => {
+    const token = normalizePickupToken(scanToken || pickupToken);
     if (!token || !isValidPickupToken(token)) {
-      setCameraError("스캔된 QR 토큰이 없습니다. 카메라로 다시 스캔하거나 토큰을 입력해 주세요.");
+      setCameraError(
+        '수령 코드를 입력해 주세요. (DKU- 전체 코드 또는 숫자·영문만 입력 가능)',
+      );
       return;
     }
     if (!confirmIdCheck) {
-      setCameraError("신분증/학생증 확인 체크가 필요합니다.");
+      setCameraError('신분증/학생증 확인 체크 후 수령 인증해 주세요.');
       return;
     }
     setCameraError(null);
-    await onVerifyPickup(token);
+    await onVerifyPickup(token, undefined, 'scan-input');
     closeCamera();
     scanHandledRef.current = false;
   };
 
+  const onFinalizePickup = async () => {
+    await onVerifyScanTokenDirect();
+  };
+
   const pickupSearchResults = useMemo(() => {
-    if (adminTab !== "pickup") return [];
+    if (adminTab !== 'pickup') return [];
     const verifiedLostIds = new Set(
-      pickupPasses.filter((p) => p.usedAt && p.lostItemId).map((p) => String(p.lostItemId))
+      pickupPasses
+        .filter((p) => p.usedAt && p.lostItemId)
+        .map((p) => String(p.lostItemId)),
     );
-    const available = managedItems.filter((item) => !verifiedLostIds.has(String(item.id)));
+    const available = pickupItemPool.filter(
+      (item) => !verifiedLostIds.has(String(item.id)),
+    );
     const keyword = pickupSearch.trim().toLowerCase();
     if (!keyword) return available.slice(0, 6);
     return available.filter((item) => {
-      const haystack = [item.name, item.category, item.type, item.place, (item as { memo?: string }).memo]
+      const haystack = [
+        item.name,
+        item.category,
+        item.type,
+        item.place,
+        (item as { memo?: string }).memo,
+      ]
         .filter(Boolean)
-        .join(" ")
+        .join(' ')
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [adminTab, managedItems, pickupSearch, pickupPasses]);
+  }, [adminTab, pickupItemPool, pickupSearch, pickupPasses]);
 
   const onVisionFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
-    setVisionFile(file);
     setVisionResult(null);
-    setVisionResultId("");
-    setVisionMessage("");
+    setVisionResultId('');
+    setVisionMessage('');
     setVisionImageMasked(false);
     if (!file) {
-      setVisionPreview(null);
-      setVisionDataUrl(null);
-      return;
-    }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setVisionMessage("사진 용량은 10MB 이하만 가능합니다.");
       setVisionFile(null);
       setVisionPreview(null);
       setVisionDataUrl(null);
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : null;
-      setVisionPreview(result);
-      setVisionDataUrl(result);
-    };
-    reader.readAsDataURL(file);
+    if (file.size > MAX_IMAGE_BYTES) {
+      setVisionMessage('사진 용량은 10MB 이하만 가능합니다.');
+      setVisionFile(null);
+      setVisionPreview(null);
+      setVisionDataUrl(null);
+      return;
+    }
+    void (async () => {
+      const compressed = await compressImageFile(file);
+      setVisionFile(compressed);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : null;
+        setVisionPreview(result);
+        if (
+          !wantsVisionMask({ maskId: visionMaskId, maskCard: visionMaskCard })
+        ) {
+          setVisionDataUrl(result);
+        }
+      };
+      reader.readAsDataURL(compressed);
+    })();
   };
 
   const applyVisionToRegistration = async (
     analyzePayload: unknown,
     resultId: string,
-    documentType: ReturnType<typeof resolveVisionDocumentType>
+    documentType: ReturnType<typeof resolveVisionDocumentType>,
   ): Promise<string> => {
     const session = getAuthSession();
     if (!session?.accessToken || !API_BASE_URL) {
-      return "로그인이 필요합니다.";
+      return '로그인이 필요합니다.';
     }
 
-    const needsMask = documentType !== "NONE";
+    const needsMask = documentType !== 'NONE';
     const { image, notice } = await resolveVisionPublishImage({
       apiBaseUrl: API_BASE_URL,
       accessToken: session.accessToken,
@@ -706,44 +851,52 @@ export default function AdminPage() {
       setVisionImageMasked(false);
     }
 
-    return notice ?? "Vision 분석이 완료되었습니다.";
+    return notice ?? 'Vision 분석이 완료되었습니다.';
   };
 
   const onAnalyzeVision = async () => {
     if (!visionFile) {
-      setVisionMessage("먼저 분석할 이미지를 선택해 주세요.");
+      setVisionMessage('먼저 분석할 이미지를 선택해 주세요.');
       return;
     }
     if (!API_BASE_URL) {
-      setVisionMessage("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
+      setVisionMessage('NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.');
       return;
     }
-    const session = getAuthSession();
-    if (!session?.accessToken) {
-      setVisionMessage("관리자 토큰이 없습니다. 다시 로그인해 주세요.");
+    const authHeaders = await getAuthorizationHeaders();
+    if (!authHeaders.Authorization) {
+      setVisionMessage('관리자 토큰이 없습니다. 다시 로그인해 주세요.');
       return;
     }
 
-    const documentType = resolveVisionDocumentType({ maskId: visionMaskId, maskCard: visionMaskCard });
-    const formData = buildVisionFormData(visionFile, { maskId: visionMaskId, maskCard: visionMaskCard });
+    const documentType = resolveVisionDocumentType({
+      maskId: visionMaskId,
+      maskCard: visionMaskCard,
+    });
+    const compressed = await compressImageFile(visionFile);
+    const formData = buildVisionFormData(compressed, {
+      maskId: visionMaskId,
+      maskCard: visionMaskCard,
+    });
 
     setVisionLoading(true);
-    setVisionMessage("");
+    setVisionMessage('');
     try {
       const response = await fetch(`${API_BASE_URL}/api/admin/vision/analyze`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.accessToken}`,
-        },
+        method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
       if (!response.ok) {
-        let serverMessage = "Vision 분석 요청에 실패했습니다.";
+        let serverMessage = 'Vision 분석 요청에 실패했습니다.';
         try {
-          const err = (await response.json()) as { message?: string; error?: string };
+          const err = (await response.json()) as {
+            message?: string;
+            error?: string;
+          };
           serverMessage = err.message || err.error || serverMessage;
         } catch {
-          const text = await response.text().catch(() => "");
+          const text = await response.text().catch(() => '');
           if (text) serverMessage = text.slice(0, 300);
         }
         setVisionMessage(serverMessage);
@@ -754,16 +907,28 @@ export default function AdminPage() {
       const resultId = normalized.id;
       setVisionResult(normalized);
       setVisionResultId(resultId);
-      if (normalized.mosaicImageUrl) {
-        setVisionDataUrl(normalized.mosaicImageUrl);
-        setVisionPreview(normalized.mosaicImageUrl);
-        setVisionImageMasked(documentType !== "NONE");
+      const mosaic = normalized.mosaicImageUrl ?? pickMosaicImageUrl(data);
+      if (mosaic) {
+        setVisionDataUrl(mosaic);
+        setVisionPreview(mosaic);
+        setVisionImageMasked(documentType !== 'NONE');
+        setVisionMessage(
+          'Vision 분석 완료. 등록용 마스킹 이미지가 적용되었습니다.',
+        );
+      } else {
+        const applyMessage = await applyVisionToRegistration(
+          data,
+          resultId,
+          documentType,
+        );
+        setVisionMessage(applyMessage);
       }
-
-      const applyMessage = await applyVisionToRegistration(data, resultId, documentType);
-      setVisionMessage(applyMessage);
     } catch (error) {
-      setVisionMessage(error instanceof Error ? error.message : "Vision 분석 중 오류가 발생했습니다.");
+      setVisionMessage(
+        error instanceof Error
+          ? error.message
+          : 'Vision 분석 중 오류가 발생했습니다.',
+      );
     } finally {
       setVisionLoading(false);
     }
@@ -771,55 +936,80 @@ export default function AdminPage() {
 
   const onFetchVisionResult = async () => {
     if (!visionResultId.trim()) {
-      setVisionMessage("조회할 분석 결과 ID를 입력해 주세요.");
+      setVisionMessage('조회할 분석 결과 ID를 입력해 주세요.');
       return;
     }
     if (!API_BASE_URL) {
-      setVisionMessage("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
+      setVisionMessage('NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.');
       return;
     }
     const session = getAuthSession();
     if (!session?.accessToken) {
-      setVisionMessage("관리자 토큰이 없습니다. 다시 로그인해 주세요.");
+      setVisionMessage('관리자 토큰이 없습니다. 다시 로그인해 주세요.');
       return;
     }
 
-    const documentType = resolveVisionDocumentType({ maskId: visionMaskId, maskCard: visionMaskCard });
+    const documentType = resolveVisionDocumentType({
+      maskId: visionMaskId,
+      maskCard: visionMaskCard,
+    });
     setVisionLoading(true);
-    setVisionMessage("");
+    setVisionMessage('');
     try {
-      const data = await fetchVisionResult(API_BASE_URL, session.accessToken, visionResultId.trim());
+      const data = await fetchVisionResult(
+        API_BASE_URL,
+        session.accessToken,
+        visionResultId.trim(),
+      );
       const normalized = normalizeVisionResult(data);
       setVisionResult(normalized);
       if (normalized.mosaicImageUrl) {
         setVisionDataUrl(normalized.mosaicImageUrl);
         setVisionPreview(normalized.mosaicImageUrl);
-        setVisionImageMasked(documentType !== "NONE");
+        setVisionImageMasked(documentType !== 'NONE');
       }
       const applyMessage = await applyVisionToRegistration(
         data,
         normalized.id || visionResultId.trim(),
-        documentType
+        documentType,
       );
-      setVisionMessage(applyMessage || "분석 결과를 불러와 등록용 이미지에 반영했습니다.");
+      setVisionMessage(
+        applyMessage || '분석 결과를 불러와 등록용 이미지에 반영했습니다.',
+      );
     } catch (error) {
-      setVisionMessage(error instanceof Error ? error.message : "분석 결과 조회 중 오류가 발생했습니다.");
+      setVisionMessage(
+        error instanceof Error
+          ? error.message
+          : '분석 결과 조회 중 오류가 발생했습니다.',
+      );
     } finally {
       setVisionLoading(false);
     }
   };
 
   const onSaveManagedItem = async (itemId: string) => {
-    const origin = managedItems.find((it) => it.id === itemId);
-    if (!origin) return;
-    const draft = manageDrafts[itemId] ?? buildManageDraft(origin);
+    if (manageBusyId) return;
+    const origin =
+      findCatalogItemByHint(itemId, managedItems) ??
+      managedItems.find((it) => it.id === itemId);
+    if (!origin) {
+      setManageMessage('수정할 물품을 찾을 수 없습니다.');
+      return;
+    }
+    const draftKey = origin.id;
+    const draft =
+      manageDrafts[draftKey] ??
+      manageDrafts[itemId] ??
+      buildManageDraft(origin);
 
     const savedTime = draft.foundAt.trim()
-      ? formatFoundAtLabel(draft.foundAt) || formatDateTimeLabel(draft.foundAt) || draft.foundAt.trim()
-      : origin.foundAt?.trim() || origin.time?.trim() || "";
+      ? formatFoundAtLabel(draft.foundAt) ||
+        formatDateTimeLabel(draft.foundAt) ||
+        draft.foundAt.trim()
+      : origin.foundAt?.trim() || origin.time?.trim() || '';
 
     if (!draft.name.trim() || !draft.category.trim() || !draft.place.trim()) {
-      setManageMessage("물품명, 카테고리, 습득 위치를 입력해 주세요.");
+      setManageMessage('물품명, 카테고리, 습득 위치를 입력해 주세요.');
       return;
     }
 
@@ -836,41 +1026,66 @@ export default function AdminPage() {
       createdAt: origin.createdAt,
     };
 
-    const apiId = String((origin as { lostItemId?: string }).lostItemId ?? origin.id ?? itemId);
-    const result = await updateHomeLostItem(apiId, patch);
-    if (!result.ok) {
+    const apiId = resolveServerLostItemId(origin, itemId, managedItems);
+    setManageBusyId(draftKey);
+    setManageMessage('');
+    try {
+      const result = await updateHomeLostItem(apiId, patch);
+      if (!result.ok) {
+        setManageMessage(result.message);
+        return;
+      }
+      setLostItemOverride(draftKey, patch);
+      if (apiId !== draftKey) setLostItemOverride(apiId, patch);
+      setManageDrafts((prev) => {
+        const next = { ...prev };
+        delete next[draftKey];
+        delete next[itemId];
+        delete next[apiId];
+        return next;
+      });
       setManageMessage(result.message);
-      return;
+    } finally {
+      setManageBusyId(null);
     }
-    setLostItemOverride(itemId, patch);
-    setManageDrafts((prev) => {
-      const next = { ...prev };
-      delete next[itemId];
-      return next;
-    });
-    setManageMessage(result.message);
   };
 
   const onDeleteManagedItem = async (itemId: string) => {
-    const target = managedItems.find((it) => it.id === itemId);
+    if (manageBusyId) return;
+    const target =
+      findCatalogItemByHint(itemId, managedItems) ??
+      managedItems.find((it) => it.id === itemId);
     if (!target) {
-      setManageMessage("삭제할 물품을 찾을 수 없습니다.");
+      setManageMessage('삭제할 물품을 찾을 수 없습니다.');
       return;
     }
-    const result = await removeHomeLostItem(itemId);
-    if (!result.ok) {
+    const apiId = resolveServerLostItemId(target, itemId, managedItems);
+    setManageBusyId(target.id);
+    setManageMessage('');
+    try {
+      const result = await removeHomeLostItem(apiId);
+      if (!result.ok) {
+        setManageMessage(result.message);
+        return;
+      }
+      setManageDrafts((prev) => {
+        const next = { ...prev };
+        delete next[target.id];
+        delete next[itemId];
+        delete next[apiId];
+        return next;
+      });
       setManageMessage(result.message);
-      return;
+    } finally {
+      setManageBusyId(null);
     }
-    setManageDrafts((prev) => {
-      const next = { ...prev };
-      delete next[itemId];
-      return next;
-    });
-    setManageMessage(result.message);
   };
 
-  const onManageDraftChange = (itemId: string, field: keyof ManageDraft, value: string) => {
+  const onManageDraftChange = (
+    itemId: string,
+    field: keyof ManageDraft,
+    value: string,
+  ) => {
     const origin = managedItems.find((it) => it.id === itemId);
     if (!origin) return;
     const base = manageDrafts[itemId] ?? buildManageDraft(origin);
@@ -883,22 +1098,25 @@ export default function AdminPage() {
     }));
   };
 
-  const onManagePhotoChange = (itemId: string, event: ChangeEvent<HTMLInputElement>) => {
+  const onManagePhotoChange = (
+    itemId: string,
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = event.target.files?.[0] ?? null;
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setManageMessage("이미지 파일만 업로드할 수 있습니다.");
+    if (!file.type.startsWith('image/')) {
+      setManageMessage('이미지 파일만 업로드할 수 있습니다.');
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setManageMessage("사진 용량은 10MB 이하만 가능합니다.");
+      setManageMessage('사진 용량은 10MB 이하만 가능합니다.');
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      onManageDraftChange(itemId, "image", result);
-      setManageMessage("");
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      onManageDraftChange(itemId, 'image', result);
+      setManageMessage('');
     };
     reader.readAsDataURL(file);
   };
@@ -913,10 +1131,11 @@ export default function AdminPage() {
               <p className="text-base font-semibold">접근 권한이 없습니다</p>
             </div>
             <p className="text-sm text-muted-foreground">
-              관리자 페이지는 사전에 등록된 관리자 계정만 접근할 수 있습니다. 권한이 필요하다면 시스템 관리자에게 요청해 주세요.
+              관리자 페이지는 사전에 등록된 관리자 계정만 접근할 수 있습니다.
+              권한이 필요하다면 시스템 관리자에게 요청해 주세요.
             </p>
             <p className="text-xs text-muted-foreground">
-              현재 로그인 이메일: <b>{adminCheckSession?.email ?? "-"}</b>
+              현재 로그인 이메일: <b>{adminCheckSession?.email ?? '-'}</b>
             </p>
             <Button asChild variant="outline">
               <Link href="/home">홈으로 이동</Link>
@@ -932,14 +1151,19 @@ export default function AdminPage() {
       <div className="space-y-4">
         {!apiConfigured ? (
           <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            백엔드 주소가 비어 있습니다. `.env.local`에 `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
+            백엔드 주소가 비어 있습니다. `.env.local`에
+            `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
+          <p className="text-xs text-muted-foreground">
+            연동 대상 API: {apiBaseUrl}
+          </p>
         )}
 
         {actionMessage ? (
-          <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-primary">{actionMessage}</div>
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-primary">
+            {actionMessage}
+          </div>
         ) : null}
 
         <div className="grid gap-3 md:grid-cols-3">
@@ -953,14 +1177,25 @@ export default function AdminPage() {
             <CardContent className="p-4">
               <p className="text-xs text-muted-foreground">습득/수령 완료</p>
               <p className="mt-1 text-2xl font-bold">
-                {reports.filter((report) => report.status === "resolved" || report.status === "picked_up").length}
+                {
+                  reports.filter(
+                    (report) =>
+                      report.status === 'resolved' ||
+                      report.status === 'picked_up',
+                  ).length
+                }
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
               <p className="text-xs text-muted-foreground">습득 불가</p>
-              <p className="mt-1 text-2xl font-bold">{reports.filter((report) => report.status === "unavailable").length}</p>
+              <p className="mt-1 text-2xl font-bold">
+                {
+                  reports.filter((report) => report.status === 'unavailable')
+                    .length
+                }
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -976,763 +1211,1183 @@ export default function AdminPage() {
           </TabsList>
 
           <TabsContent value="register" className="space-y-3">
-            {adminTab === "register" ? (
-            <>
-            <Card>
-              <CardHeader>
-                <CardTitle>관리자 분실물 등록</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {editingPendingReport ? (
-                  <div className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-                    <p className="font-semibold">검수 대기 수정 중: {editingPendingReport.itemName}</p>
-                    <p className="mt-1 text-xs text-sky-800">
-                      Vision 분석·사진·습득 위치를 확인한 뒤 「검수 내용 저장」 또는 「습득 완료 처리」를 진행하세요. 저장 전에도
-                      폼 값은 습득 완료 시 함께 반영됩니다.
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button type="button" size="sm" variant="outline" onClick={() => void savePendingReviewDraft()} disabled={pendingSaveLoading}>
-                        {pendingSaveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        검수 내용 저장
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => void resolvePendingWithForm(editingPendingReport.id, "resolved")}
-                        disabled={statusUpdatingId === editingPendingReport.id}
-                      >
-                        습득 완료 처리
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={cancelPendingEdit}>
-                        수정 취소
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                    관리자가 등록한 물품은 <b>검수 대기 없이 홈·검색에 바로</b> 노출됩니다. 사용자 분실 신고는 검수 대기에서
-                    수정·Vision 적용 후 「습득 완료」 처리 시 홈에 등록됩니다.
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <Label>사진 업로드</Label>
-                  <div className="relative h-28 w-full overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="absolute inset-0 z-20 h-full w-full cursor-pointer opacity-0"
-                      onChange={onVisionFileChange}
-                      aria-label="물품 사진 선택"
-                    />
-                    <div className="pointer-events-none flex h-full items-center justify-center px-3 text-center text-sm text-slate-500">
-                      {visionFile ? `선택됨: ${visionFile.name}` : "여기를 눌러 사진 업로드"}
-                    </div>
-                  </div>
-                  <div className="space-y-2 rounded-lg border bg-slate-50 p-3 text-xs">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={visionMaskId}
-                        onChange={(e) => setVisionMaskId(e.target.checked)}
-                      />
-                      <span>신분증·학생증 (체크 시 Vision API로 중요 정보 마스킹/블러 요청)</span>
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={visionMaskCard}
-                        onChange={(e) => setVisionMaskCard(e.target.checked)}
-                      />
-                      <span>카드·체크카드 (documentType=BANK_CARD, 모자이크 이미지 생성)</span>
-                    </label>
-                    <p className="text-muted-foreground">
-                      체크 시 <b>documentType</b> 전송 (신분증→ID_CARD, 카드→BANK_CARD). 등록·홈·DB에는 백엔드 응답{" "}
-                      <b>mosaicImageUrl</b>만 사용합니다 (originalImageUrl 미사용). BANK_CARD는 카드번호·유효기간·카드명 등
-                      넓게 마스킹됩니다.
-                    </p>
-                  </div>
-                  {visionPreview ? (
-                    <div className="overflow-hidden rounded-lg border">
-                      <div className="relative h-64 w-full bg-slate-50 md:h-80">
-                        <Image src={visionPreview} alt="vision-preview" fill className="object-contain object-center" unoptimized />
-                      </div>
-                      {visionMaskId || visionMaskCard ? (
-                        <p className="bg-slate-50 px-2 py-1 text-center text-[11px] text-muted-foreground">
-                          {visionImageMasked
-                            ? "등록·홈·DB에 올라갈 이미지 (서버 모자이크)"
-                            : "「Vision 분석」 후 마스킹 이미지가 여기에 표시됩니다"}
+            {adminTab === 'register' ? (
+              <>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>관리자 분실물 등록</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {editingPendingReport ? (
+                      <div className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+                        <p className="font-semibold">
+                          검수 대기 수정 중: {editingPendingReport.itemName}
                         </p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                    <Input value={visionResultId} onChange={(e) => setVisionResultId(e.target.value)} placeholder="분석 결과 ID 입력 후 조회" />
-                    <div className="flex gap-2">
-                      <Button variant="outline" type="button" onClick={onAnalyzeVision} disabled={visionLoading}>
-                        {visionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        Vision 분석
-                      </Button>
-                      <Button variant="outline" type="button" onClick={onFetchVisionResult} disabled={visionLoading}>
-                        조회
-                      </Button>
-                    </div>
-                  </div>
-                  {visionMessage ? <p className="text-xs font-medium text-primary">{visionMessage}</p> : null}
-                  {visionResult ? (
-                    <div className="space-y-1 rounded-lg border bg-slate-50 p-3 text-xs">
-                      <p>
-                        <span className="font-semibold">분석 ID:</span> {visionResult.id ?? "-"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">documentType:</span> {visionResult.documentType}
-                      </p>
-                      <p>
-                        <span className="font-semibold">ocrApplied:</span> {visionResult.ocrApplied ? "true" : "false"}
-                      </p>
-                      <p className="break-all">
-                        <span className="font-semibold">mosaicImageUrl:</span> {visionResult.mosaicImageUrl ?? "(없음)"}
-                      </p>
-                      <p className="break-all text-muted-foreground">
-                        <span className="font-semibold">originalImageUrl:</span>{" "}
-                        {visionResult.originalImageUrl ?? "(없음)"} — 등록에 사용 안 함
-                      </p>
-                      <p>
-                        <span className="font-semibold">카테고리:</span> {visionResult.category ?? "-"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">라벨:</span> {(visionResult.labels ?? []).join(", ") || "-"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">대표 색상:</span> {visionResult.dominantColor ?? "-"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">OCR 텍스트:</span> {visionResult.text?.slice(0, 120) || "-"}
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-name">물품명</Label>
-                    <Input id="reg-name" value={regName} onChange={(e) => setRegName(e.target.value)} placeholder="예: 검은색 반지갑" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-category">카테고리</Label>
-                    <select
-                      id="reg-category"
-                      value={regCategory}
-                      onChange={(e) => setRegCategory(e.target.value)}
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    >
-                      {selectableCategories.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-muted-foreground">목록을 스크롤해 카테고리를 선택할 수 있습니다.</p>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="reg-found-at">습득 시간</Label>
-                  <Input id="reg-found-at" type="datetime-local" value={regFoundAt} onChange={(e) => setRegFoundAt(e.target.value)} />
-                </div>
-
-                <BuildingLocationPicker
-                  idPrefix="reg-found"
-                  label="습득 위치"
-                  building={regFoundLocation.building}
-                  detail={regFoundLocation.detail}
-                  customText={regFoundLocation.customText}
-                  onBuildingChange={regFoundLocation.setBuilding}
-                  onDetailChange={regFoundLocation.setDetail}
-                  onCustomTextChange={regFoundLocation.setCustomText}
-                  detailPlaceholder="예: 1층 북카페, 307호"
-                />
-
-                <BuildingLocationPicker
-                  idPrefix="reg-storage"
-                  label="보관 장소"
-                  building={regStorageLocation.building}
-                  detail={regStorageLocation.detail}
-                  customText={regStorageLocation.customText}
-                  onBuildingChange={regStorageLocation.setBuilding}
-                  onDetailChange={regStorageLocation.setDetail}
-                  onCustomTextChange={regStorageLocation.setCustomText}
-                  detailPlaceholder="예: 학생팀 425호, 분실물 보관함"
-                />
-
-                <div className="space-y-2">
-                  <Label htmlFor="reg-memo">추가 메모</Label>
-                  <Textarea id="reg-memo" value={regMemo} onChange={(e) => setRegMemo(e.target.value)} placeholder="특징/인수인계 메모" />
-                </div>
-
-                <div className="grid gap-2 md:grid-cols-2">
-                  {editingPendingReport ? (
-                    <>
-                      <Button type="button" onClick={() => void savePendingReviewDraft()} disabled={pendingSaveLoading}>
-                        {pendingSaveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        검수 내용 저장
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() => void resolvePendingWithForm(editingPendingReport.id, "resolved")}
-                        disabled={statusUpdatingId === editingPendingReport.id}
-                      >
-                        습득 완료 처리
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button onClick={registerItem} disabled={registering}>
-                        {registering ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        등록 완료
-                      </Button>
-                      <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={clearLastRegistered}>
-                        등록 삭제
-                      </Button>
-                    </>
-                  )}
-                </div>
-                {regMessage ? <p className="text-sm font-semibold text-primary">{regMessage}</p> : null}
-              </CardContent>
-            </Card>
-
-            {registeredItems.length > 0 ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>등록된 물품 목록</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {registeredItems.map((item) => (
-                    <div key={item.id} className="rounded-lg border p-3 text-sm">
-                      <p className="font-semibold">
-                        {item.name} / {item.category}
-                      </p>
-                      <p className="text-muted-foreground">
-                        {item.location} / 보관: {item.storage}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{item.createdAt}</p>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            ) : null}
-            </>
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="manage" className="space-y-3">
-            {adminTab === "manage" ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>관리자 물품 수정/삭제</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {manageMessage ? <p className="text-sm font-semibold text-primary">{manageMessage}</p> : null}
-                {managedItems.length === 0 ? (
-                  <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
-                    습득 완료 처리된 물품만 관리할 수 있습니다. 검수 대기에서 습득 완료 후 이 목록에 표시됩니다.
-                  </p>
-                ) : (
-                  managedItems.map((item) => {
-                    const draft = manageDrafts[item.id] ?? buildManageDraft(item);
-                    return (
-                      <div key={item.id} className="space-y-4 rounded-xl border bg-white p-4">
-                        <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-700">
-                              분실물 ID: {(item as { lostItemId?: string }).lostItemId ?? item.id}
-                            </p>
-                            {(item as { reportId?: string }).reportId &&
-                            String((item as { reportId?: string }).reportId) !==
-                              String((item as { lostItemId?: string }).lostItemId ?? item.id) ? (
-                              <p className="text-xs text-muted-foreground">
-                                신고 ID: {(item as { reportId?: string }).reportId}
-                              </p>
-                            ) : null}
-                            {(() => {
-                              const registered = displayRegistrationDateTime(item);
-                              const found = displayFoundDateTime(item);
-                              return (
-                                <p className="text-xs text-muted-foreground">
-                                  {registered ? `등록 ${registered}` : "등록 시간 정보 없음"}
-                                  {found ? ` · 습득 ${found}` : null}
-                                </p>
-                              );
-                            })()}
-                          </div>
-                          <Badge variant="secondary">{item.category}</Badge>
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label>물품 사진</Label>
-                          <div className="relative h-40 w-full overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50">
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="absolute inset-0 z-20 h-full w-full cursor-pointer opacity-0"
-                              onChange={(e) => onManagePhotoChange(item.id, e)}
-                              aria-label={`${item.name} 사진 변경`}
-                            />
-                            {draft.image ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={draft.image} alt={draft.name} className="pointer-events-none h-full w-full object-contain bg-slate-50" />
-                            ) : (
-                              <div className="pointer-events-none h-full w-full bg-slate-100" aria-hidden />
-                            )}
-                          </div>
-                          {draft.image ? (
-                            <Button type="button" variant="ghost" size="sm" onClick={() => onManageDraftChange(item.id, "image", "")}>
-                              사진 제거
-                            </Button>
-                          ) : null}
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor={`manage-name-${item.id}`}>물품명</Label>
-                          <Input
-                            id={`manage-name-${item.id}`}
-                            value={draft.name}
-                            onChange={(e) => onManageDraftChange(item.id, "name", e.target.value)}
-                            placeholder="예: 에어팟"
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor={`manage-category-${item.id}`}>카테고리</Label>
-                          <select
-                            id={`manage-category-${item.id}`}
-                            value={draft.category}
-                            onChange={(e) => onManageDraftChange(item.id, "category", e.target.value)}
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        <p className="mt-1 text-xs text-sky-800">
+                          Vision 분석·사진·습득 위치를 확인한 뒤 「검수 내용
+                          저장」 또는 「습득 완료 처리」를 진행하세요. 저장
+                          전에도 폼 값은 습득 완료 시 함께 반영됩니다.
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void savePendingReviewDraft()}
+                            disabled={pendingSaveLoading}
                           >
-                            {selectableCategories.map((c) => (
-                              <option key={c} value={c}>
-                                {c}
-                              </option>
-                            ))}
-                          </select>
-                          <p className="text-xs text-muted-foreground">목록을 스크롤해 카테고리를 선택할 수 있습니다.</p>
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor={`manage-found-at-${item.id}`}>습득 시간</Label>
-                          <Input
-                            id={`manage-found-at-${item.id}`}
-                            type="datetime-local"
-                            value={draft.foundAt}
-                            onChange={(e) => onManageDraftChange(item.id, "foundAt", e.target.value)}
-                          />
-                        </div>
-
-                        <ManageLocationPickers
-                          idPrefix={`manage-${item.id}`}
-                          place={draft.place}
-                          storage={draft.storage}
-                          onPlaceChange={(value) => onManageDraftChange(item.id, "place", value)}
-                          onStorageChange={(value) => onManageDraftChange(item.id, "storage", value)}
-                        />
-
-                        <div className="space-y-2">
-                          <Label htmlFor={`manage-type-${item.id}`}>물품 상세종류</Label>
-                          <Input
-                            id={`manage-type-${item.id}`}
-                            value={draft.type}
-                            onChange={(e) => onManageDraftChange(item.id, "type", e.target.value)}
-                            placeholder="예: 무선이어폰"
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor={`manage-memo-${item.id}`}>상세 사항</Label>
-                          <Textarea
-                            id={`manage-memo-${item.id}`}
-                            value={draft.memo}
-                            onChange={(e) => onManageDraftChange(item.id, "memo", e.target.value)}
-                            placeholder="특징, 색상, 추가 설명"
-                          />
-                        </div>
-
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <Button type="button" onClick={() => onSaveManagedItem(item.id)}>
-                            수정 저장
+                            {pendingSaveLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : null}
+                            검수 내용 저장
                           </Button>
                           <Button
                             type="button"
-                            variant="outline"
-                            className="border-red-300 text-red-600 hover:bg-red-50"
-                            onClick={() => onDeleteManagedItem(item.id)}
+                            size="sm"
+                            onClick={() =>
+                              void resolvePendingWithForm(
+                                editingPendingReport.id,
+                                'resolved',
+                              )
+                            }
+                            disabled={
+                              statusUpdatingId === editingPendingReport.id
+                            }
                           >
-                            삭제
+                            습득 완료 처리
                           </Button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </CardContent>
-            </Card>
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="pending" className="space-y-3">
-            {adminTab === "pending" ? (
-            pendingReports.length === 0 ? (
-              <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">현재 검수 대기 중인 신고가 없습니다.</p>
-            ) : (
-              <>
-              {pendingReports.map((report) => (
-                <Card key={report.id}>
-                  <CardContent className="space-y-3 p-4">
-                    {(() => {
-                      const pendingImg = resolveDisplayImageUrl(report.image);
-                      return pendingImg ? (
-                        <div className="overflow-hidden rounded-lg border bg-slate-50">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={pendingImg} alt={report.itemName} className="mx-auto max-h-56 w-full object-contain" />
-                        </div>
-                      ) : null;
-                    })()}
-                    <div className="flex items-center justify-between">
-                      <p className="font-semibold">{report.itemName}</p>
-                      <Badge>{report.category}</Badge>
-                    </div>
-                    <div className="space-y-1 text-sm text-muted-foreground">
-                      <p>위치: {sanitizeLocation(report.location)}</p>
-                      {report.storage ? <p>보관 장소: {sanitizeLocation(report.storage)}</p> : null}
-                      <p>분실/습득 일시: {formatDateTimeLabel(report.lostAt) || "-"}</p>
-                      <p>접수: {report.createdAt}</p>
-                      {report.ownerName || report.ownerEmail ? (
-                        <p>
-                          신고자:{" "}
-                          {report.ownerName?.trim() ||
-                            extractStudentIdFromEmail(report.ownerEmail) ||
-                            "프로필 미등록 (마이페이지에서 이름 저장 필요)"}{" "}
-                          {report.ownerEmail ? <>({report.ownerEmail})</> : null}
-                        </p>
-                      ) : null}
-                      {report.memo ? (
-                        <div className="mt-2 rounded-lg border bg-slate-50 p-2 text-foreground">
-                          <p className="text-xs font-semibold text-muted-foreground">신고 상세 설명</p>
-                          <p className="whitespace-pre-wrap text-sm">{report.memo}</p>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="grid gap-2 md:grid-cols-3">
-                      <Button type="button" variant="secondary" onClick={() => openPendingReportForEdit(report)}>
-                        수정 (Vision·사진)
-                      </Button>
-                      <Button
-                        variant="outline"
-                        disabled={statusUpdatingId === report.id}
-                        onClick={() => void resolvePendingWithForm(report.id, "resolved")}
-                      >
-                        {statusUpdatingId === report.id && statusUpdatingType === "resolved" ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <CheckCircle2 className="h-4 w-4" />
-                        )}
-                        습득 완료 처리
-                      </Button>
-                      <Button
-                        variant="outline"
-                        disabled={statusUpdatingId === report.id}
-                        onClick={() => void resolvePendingWithForm(report.id, "unavailable")}
-                      >
-                        {statusUpdatingId === report.id && statusUpdatingType === "unavailable" ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <CircleX className="h-4 w-4" />
-                        )}
-                        습득 불가 처리
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      사진·마스킹·위치를 바꾸려면 「수정」으로 등록 탭에서 Vision 분석 후 저장·습득 완료하세요.
-                    </p>
-                  </CardContent>
-                </Card>
-              ))}
-              </>
-            )
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="processed" className="space-y-2">
-            {adminTab === "processed" ? (
-            processedReports.length === 0 ? (
-              <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">처리 완료된 신고 이력이 없습니다.</p>
-            ) : (
-              processedReports.map((report) => (
-                <div key={report.id} className="rounded-xl border bg-white p-3 text-sm">
-                  <p className="font-semibold">{report.itemName}</p>
-                  <p className="text-muted-foreground">{sanitizeLocation(report.location)}</p>
-                  <p className="mt-1 text-xs font-semibold text-primary">
-                    {report.status === "resolved" ? "습득 완료" : report.status === "picked_up" ? "최종 수령 완료" : "습득 불가"} /{" "}
-                    {report.createdAt}
-                  </p>
-                </div>
-              ))
-            )
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="pickup" className="space-y-3">
-            {adminTab === "pickup" ? (
-            <>
-            <Card className="border-primary/40 bg-primary/5">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Camera className="h-5 w-5 text-primary" />
-                  카메라로 QR 인증 시작
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  카메라로 분실자의 수령 QR을 스캔하면 인수자 정보가 자동 표시됩니다. 신분증/학생증을 직접 확인한 뒤 최종 인증을 진행하세요.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {!cameraOpen ? (
-                  <Button onClick={() => void openCamera()}>
-                    <Camera className="h-4 w-4" />
-                    카메라 열기
-                  </Button>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="relative h-56 overflow-hidden rounded-lg border bg-black">
-                      {cameraError ? (
-                        <div className="flex h-full items-center justify-center bg-slate-900 px-4 text-center text-xs text-red-200">
-                          {cameraError}
-                        </div>
-                      ) : (
-                        <>
-                          {!cameraStream ? (
-                            <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900 px-4 text-center text-xs text-slate-300">
-                              카메라 연결 중...
-                            </div>
-                          ) : null}
-                          <video
-                            ref={videoRef}
-                            autoPlay
-                            playsInline
-                            muted
-                            className="h-full w-full bg-black object-cover"
-                          />
-                          {videoPlayError ? (
-                            <div className="absolute inset-x-0 bottom-0 bg-red-950/80 px-2 py-1 text-center text-[10px] text-red-100">
-                              {videoPlayError}
-                            </div>
-                          ) : null}
-                        </>
-                      )}
-                      <div className="pointer-events-none absolute inset-6 rounded-md border-2 border-white/70" />
-                      <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white">
-                        {isQrAutoScanSupported()
-                          ? isBarcodeDetectorSupported()
-                            ? "자동 스캔 중 (BarcodeDetector)"
-                            : "자동 스캔 중 (jsQR)"
-                          : "자동 스캔 미지원 — 토큰 수동 입력"}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label htmlFor="scan-token">스캔된 QR 토큰 (예: DKU-123456)</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          id="scan-token"
-                          value={scanToken}
-                          onChange={(e) => setScanToken(e.target.value)}
-                          placeholder="QR 토큰을 자동/수동으로 입력"
-                        />
-                        <Button type="button" variant="outline" onClick={onScanFromCamera}>
-                          인식 결과 확인
-                        </Button>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        QR이 인식되면 카메라가 꺼지고 서버 검증(/api/pickup-passes/verify)이 자동 실행됩니다. 실패 시
-                        메시지를 확인한 뒤 토큰을 수정해 「최종 수령 인증 완료」로 재시도할 수 있습니다.
-                      </p>
-                    </div>
-
-                    {scanToken ? (
-                      <div className="space-y-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
-                        <p className="font-semibold">인수자/물품 확인</p>
-                        <p className="font-mono text-xs break-all">토큰: {scanToken}</p>
-                        <ul className="space-y-1 text-sm">
-                          <li>물품: {scannedPass?.itemName ?? "(서버 인증 시 확인)"}</li>
-                          <li>인수자: {scannedPass?.claimantName ?? "(서버 인증 시 확인)"}</li>
-                          <li>이메일: {scannedPass?.claimantEmail ?? "-"}</li>
-                        </ul>
-
-                        <div className="space-y-2 rounded-md border border-emerald-200 bg-white p-3 text-xs text-slate-800">
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={confirmIdCheck}
-                              onChange={(e) => setConfirmIdCheck(e.target.checked)}
-                            />
-                            <span>학생증 또는 신분증 본인 확인 완료 (사진은 저장하지 않으며, 확인 시 즉시 마스킹 처리)</span>
-                          </label>
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={confirmCardCheck}
-                              onChange={(e) => setConfirmCardCheck(e.target.checked)}
-                            />
-                            <span>실물/카드(체크카드 등) 일치 여부 확인 (선택)</span>
-                          </label>
-                        </div>
-
-                        <div className="flex gap-2">
-                          <Button onClick={() => void onFinalizePickup()} disabled={pickupVerifying || !confirmIdCheck}>
-                            {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                            최종 수령 인증 완료
-                          </Button>
-                          <Button variant="outline" onClick={closeCamera}>
-                            <CameraOff className="h-4 w-4" />
-                            카메라 종료
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={cancelPendingEdit}
+                          >
+                            수정 취소
                           </Button>
                         </div>
                       </div>
                     ) : (
-                      <Button variant="outline" onClick={closeCamera}>
-                        <CameraOff className="h-4 w-4" />
-                        카메라 종료
-                      </Button>
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        관리자가 등록한 물품은{' '}
+                        <b>검수 대기 없이 홈·검색에 바로</b> 노출됩니다. 사용자
+                        분실 신고는 검수 대기에서 수정·Vision 적용 후 「습득
+                        완료」 처리 시 홈에 등록됩니다.
+                      </div>
                     )}
 
-                    {cameraError ? <p className="text-xs text-red-600">{cameraError}</p> : null}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>분실자가 말한 물품 검색 후 QR 인증</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  카메라가 어려울 때는 키워드 검색으로 물품을 찾아 카드별 QR 입력으로도 인증할 수 있습니다.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Input
-                  value={pickupSearch}
-                  onChange={(e) => setPickupSearch(e.target.value)}
-                  placeholder="검색 (예: 에어팟, 검정 지갑, 혜당관)"
-                />
-                {pickupMessage ? <p className="text-sm font-semibold text-primary">{pickupMessage}</p> : null}
-                {pickupSearchResults.length === 0 ? (
-                  <p className="rounded-lg border bg-slate-50 p-3 text-sm text-muted-foreground">검색 결과가 없습니다.</p>
-                ) : (
-                  pickupSearchResults.map((item) => {
-                    const draftToken = pickupTokens[item.id] ?? "";
-                    return (
-                      <div key={item.id} className="rounded-xl border p-3 text-sm">
-                        <div className="flex items-center justify-between">
-                          <p className="font-semibold">{item.name}</p>
-                          <Badge variant="secondary">{item.category}</Badge>
+                    <div className="space-y-2">
+                      <Label>사진 업로드</Label>
+                      <div className="relative h-28 w-full overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="absolute inset-0 z-20 h-full w-full cursor-pointer opacity-0"
+                          onChange={onVisionFileChange}
+                          aria-label="물품 사진 선택"
+                        />
+                        <div className="pointer-events-none flex h-full items-center justify-center px-3 text-center text-sm text-slate-500">
+                          {visionFile
+                            ? `선택됨: ${visionFile.name}`
+                            : '여기를 눌러 사진 업로드'}
                         </div>
-                        <p className="text-muted-foreground">{item.place}</p>
-                        <div className="mt-3 flex gap-2">
-                          <Input
-                            value={draftToken}
-                            onChange={(e) => setPickupTokens((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                            placeholder="분실자 QR 코드 입력 (예: DKU-123456 또는 발급된 전체 코드)"
+                      </div>
+                      <div className="space-y-2 rounded-lg border bg-slate-50 p-3 text-xs">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={visionMaskId}
+                            onChange={(e) => setVisionMaskId(e.target.checked)}
                           />
+                          <span>
+                            신분증·학생증 (체크 시 Vision API로 중요 정보
+                            마스킹/블러 요청)
+                          </span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={visionMaskCard}
+                            onChange={(e) =>
+                              setVisionMaskCard(e.target.checked)
+                            }
+                          />
+                          <span>
+                            카드·체크카드 (documentType=BANK_CARD, 모자이크
+                            이미지 생성)
+                          </span>
+                        </label>
+                        <p className="text-muted-foreground">
+                          체크 시 <b>documentType</b> 전송 (신분증→ID_CARD,
+                          카드→BANK_CARD). 등록·홈·DB에는 백엔드 응답{' '}
+                          <b>mosaicImageUrl</b>만 사용합니다 (originalImageUrl
+                          미사용). BANK_CARD는 카드번호·유효기간·카드명 등 넓게
+                          마스킹됩니다.
+                        </p>
+                      </div>
+                      {visionPreview ? (
+                        <div className="overflow-hidden rounded-lg border">
+                          <div className="relative h-64 w-full bg-slate-50 md:h-80">
+                            <Image
+                              src={visionPreview}
+                              alt="vision-preview"
+                              fill
+                              className="object-contain object-center"
+                              unoptimized
+                            />
+                          </div>
+                          {visionMaskId || visionMaskCard ? (
+                            <p className="bg-slate-50 px-2 py-1 text-center text-[11px] text-muted-foreground">
+                              {visionImageMasked
+                                ? '등록·홈·DB에 올라갈 이미지 (서버 모자이크)'
+                                : '「Vision 분석」 후 마스킹 이미지가 여기에 표시됩니다'}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                        <Input
+                          value={visionResultId}
+                          onChange={(e) => setVisionResultId(e.target.value)}
+                          placeholder="분석 결과 ID 입력 후 조회"
+                        />
+                        <div className="flex gap-2">
                           <Button
+                            variant="outline"
                             type="button"
-                            onClick={() => void onVerifyPickup(draftToken, item.id)}
-                            disabled={pickupVerifying}
+                            onClick={onAnalyzeVision}
+                            disabled={visionLoading}
                           >
-                            {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            수령 인증하기
+                            {visionLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : null}
+                            Vision 분석
+                          </Button>
+                          <Button
+                            variant="outline"
+                            type="button"
+                            onClick={onFetchVisionResult}
+                            disabled={visionLoading}
+                          >
+                            조회
                           </Button>
                         </div>
                       </div>
-                    );
-                  })
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>빠른 QR 인증 (토큰 직접 입력)</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex gap-2">
-                  <Input
-                    value={pickupToken}
-                    onChange={(e) => setPickupToken(e.target.value)}
-                    placeholder="사용자 QR 코드 전체 입력 (예: DKU-551033...)"
-                  />
-                  <Button onClick={() => void onVerifyPickup(pickupToken)} disabled={pickupVerifying}>
-                    {pickupVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                    수령 인증하기
-                  </Button>
-                </div>
-                {lastVerifiedPass ? (
-                  <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
-                    <p className="font-semibold">최근 인증됨</p>
-                    <p>물품: {lastVerifiedPass.itemName ?? "-"}</p>
-                    <p>인수자: {lastVerifiedPass.claimantName ?? "이름 없음"}</p>
-                    <p>이메일: {lastVerifiedPass.claimantEmail ?? "이메일 없음"}</p>
-                    <p className="text-xs text-emerald-700">{lastVerifiedPass.usedAt ?? ""}</p>
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>발급된 수령 코드</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {pickupPasses.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">발급된 수령 코드가 없습니다.</p>
-                ) : (
-                  pickupPasses.map((pass) => (
-                    <div key={pass.id} className="rounded-lg border p-3 text-sm">
-                      <div className="flex items-center justify-between">
-                        <p className="font-semibold tracking-wider">{pass.token}</p>
-                        <Badge variant={pass.usedAt ? "secondary" : "default"}>{pass.usedAt ? "인증됨" : "미사용"}</Badge>
-                      </div>
-                      <p className="text-muted-foreground">
-                        물품: {pass.itemName ?? "-"} / 위치: {pass.itemLocation ?? "-"}
-                      </p>
-                      <p className="text-muted-foreground">
-                        인수자: {pass.claimantName ?? "이름 없음"} ({pass.claimantEmail ?? "이메일 없음"})
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        만료: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
-                      </p>
-                      {pass.usedAt ? (
-                        <p className="mt-1 text-xs font-semibold text-primary">수령 완료: {pass.usedAt}</p>
+                      {visionMessage ? (
+                        <p className="text-xs font-medium text-primary">
+                          {visionMessage}
+                        </p>
+                      ) : null}
+                      {visionResult ? (
+                        <div className="space-y-1 rounded-lg border bg-slate-50 p-3 text-xs">
+                          <p>
+                            <span className="font-semibold">분석 ID:</span>{' '}
+                            {visionResult.id ?? '-'}
+                          </p>
+                          <p>
+                            <span className="font-semibold">documentType:</span>{' '}
+                            {visionResult.documentType}
+                          </p>
+                          <p>
+                            <span className="font-semibold">ocrApplied:</span>{' '}
+                            {visionResult.ocrApplied ? 'true' : 'false'}
+                          </p>
+                          <p className="break-all">
+                            <span className="font-semibold">
+                              mosaicImageUrl:
+                            </span>{' '}
+                            {visionResult.mosaicImageUrl ?? '(없음)'}
+                          </p>
+                          <p className="break-all text-muted-foreground">
+                            <span className="font-semibold">
+                              originalImageUrl:
+                            </span>{' '}
+                            {visionResult.originalImageUrl ?? '(없음)'} — 등록에
+                            사용 안 함
+                          </p>
+                          <p>
+                            <span className="font-semibold">카테고리:</span>{' '}
+                            {visionResult.category ?? '-'}
+                          </p>
+                          <p>
+                            <span className="font-semibold">라벨:</span>{' '}
+                            {(visionResult.labels ?? []).join(', ') || '-'}
+                          </p>
+                          <p>
+                            <span className="font-semibold">대표 색상:</span>{' '}
+                            {visionResult.dominantColor ?? '-'}
+                          </p>
+                          <p>
+                            <span className="font-semibold">OCR 텍스트:</span>{' '}
+                            {visionResult.text?.slice(0, 120) || '-'}
+                          </p>
+                        </div>
                       ) : null}
                     </div>
-                  ))
-                )}
-              </CardContent>
-            </Card>
-            </>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="reg-name">물품명</Label>
+                        <Input
+                          id="reg-name"
+                          value={regName}
+                          onChange={(e) => setRegName(e.target.value)}
+                          placeholder="예: 검은색 반지갑"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="reg-category">카테고리</Label>
+                        <select
+                          id="reg-category"
+                          value={regCategory}
+                          onChange={(e) => setRegCategory(e.target.value)}
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        >
+                          {selectableCategories.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                          목록을 스크롤해 카테고리를 선택할 수 있습니다.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-found-at">습득 시간</Label>
+                      <Input
+                        id="reg-found-at"
+                        type="datetime-local"
+                        value={regFoundAt}
+                        onChange={(e) => setRegFoundAt(e.target.value)}
+                      />
+                    </div>
+
+                    <BuildingLocationPicker
+                      idPrefix="reg-found"
+                      label="습득 위치"
+                      building={regFoundLocation.building}
+                      detail={regFoundLocation.detail}
+                      customText={regFoundLocation.customText}
+                      onBuildingChange={regFoundLocation.setBuilding}
+                      onDetailChange={regFoundLocation.setDetail}
+                      onCustomTextChange={regFoundLocation.setCustomText}
+                      detailPlaceholder="예: 1층 북카페, 307호"
+                    />
+
+                    <BuildingLocationPicker
+                      idPrefix="reg-storage"
+                      label="보관 장소"
+                      building={regStorageLocation.building}
+                      detail={regStorageLocation.detail}
+                      customText={regStorageLocation.customText}
+                      onBuildingChange={regStorageLocation.setBuilding}
+                      onDetailChange={regStorageLocation.setDetail}
+                      onCustomTextChange={regStorageLocation.setCustomText}
+                      detailPlaceholder="예: 학생팀 425호, 분실물 보관함"
+                    />
+
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-memo">추가 메모</Label>
+                      <Textarea
+                        id="reg-memo"
+                        value={regMemo}
+                        onChange={(e) => setRegMemo(e.target.value)}
+                        placeholder="특징/인수인계 메모"
+                      />
+                    </div>
+
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {editingPendingReport ? (
+                        <>
+                          <Button
+                            type="button"
+                            onClick={() => void savePendingReviewDraft()}
+                            disabled={pendingSaveLoading}
+                          >
+                            {pendingSaveLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : null}
+                            검수 내용 저장
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() =>
+                              void resolvePendingWithForm(
+                                editingPendingReport.id,
+                                'resolved',
+                              )
+                            }
+                            disabled={
+                              statusUpdatingId === editingPendingReport.id
+                            }
+                          >
+                            습득 완료 처리
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            type="button"
+                            onClick={() => void registerItem()}
+                            disabled={registering}
+                          >
+                            {registering ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : null}
+                            등록 완료
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="border-red-300 text-red-600 hover:bg-red-50"
+                            onClick={clearLastRegistered}
+                          >
+                            등록 삭제
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                    {regMessage ? (
+                      <p className="text-sm font-semibold text-primary">
+                        {regMessage}
+                      </p>
+                    ) : null}
+                  </CardContent>
+                </Card>
+
+                {registeredItems.length > 0 ? (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>등록된 물품 목록</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {registeredItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-lg border p-3 text-sm"
+                        >
+                          <p className="font-semibold">
+                            {item.name} / {item.category}
+                          </p>
+                          <p className="text-muted-foreground">
+                            {item.location} / 보관: {item.storage}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {item.createdAt}
+                          </p>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                ) : null}
+              </>
+            ) : null}
+          </TabsContent>
+
+          <TabsContent value="manage" className="space-y-3">
+            {adminTab === 'manage' ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>관리자 물품 수정/삭제</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {manageMessage ? (
+                    <p className="text-sm font-semibold text-primary">
+                      {manageMessage}
+                    </p>
+                  ) : null}
+                  {managedItems.length === 0 ? (
+                    <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
+                      등록된 분실물이 없습니다. 「분실물 등록」 탭에서 직접
+                      등록하거나, 검수 대기에서 습득 완료 처리하면 이 목록에
+                      표시됩니다.
+                    </p>
+                  ) : (
+                    managedItems.map((item) => {
+                      const draft =
+                        manageDrafts[item.id] ?? buildManageDraft(item);
+                      return (
+                        <div
+                          key={item.id}
+                          className="space-y-4 rounded-xl border bg-white p-4"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-700">
+                                분실물 ID:{' '}
+                                {(item as { lostItemId?: string }).lostItemId ??
+                                  item.id}
+                              </p>
+                              {(item as { reportId?: string }).reportId &&
+                              String(
+                                (item as { reportId?: string }).reportId,
+                              ) !==
+                                String(
+                                  (item as { lostItemId?: string })
+                                    .lostItemId ?? item.id,
+                                ) ? (
+                                <p className="text-xs text-muted-foreground">
+                                  신고 ID:{' '}
+                                  {(item as { reportId?: string }).reportId}
+                                </p>
+                              ) : null}
+                              {(() => {
+                                const registered =
+                                  displayRegistrationDateTime(item);
+                                const found = displayFoundDateTime(item);
+                                return (
+                                  <p className="text-xs text-muted-foreground">
+                                    {registered
+                                      ? `등록 ${registered}`
+                                      : '등록 시간 정보 없음'}
+                                    {found ? ` · 습득 ${found}` : null}
+                                  </p>
+                                );
+                              })()}
+                            </div>
+                            <Badge variant="secondary">{item.category}</Badge>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label>물품 사진</Label>
+                            <div className="relative h-40 w-full overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="absolute inset-0 z-20 h-full w-full cursor-pointer opacity-0"
+                                onChange={(e) =>
+                                  onManagePhotoChange(item.id, e)
+                                }
+                                aria-label={`${item.name} 사진 변경`}
+                              />
+                              {draft.image ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={draft.image}
+                                  alt={draft.name}
+                                  className="pointer-events-none h-full w-full object-contain bg-slate-50"
+                                />
+                              ) : (
+                                <div
+                                  className="pointer-events-none h-full w-full bg-slate-100"
+                                  aria-hidden
+                                />
+                              )}
+                            </div>
+                            {draft.image ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  onManageDraftChange(item.id, 'image', '')
+                                }
+                              >
+                                사진 제거
+                              </Button>
+                            ) : null}
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor={`manage-name-${item.id}`}>
+                              물품명
+                            </Label>
+                            <Input
+                              id={`manage-name-${item.id}`}
+                              value={draft.name}
+                              onChange={(e) =>
+                                onManageDraftChange(
+                                  item.id,
+                                  'name',
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="예: 에어팟"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor={`manage-category-${item.id}`}>
+                              카테고리
+                            </Label>
+                            <select
+                              id={`manage-category-${item.id}`}
+                              value={draft.category}
+                              onChange={(e) =>
+                                onManageDraftChange(
+                                  item.id,
+                                  'category',
+                                  e.target.value,
+                                )
+                              }
+                              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                            >
+                              {selectableCategories.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="text-xs text-muted-foreground">
+                              목록을 스크롤해 카테고리를 선택할 수 있습니다.
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor={`manage-found-at-${item.id}`}>
+                              습득 시간
+                            </Label>
+                            <Input
+                              id={`manage-found-at-${item.id}`}
+                              type="datetime-local"
+                              value={draft.foundAt}
+                              onChange={(e) =>
+                                onManageDraftChange(
+                                  item.id,
+                                  'foundAt',
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+
+                          <ManageLocationPickers
+                            idPrefix={`manage-${item.id}`}
+                            place={draft.place}
+                            storage={draft.storage}
+                            onPlaceChange={(value) =>
+                              onManageDraftChange(item.id, 'place', value)
+                            }
+                            onStorageChange={(value) =>
+                              onManageDraftChange(item.id, 'storage', value)
+                            }
+                          />
+
+                          <div className="space-y-2">
+                            <Label htmlFor={`manage-type-${item.id}`}>
+                              물품 상세종류
+                            </Label>
+                            <Input
+                              id={`manage-type-${item.id}`}
+                              value={draft.type}
+                              onChange={(e) =>
+                                onManageDraftChange(
+                                  item.id,
+                                  'type',
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="예: 무선이어폰"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor={`manage-memo-${item.id}`}>
+                              상세 사항
+                            </Label>
+                            <Textarea
+                              id={`manage-memo-${item.id}`}
+                              value={draft.memo}
+                              onChange={(e) =>
+                                onManageDraftChange(
+                                  item.id,
+                                  'memo',
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="특징, 색상, 추가 설명"
+                            />
+                          </div>
+
+                          <div className="relative z-10 grid gap-2 md:grid-cols-2">
+                            <Button
+                              type="button"
+                              disabled={manageBusyId === item.id}
+                              onClick={() => void onSaveManagedItem(item.id)}
+                            >
+                              {manageBusyId === item.id ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  저장 중…
+                                </>
+                              ) : (
+                                '수정 저장'
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="border-red-300 text-red-600 hover:bg-red-50"
+                              disabled={manageBusyId === item.id}
+                              onClick={() => void onDeleteManagedItem(item.id)}
+                            >
+                              삭제
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
+          </TabsContent>
+
+          <TabsContent value="pending" className="space-y-3">
+            {adminTab === 'pending' ? (
+              pendingReports.length === 0 ? (
+                <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
+                  현재 검수 대기 중인 신고가 없습니다.
+                </p>
+              ) : (
+                <>
+                  {pendingReports.map((report) => (
+                    <Card key={report.id}>
+                      <CardContent className="space-y-3 p-4">
+                        {(() => {
+                          const pendingImg = resolveDisplayImageUrl(
+                            report.image,
+                          );
+                          return pendingImg ? (
+                            <div className="overflow-hidden rounded-lg border bg-slate-50">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={pendingImg}
+                                alt={report.itemName}
+                                className="mx-auto max-h-56 w-full object-contain"
+                              />
+                            </div>
+                          ) : null;
+                        })()}
+                        <div className="flex items-center justify-between">
+                          <p className="font-semibold">{report.itemName}</p>
+                          <Badge>{report.category}</Badge>
+                        </div>
+                        <div className="space-y-1 text-sm text-muted-foreground">
+                          <p>위치: {sanitizeLocation(report.location)}</p>
+                          {report.storage ? (
+                            <p>보관 장소: {sanitizeLocation(report.storage)}</p>
+                          ) : null}
+                          <p>
+                            분실/습득 일시:{' '}
+                            {formatDateTimeLabel(report.lostAt) || '-'}
+                          </p>
+                          <p>접수: {report.createdAt}</p>
+                          {report.ownerName || report.ownerEmail ? (
+                            <p>
+                              신고자:{' '}
+                              {report.ownerName?.trim() ||
+                                extractStudentIdFromEmail(report.ownerEmail) ||
+                                '프로필 미등록 (마이페이지에서 이름 저장 필요)'}{' '}
+                              {report.ownerEmail ? (
+                                <>({report.ownerEmail})</>
+                              ) : null}
+                            </p>
+                          ) : null}
+                          {report.memo ? (
+                            <div className="mt-2 rounded-lg border bg-slate-50 p-2 text-foreground">
+                              <p className="text-xs font-semibold text-muted-foreground">
+                                신고 상세 설명
+                              </p>
+                              <p className="whitespace-pre-wrap text-sm">
+                                {report.memo}
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-3">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => openPendingReportForEdit(report)}
+                          >
+                            수정 (Vision·사진)
+                          </Button>
+                          <Button
+                            variant="outline"
+                            disabled={statusUpdatingId === report.id}
+                            onClick={() =>
+                              void resolvePendingWithForm(report.id, 'resolved')
+                            }
+                          >
+                            {statusUpdatingId === report.id &&
+                            statusUpdatingType === 'resolved' ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="h-4 w-4" />
+                            )}
+                            습득 완료 처리
+                          </Button>
+                          <Button
+                            variant="outline"
+                            disabled={statusUpdatingId === report.id}
+                            onClick={() =>
+                              void resolvePendingWithForm(
+                                report.id,
+                                'unavailable',
+                              )
+                            }
+                          >
+                            {statusUpdatingId === report.id &&
+                            statusUpdatingType === 'unavailable' ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <CircleX className="h-4 w-4" />
+                            )}
+                            습득 불가 처리
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          사진·마스킹·위치를 바꾸려면 「수정」으로 등록 탭에서
+                          Vision 분석 후 저장·습득 완료하세요.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </>
+              )
+            ) : null}
+          </TabsContent>
+
+          <TabsContent value="processed" className="space-y-2">
+            {adminTab === 'processed' ? (
+              processedReports.length === 0 ? (
+                <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
+                  처리 완료된 신고 이력이 없습니다.
+                </p>
+              ) : (
+                processedReports.map((report) => (
+                  <div
+                    key={report.id}
+                    className="rounded-xl border bg-white p-3 text-sm"
+                  >
+                    <p className="font-semibold">{report.itemName}</p>
+                    <p className="text-muted-foreground">
+                      {sanitizeLocation(report.location)}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-primary">
+                      {report.status === 'resolved'
+                        ? '습득 완료'
+                        : report.status === 'picked_up'
+                          ? '최종 수령 완료'
+                          : '습득 불가'}{' '}
+                      / {report.createdAt}
+                    </p>
+                  </div>
+                ))
+              )
+            ) : null}
+          </TabsContent>
+
+          <TabsContent value="pickup" className="space-y-3">
+            {adminTab === 'pickup' ? (
+              <>
+                <Card className="border-emerald-400/50 bg-emerald-50/40">
+                  <CardHeader>
+                    <CardTitle>수령 코드 직접 입력 (가장 빠름)</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      마이페이지에 표시된{' '}
+                      <span className="font-mono">DKU-…</span> 코드 전체 또는
+                      숫자·영문만 입력 후 Enter 또는 「수령 인증」을 누르세요.
+                      신분 확인은 관리실에서 별도 진행합니다.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        value={pickupToken}
+                        onChange={(e) => setPickupToken(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter')
+                            void onVerifyPickup(
+                              pickupToken,
+                              undefined,
+                              'quick',
+                            );
+                        }}
+                        placeholder="예: DKU-54DBD775… 또는 코드 숫자·영문만"
+                        className="font-mono text-sm"
+                      />
+                      <Button
+                        type="button"
+                        onClick={() =>
+                          void onVerifyPickup(pickupToken, undefined, 'quick')
+                        }
+                        disabled={pickupVerifyingKey === 'quick'}
+                      >
+                        {pickupVerifyingKey === 'quick' ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                        수령 인증
+                      </Button>
+                    </div>
+                    {pickupMessage ? (
+                      <p className="text-sm font-semibold text-primary">
+                        {pickupMessage}
+                      </p>
+                    ) : null}
+                    {lastVerifiedPass ? (
+                      <div className="rounded-lg border border-emerald-300 bg-white p-3 text-sm text-emerald-900">
+                        <p className="font-semibold">최근 인증 완료</p>
+                        <p>물품: {lastVerifiedPass.itemName ?? '-'}</p>
+                        <p>
+                          인수자: {lastVerifiedPass.claimantName ?? '이름 없음'}
+                        </p>
+                        <p>
+                          이메일:{' '}
+                          {lastVerifiedPass.claimantEmail ?? '이메일 없음'}
+                        </p>
+                        <p className="text-xs text-emerald-700">
+                          {lastVerifiedPass.usedAt ?? ''}
+                        </p>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+
+                <Card className="border-primary/40 bg-primary/5">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Camera className="h-5 w-5 text-primary" />
+                      카메라로 QR 인증 시작
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      카메라로 분실자의 수령 QR을 스캔하면 인수자 정보가 자동
+                      표시됩니다. 신분증/학생증을 직접 확인한 뒤 최종 인증을
+                      진행하세요.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {!cameraOpen ? (
+                      <Button onClick={() => void openCamera()}>
+                        <Camera className="h-4 w-4" />
+                        카메라 열기
+                      </Button>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="relative h-56 overflow-hidden rounded-lg border bg-black">
+                          {cameraError ? (
+                            <div className="flex h-full items-center justify-center bg-slate-900 px-4 text-center text-xs text-red-200">
+                              {cameraError}
+                            </div>
+                          ) : (
+                            <>
+                              {!cameraStream ? (
+                                <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900 px-4 text-center text-xs text-slate-300">
+                                  카메라 연결 중...
+                                </div>
+                              ) : null}
+                              <video
+                                ref={videoRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="h-full w-full bg-black object-cover"
+                              />
+                              {videoPlayError ? (
+                                <div className="absolute inset-x-0 bottom-0 bg-red-950/80 px-2 py-1 text-center text-[10px] text-red-100">
+                                  {videoPlayError}
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+                          <div className="pointer-events-none absolute inset-6 rounded-md border-2 border-white/70" />
+                          <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white">
+                            {isQrAutoScanSupported()
+                              ? isBarcodeDetectorSupported()
+                                ? '자동 스캔 중 (BarcodeDetector)'
+                                : '자동 스캔 중 (jsQR)'
+                              : '자동 스캔 미지원 — 토큰 수동 입력'}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label htmlFor="scan-token">
+                            수령 코드 수동 입력
+                          </Label>
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <Input
+                              id="scan-token"
+                              value={scanToken}
+                              onChange={(e) => setScanToken(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter')
+                                  void onVerifyScanTokenDirect();
+                              }}
+                              placeholder="DKU- 전체 또는 숫자·영문 코드"
+                              className="font-mono text-sm"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={onScanFromCamera}
+                            >
+                              미리보기
+                            </Button>
+                            <Button
+                              type="button"
+                              onClick={() => void onVerifyScanTokenDirect()}
+                              disabled={
+                                pickupVerifyingKey === 'scan-input' ||
+                                !confirmIdCheck
+                              }
+                            >
+                              {pickupVerifyingKey === 'scan-input' ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : null}
+                              수령 인증
+                            </Button>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            카메라 스캔 시 자동 인증됩니다. 수동 입력 시 신분
+                            확인 체크 후 「수령 인증」 또는 Enter를 누르세요.
+                          </p>
+                        </div>
+
+                        {scanToken ? (
+                          <div className="space-y-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-900">
+                            <p className="font-semibold">인수자/물품 확인</p>
+                            <p className="font-mono text-xs break-all">
+                              토큰: {scanToken}
+                            </p>
+                            <ul className="space-y-1 text-sm">
+                              <li>
+                                물품:{' '}
+                                {scannedPass?.itemName ?? '(서버 인증 시 확인)'}
+                              </li>
+                              <li>
+                                인수자:{' '}
+                                {scannedPass?.claimantName ??
+                                  '(서버 인증 시 확인)'}
+                              </li>
+                              <li>
+                                이메일: {scannedPass?.claimantEmail ?? '-'}
+                              </li>
+                            </ul>
+
+                            <div className="space-y-2 rounded-md border border-emerald-200 bg-white p-3 text-xs text-slate-800">
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={confirmIdCheck}
+                                  onChange={(e) =>
+                                    setConfirmIdCheck(e.target.checked)
+                                  }
+                                />
+                                <span>
+                                  학생증 또는 신분증 본인 확인 완료 (사진은
+                                  저장하지 않으며, 확인 시 즉시 마스킹 처리)
+                                </span>
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={confirmCardCheck}
+                                  onChange={(e) =>
+                                    setConfirmCardCheck(e.target.checked)
+                                  }
+                                />
+                                <span>
+                                  실물/카드(체크카드 등) 일치 여부 확인 (선택)
+                                </span>
+                              </label>
+                            </div>
+
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                onClick={() => void onFinalizePickup()}
+                                disabled={
+                                  pickupVerifyingKey === 'scan-input' ||
+                                  pickupVerifyingKey === 'scan' ||
+                                  !confirmIdCheck
+                                }
+                              >
+                                {pickupVerifyingKey === 'scan-input' ||
+                                pickupVerifyingKey === 'scan' ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="h-4 w-4" />
+                                )}
+                                최종 수령 인증 완료
+                              </Button>
+                              <Button variant="outline" onClick={closeCamera}>
+                                <CameraOff className="h-4 w-4" />
+                                카메라 종료
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <Button variant="outline" onClick={closeCamera}>
+                            <CameraOff className="h-4 w-4" />
+                            카메라 종료
+                          </Button>
+                        )}
+
+                        {cameraError ? (
+                          <p className="text-xs text-red-600">{cameraError}</p>
+                        ) : null}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>분실자가 말한 물품 검색 후 QR 인증</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      카메라가 어려울 때는 키워드 검색으로 물품을 찾아 카드별 QR
+                      입력으로도 인증할 수 있습니다.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Input
+                      value={pickupSearch}
+                      onChange={(e) => setPickupSearch(e.target.value)}
+                      placeholder="검색 (예: 에어팟, 검정 지갑, 혜당관)"
+                    />
+                    {pickupMessage ? (
+                      <p className="text-sm font-semibold text-primary">
+                        {pickupMessage}
+                      </p>
+                    ) : null}
+                    {pickupSearchResults.length === 0 ? (
+                      <p className="rounded-lg border bg-slate-50 p-3 text-sm text-muted-foreground">
+                        검색 결과가 없습니다.
+                      </p>
+                    ) : (
+                      pickupSearchResults.map((item) => {
+                        const draftToken = pickupTokens[item.id] ?? '';
+                        return (
+                          <div
+                            key={item.id}
+                            className="rounded-xl border p-3 text-sm"
+                          >
+                            <div className="flex items-center justify-between">
+                              <p className="font-semibold">{item.name}</p>
+                              <Badge variant="secondary">{item.category}</Badge>
+                            </div>
+                            <p className="text-muted-foreground">
+                              {item.place}
+                            </p>
+                            <div className="mt-3 flex gap-2">
+                              <Input
+                                value={draftToken}
+                                onChange={(e) =>
+                                  setPickupTokens((prev) => ({
+                                    ...prev,
+                                    [item.id]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter')
+                                    void onVerifyPickup(
+                                      draftToken,
+                                      item.id,
+                                      `item-${item.id}`,
+                                    );
+                                }}
+                                placeholder="분실자 QR 코드 입력 (예: DKU-123456 또는 발급된 전체 코드)"
+                              />
+                              <Button
+                                type="button"
+                                onClick={() =>
+                                  void onVerifyPickup(
+                                    draftToken,
+                                    item.id,
+                                    `item-${item.id}`,
+                                  )
+                                }
+                                disabled={
+                                  pickupVerifyingKey === `item-${item.id}`
+                                }
+                              >
+                                {pickupVerifyingKey === `item-${item.id}` ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : null}
+                                수령 인증하기
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>발급된 수령 코드</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {pickupPasses.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        발급된 수령 코드가 없습니다.
+                      </p>
+                    ) : (
+                      pickupPasses.map((pass) => (
+                        <div
+                          key={pass.id}
+                          className="rounded-lg border p-3 text-sm"
+                        >
+                          <div className="flex items-center justify-between">
+                            <p className="font-semibold tracking-wider">
+                              {pass.token}
+                            </p>
+                            <Badge
+                              variant={pass.usedAt ? 'secondary' : 'default'}
+                            >
+                              {pass.usedAt ? '인증됨' : '미사용'}
+                            </Badge>
+                          </div>
+                          <p className="text-muted-foreground">
+                            물품: {pass.itemName ?? '-'} / 위치:{' '}
+                            {pass.itemLocation ?? '-'}
+                          </p>
+                          <p className="text-muted-foreground">
+                            인수자: {pass.claimantName ?? '이름 없음'} (
+                            {pass.claimantEmail ?? '이메일 없음'})
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            만료:{' '}
+                            {new Date(pass.expiresAt).toLocaleString('ko-KR', {
+                              hour12: false,
+                            })}
+                          </p>
+                          {pass.usedAt ? (
+                            <p className="mt-1 text-xs font-semibold text-primary">
+                              수령 완료: {pass.usedAt}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+              </>
             ) : null}
           </TabsContent>
 
           <TabsContent value="audit" className="space-y-2">
-            {adminTab === "audit" ? (
-            adminAuditLogs.map((log) => (
-              <div key={log.id} className="rounded-xl border bg-white p-3 text-sm">
-                <p className="flex items-center gap-2 font-medium">
-                  <Clock3 className="h-4 w-4 text-primary" />
-                  {log.message}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">{log.createdAt}</p>
-              </div>
-            ))
-            ) : null}
+            {adminTab === 'audit'
+              ? adminAuditLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="rounded-xl border bg-white p-3 text-sm"
+                  >
+                    <p className="flex items-center gap-2 font-medium">
+                      <Clock3 className="h-4 w-4 text-primary" />
+                      {log.message}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {log.createdAt}
+                    </p>
+                  </div>
+                ))
+              : null}
           </TabsContent>
         </Tabs>
       </div>

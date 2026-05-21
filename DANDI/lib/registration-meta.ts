@@ -1,11 +1,13 @@
 import { formatDateTimeLabel, pickRicherDateTimeLabel } from "@/lib/format-display";
-import { safeSetLocalStorage } from "@/lib/safe-local-storage";
+import { resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
+import { imageForLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
 const KEY = "dandi.itemRegistrationMeta";
 
 export type ItemTimeMeta = {
   createdAt?: string;
   foundAt?: string;
+  imageUrl?: string;
 };
 
 type MetaMap = Record<string, ItemTimeMeta>;
@@ -28,6 +30,7 @@ function readMeta(): MetaMap {
           createdAt:
             typeof value.createdAt === "string" ? value.createdAt : undefined,
           foundAt: typeof value.foundAt === "string" ? value.foundAt : undefined,
+          imageUrl: typeof value.imageUrl === "string" ? value.imageUrl : undefined,
         };
       }
     }
@@ -45,7 +48,18 @@ function mergeMetaEntry(existing: ItemTimeMeta | undefined, patch: ItemTimeMeta)
   return {
     createdAt: patch.createdAt ?? existing?.createdAt,
     foundAt: patch.foundAt ?? existing?.foundAt,
+    imageUrl: patch.imageUrl ?? existing?.imageUrl,
   };
+}
+
+export function rememberItemImage(itemId: string, image?: string | null) {
+  if (typeof window === "undefined" || !itemId.trim()) return;
+  const stored =
+    resolveDisplayImageUrl(image) ??
+    resolveItemImageUrl(image) ??
+    imageForLocalStorage(image);
+  if (!stored) return;
+  rememberItemTimes(itemId, { imageUrl: stored });
 }
 
 export function rememberItemRegistrationTime(itemId: string, createdAtIso: string) {
@@ -63,15 +77,20 @@ export function lookupItemTimes(itemId: string): ItemTimeMeta | undefined {
   return readMeta()[String(itemId)];
 }
 
-function applyMetaToItem<T extends { id: string; reportId?: string; createdAt?: string; foundAt?: string; time?: string }>(
-  item: T
-): T {
+function applyMetaToItem<
+  T extends { id: string; reportId?: string; createdAt?: string; foundAt?: string; time?: string; image?: string },
+>(item: T): T {
   const byId = lookupItemTimes(item.id);
   const byReport = item.reportId ? lookupItemTimes(item.reportId) : undefined;
   const merged: ItemTimeMeta = { ...byReport, ...byId };
 
   const createdAt = pickRicherDateTimeLabel(item.createdAt, merged.createdAt);
   const foundAt = pickRicherDateTimeLabel(item.foundAt ?? item.time, merged.foundAt);
+  const image =
+    resolveDisplayImageUrl(item.image) ??
+    resolveItemImageUrl(item.image) ??
+    resolveItemImageUrl(merged.imageUrl) ??
+    item.image;
 
   const createdLabel = createdAt ? formatDateTimeLabel(createdAt) || createdAt : undefined;
   const foundLabel = foundAt ? formatDateTimeLabel(foundAt) || foundAt : undefined;
@@ -81,12 +100,13 @@ function applyMetaToItem<T extends { id: string; reportId?: string; createdAt?: 
     createdAt: createdLabel ?? item.createdAt,
     foundAt: foundLabel ?? item.foundAt,
     time: createdLabel ?? foundLabel ?? item.time,
+    image,
   };
 }
 
-/** API·새로고침 후에도 등록·습득 시각 유지 */
-export function enrichWithRegistrationMeta<T extends { id: string; reportId?: string; createdAt?: string; foundAt?: string; time?: string }>(
-  items: T[]
-): T[] {
+/** API·새로고침 후에도 등록·습득 시각·사진 URL 유지 */
+export function enrichWithRegistrationMeta<
+  T extends { id: string; reportId?: string; createdAt?: string; foundAt?: string; time?: string; image?: string },
+>(items: T[]): T[] {
   return items.map(applyMetaToItem);
 }

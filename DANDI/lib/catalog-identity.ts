@@ -45,6 +45,29 @@ export function normalizeCatalogItemIdentity(item: PublishedLostItem): Published
   return { ...item, id, lostItemId: lostItemId ?? (/^\d+$/.test(id) ? id : undefined), reportId };
 }
 
+/** id / lostItemId / reportId 로 카탈로그 항목 찾기 */
+export function findCatalogItemByHint(
+  hintId: string,
+  pools: PublishedLostItem[]
+): PublishedLostItem | undefined {
+  const hint = String(hintId).trim();
+  if (!hint) return undefined;
+  const seen = new Set<string>();
+  for (const item of pools) {
+    const key = String(item.id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (
+      String(item.id) === hint ||
+      String(item.lostItemId ?? "") === hint ||
+      String(item.reportId ?? "") === hint
+    ) {
+      return item;
+    }
+  }
+  return undefined;
+}
+
 /** PATCH/DELETE·수령 QR용 lost_item 숫자 PK */
 export function resolveServerLostItemId(
   item: PublishedLostItem | undefined,

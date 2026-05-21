@@ -12,17 +12,41 @@ function apiUrl(path: string) {
   return `${API_BASE_URL}${path}`;
 }
 
-async function apiFetch(path: string, init?: RequestInit, retried = false): Promise<Response> {
-  const authHeader = await getAuthorizationHeaders();
+export const API_FETCH_TIMEOUT_MS = 45_000;
+export const API_MUTATION_TIMEOUT_MS = 30_000;
 
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      ...authHeader,
-      ...(init?.headers ?? {}),
-    },
-  });
+type ApiFetchOptions = { timeoutMs?: number };
+
+async function apiFetch(
+  path: string,
+  init?: RequestInit,
+  retried = false,
+  options?: ApiFetchOptions
+): Promise<Response> {
+  const authHeader = await getAuthorizationHeaders();
+  const controller = new AbortController();
+  const timeoutMs = options?.timeoutMs ?? API_FETCH_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...authHeader,
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`요청 시간이 초과되었습니다. (${path})`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (
     !retried &&
@@ -30,20 +54,24 @@ async function apiFetch(path: string, init?: RequestInit, retried = false): Prom
     getAuthSession()?.accessToken
   ) {
     const fresh = await getFreshAccessToken();
-    if (fresh && fresh !== getAuthSession()?.accessToken) {
-      return apiFetch(path, init, true);
+    if (fresh) {
+      return apiFetch(path, init, true, options);
     }
   }
 
   return response;
 }
 
-export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiJson<T>(
+  path: string,
+  init?: RequestInit,
+  options?: ApiFetchOptions
+): Promise<T> {
   if (!API_BASE_URL) {
     throw new Error("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
   }
 
-  const response = await apiFetch(path, init);
+  const response = await apiFetch(path, init, false, options);
 
   if (!response.ok) {
     let serverMessage = "요청 처리에 실패했습니다.";
@@ -80,19 +108,6 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-function statusPayloadVariants(status: string): string[] {
-  const upper = status.toUpperCase();
-  const extras =
-    status === "resolved"
-      ? ["FOUND", "ACQUIRED", "COMPLETED", "APPROVED"]
-      : status === "unavailable"
-        ? ["NOT_FOUND", "REJECTED", "FAILED"]
-        : status === "pending"
-          ? ["WAITING", "SUBMITTED", "OPEN"]
-          : [];
-  return [...new Set([status, upper, ...extras])];
-}
-
 export type ReportPatchPayload = {
   itemName?: string;
   category?: string;
@@ -107,67 +122,32 @@ export type ReportPatchPayload = {
   imageUrl?: string;
 };
 
+/** 백엔드는 /api/reports/{id}/status 만 지원 — 상세는 습득 완료 시 lost-items POST로 반영 */
 export async function patchReportDetails(
-  reportId: string,
-  payload: ReportPatchPayload,
-  options?: { keepStatus?: string }
+  _reportId: string,
+  _payload: ReportPatchPayload,
+  _options?: { keepStatus?: string }
 ): Promise<void> {
-  const id = encodeURIComponent(String(reportId));
-  const foundAtIso = payload.foundAt ?? payload.lostAt;
-  const bodyObj: Record<string, unknown> = {
-    ...payload,
-    name: payload.itemName,
-    itemName: payload.itemName,
-    ...(foundAtIso ? { lostAt: foundAtIso, foundAt: foundAtIso } : {}),
-    ...(options?.keepStatus
-      ? { status: options.keepStatus, reportStatus: options.keepStatus }
-      : {}),
-  };
-  const body = JSON.stringify(bodyObj);
-  const attempts: Array<{ method: string; path: string; body?: string }> = [
-    { method: "PATCH", path: `/api/reports/${id}`, body },
-    { method: "PUT", path: `/api/reports/${id}`, body },
-    { method: "POST", path: `/api/reports/${id}`, body },
-    { method: "POST", path: `/api/reports/${id}/update`, body },
-    { method: "PATCH", path: `/api/reports/${id}/status`, body },
-    { method: "PUT", path: `/api/reports/${id}/status`, body },
-  ];
-
-  let lastError: Error | null = null;
-  for (const attempt of attempts) {
-    try {
-      await apiJson<object>(attempt.path, { method: attempt.method, body: attempt.body });
-      return;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      const msg = lastError.message.toLowerCase();
-      if (msg.includes("method not allowed") || msg.includes("405")) continue;
-    }
-  }
-  throw lastError ?? new Error("신고 수정에 실패했습니다.");
+  return;
 }
 
 export async function patchReportStatus(reportId: string, status: string): Promise<void> {
   const id = encodeURIComponent(String(reportId));
-  const attempts: Array<{ method: string; path: string; body?: string }> = [];
-  for (const statusValue of statusPayloadVariants(status)) {
-    const body = JSON.stringify({ status: statusValue, reportStatus: statusValue });
-    attempts.push(
-      { method: "PATCH", path: `/api/reports/${id}/status`, body },
-      { method: "PUT", path: `/api/reports/${id}/status`, body },
-      { method: "PATCH", path: `/api/reports/${id}`, body },
-      { method: "PUT", path: `/api/reports/${id}`, body }
-    );
-  }
-
-  let lastError: Error | null = null;
-  for (const attempt of attempts) {
+  const body = JSON.stringify({ status });
+  const mutationOpts = { timeoutMs: API_MUTATION_TIMEOUT_MS };
+  try {
+    await apiJson<object>(`/api/reports/${id}/status`, { method: "PATCH", body }, mutationOpts);
+    return;
+  } catch (firstError) {
+    const firstMsg = firstError instanceof Error ? firstError.message : "";
+    if (/시간이 초과|timeout|aborted/i.test(firstMsg)) {
+      throw firstError instanceof Error ? firstError : new Error("신고 상태 변경에 실패했습니다.");
+    }
     try {
-      await apiJson<object>(attempt.path, { method: attempt.method, body: attempt.body });
+      await apiJson<object>(`/api/reports/${id}`, { method: "PATCH", body }, mutationOpts);
       return;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
+    } catch (secondError) {
+      throw secondError instanceof Error ? secondError : new Error("신고 상태 변경에 실패했습니다.");
     }
   }
-  throw lastError ?? new Error("신고 상태 변경에 실패했습니다.");
 }

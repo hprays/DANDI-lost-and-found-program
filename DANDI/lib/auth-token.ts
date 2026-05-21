@@ -22,7 +22,9 @@ export async function getFreshAccessToken(): Promise<string | null> {
   }
 }
 
+/** 일반 API — 세션 토큰 사용 (매 요청 강제 갱신 시 지연·타임아웃 유발) */
 export async function getAuthorizationHeaders(): Promise<Record<string, string>> {
-  const token = await getFreshAccessToken();
+  const session = getAuthSession();
+  const token = session?.accessToken;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }

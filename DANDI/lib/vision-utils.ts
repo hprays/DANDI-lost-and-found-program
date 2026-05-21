@@ -45,7 +45,8 @@ export function buildVisionFormData(
   options: { maskId: boolean; maskCard: boolean }
 ): FormData {
   const formData = new FormData();
-  formData.append("image", file);
+  formData.append("image", file, file.name);
+  formData.append("file", file, file.name);
   formData.append("documentType", resolveVisionDocumentType(options));
   return formData;
 }
@@ -144,15 +145,6 @@ export async function resolveVisionPublishImage(options: {
   const needsMask = options.documentType !== "NONE";
 
   let mosaic = pickMosaicImageUrl(options.analyzePayload);
-
-  if (!mosaic && options.resultId) {
-    try {
-      const detail = await fetchVisionResult(options.apiBaseUrl, options.accessToken, options.resultId);
-      mosaic = pickMosaicImageUrl(detail);
-    } catch {
-      // analyze 응답만으로 진행
-    }
-  }
 
   if (mosaic) {
     return {
