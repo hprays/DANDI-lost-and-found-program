@@ -72,8 +72,12 @@ export async function attachStreamToVideo(
   video.setAttribute("playsinline", "true");
   video.setAttribute("webkit-playsinline", "true");
 
-  try {
+  const tryPlay = async () => {
     await video.play();
+  };
+
+  try {
+    await tryPlay();
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       await new Promise<void>((resolve, reject) => {
         const onReady = () => {
@@ -92,6 +96,23 @@ export async function attachStreamToVideo(
     }
     return null;
   } catch (error) {
-    return error instanceof Error ? error.message : "카메라 영상 재생에 실패했습니다.";
+    const message = error instanceof Error ? error.message : "";
+    const interrupted =
+      /interrupted|abort/i.test(message) ||
+      (error instanceof DOMException && error.name === "AbortError");
+    if (interrupted && video.isConnected && video.srcObject === stream) {
+      await new Promise((r) => window.setTimeout(r, 120));
+      try {
+        await tryPlay();
+        return null;
+      } catch (retryError) {
+        const retryMsg = retryError instanceof Error ? retryError.message : "";
+        if (!/interrupted|abort/i.test(retryMsg)) {
+          return retryMsg || "카메라 영상 재생에 실패했습니다.";
+        }
+      }
+    }
+    if (/interrupted|abort/i.test(message)) return null;
+    return message || "카메라 영상 재생에 실패했습니다.";
   }
 }

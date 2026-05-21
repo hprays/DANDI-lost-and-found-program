@@ -1,5 +1,5 @@
 import { getApiBaseUrl } from "@/lib/api-json";
-import { getAuthSession } from "@/lib/auth-session";
+import { getAuthorizationHeaders } from "@/lib/auth-token";
 import { resolveMediaUrl } from "@/lib/media-url";
 
 function apiUrl(path: string) {
@@ -27,10 +27,10 @@ async function apiFormDataPost<T>(path: string, formData: FormData, method = "PO
   const base = getApiBaseUrl();
   if (!base) throw new Error("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
 
-  const session = getAuthSession();
+  const authHeader = await getAuthorizationHeaders();
   const response = await fetch(apiUrl(path), {
     method,
-    headers: session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {},
+    headers: authHeader,
     body: formData,
   });
 

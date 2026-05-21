@@ -196,12 +196,22 @@ export function toApiDateTime(value: string | undefined | null): string {
   return new Date().toISOString();
 }
 
-/** 상세·관리 화면용 등록(created_at) 시각 — 습득은 별도 표시 */
-export function displayRegistrationDateTime(item: {
+/** 표시용 등록 시각 원문 (createdAt 우선, 없으면 습득일) */
+export function resolveCatalogCreatedAtRaw(item: {
   createdAt?: string | null;
+  foundAt?: string | null;
   time?: string | null;
 }): string {
-  const raw = item.createdAt?.trim();
+  return (item.createdAt ?? item.foundAt ?? item.time ?? "").trim();
+}
+
+/** 상세·관리 화면용 등록(created_at) 시각 */
+export function displayRegistrationDateTime(item: {
+  createdAt?: string | null;
+  foundAt?: string | null;
+  time?: string | null;
+}): string {
+  const raw = resolveCatalogCreatedAtRaw(item);
   if (!raw) return "";
   return formatDateTimeLabel(raw) || raw;
 }
@@ -231,9 +241,25 @@ export function displayDateTimeLabels(item: {
   return { registered, found };
 }
 
-/** 홈·검색 카드용 등록일(날짜만) — createdAt 우선, 없으면 날짜 정보 없음 */
-export function formatCatalogCardDate(item: { createdAt?: string; time?: string }): string {
-  const raw = item.createdAt?.trim();
+/** 홈·검색 카드용 시각 (등록 우선, 습득과 다르면 함께 표시) */
+export function formatCatalogTimeLine(item: {
+  createdAt?: string | null;
+  foundAt?: string | null;
+  time?: string | null;
+}): string {
+  const registered = displayRegistrationDateTime(item);
+  const found = displayFoundDateTime(item);
+  if (registered && found) return `등록 ${registered} · 습득 ${found}`;
+  return registered || found || "시간 정보 없음";
+}
+
+/** 홈 카드용 등록일(날짜만) */
+export function formatCatalogCardDate(item: {
+  createdAt?: string | null;
+  foundAt?: string | null;
+  time?: string | null;
+}): string {
+  const raw = resolveCatalogCreatedAtRaw(item);
   if (!raw) return "날짜 정보 없음";
   const ms = parseDateTimeMs(raw);
   if (ms > 0) {
@@ -248,11 +274,6 @@ export function formatCatalogCardDate(item: { createdAt?: string; time?: string 
   if (dateOnly) return `${dateOnly[1]}. ${dateOnly[2]}. ${dateOnly[3]}.`;
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
   return labeled;
-}
-
-/** @deprecated formatCatalogCardDate 사용 */
-export function formatCatalogTimeLine(item: { createdAt?: string }): string {
-  return formatCatalogCardDate(item);
 }
 
 /**

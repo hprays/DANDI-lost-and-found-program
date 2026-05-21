@@ -258,8 +258,12 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
   const reportIdRaw = raw.reportId ?? raw.report_id;
 
   const foundAt = foundAtRaw ? formatDateTimeLabel(foundAtRaw) || foundAtRaw : "";
-  const createdAt = createdAtRaw ? formatDateTimeLabel(createdAtRaw) || createdAtRaw : undefined;
-  const time = foundAt || createdAt || "";
+  const createdAt = createdAtRaw
+    ? formatDateTimeLabel(createdAtRaw) || createdAtRaw
+    : foundAt
+      ? foundAt
+      : undefined;
+  const time = createdAt || foundAt || "";
 
   return {
     id: String(id),

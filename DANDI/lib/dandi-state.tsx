@@ -23,7 +23,7 @@ import {
   type PublishedLostItem,
 } from "@/lib/published-lost-items";
 import { fetchRemoteLostItems, sortLostItemsNewestFirst } from "@/lib/catalog-utils";
-import { rememberItemRegistrationTime } from "@/lib/registration-meta";
+import { rememberItemRegistrationTime, rememberItemTimes } from "@/lib/registration-meta";
 import { postLostItemCreate, postReportCreate } from "@/lib/api-upload";
 import { apiJson, getApiBaseUrl, patchReportDetails, patchReportStatus } from "@/lib/api-json";
 import {
@@ -391,7 +391,14 @@ async function createAdminLinkedReport(
       imageSource ?? payload.image
     );
     const reportId = data.id ?? data.reportId;
-    return reportId != null ? String(reportId) : undefined;
+    if (reportId == null) return undefined;
+    const id = String(reportId);
+    try {
+      await patchReportStatus(id, "resolved");
+    } catch {
+      // 상태 변경 실패해도 lost_item 연결은 진행
+    }
+    return id;
   } catch {
     return undefined;
   }
@@ -624,7 +631,8 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
           .filter((r) => r.status === "pending")
           .forEach((r) => {
             const key = String(r.id);
-            if (!map.has(key)) map.set(key, r);
+            const onServer = remote.some((row) => String(row.id) === key);
+            if (!map.has(key) && !onServer) map.set(key, r);
           });
         const next = Array.from(map.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
         persistReportsLocal(next);
@@ -886,7 +894,10 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
             if (!resolveDisplayImageUrl(mapped.image) && displayImage) {
               mapped = { ...mapped, image: displayImage };
             }
-            rememberItemRegistrationTime(itemId, toApiDateTime(createdAtDisplay));
+            const regIso = toApiDateTime(createdAtDisplay);
+            const foundIso = toApiDateTime(lostAtDisplay);
+            rememberItemTimes(itemId, { createdAt: regIso, foundAt: foundIso });
+            if (mapped.reportId) rememberItemTimes(mapped.reportId, { createdAt: regIso, foundAt: foundIso });
             upsertPublishedLostItem(mapped);
             setHomeLostItems((prev) =>
               sortLostItemsNewestFirst(
@@ -897,6 +908,7 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               )
             );
             setCatalogVersion((v) => v + 1);
+            void refreshReportsList();
             setAdminAuditLogs((prev) => [
               {
                 id: `a-${Date.now()}`,
@@ -1057,7 +1069,11 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
                 image: resolveItemImageUrl(resolvedReport.image) ?? resolvedReport.image,
               };
             }
-            if (postedId) rememberItemRegistrationTime(postedId, registeredAtIso);
+            if (postedId) {
+              const foundIso = toApiDateTime(resolvedReport.lostAt);
+              rememberItemTimes(postedId, { createdAt: registeredAtIso, foundAt: foundIso });
+              rememberItemTimes(resolvedReport.id, { createdAt: registeredAtIso, foundAt: foundIso });
+            }
             upsertPublishedLostItem(published);
             setHomeLostItems((prev) =>
               sortLostItemsNewestFirst(
@@ -1173,7 +1189,16 @@ export function DandiStateProvider({ children }: { children: React.ReactNode }) 
               foundAt: pickRicherDateTimeLabel(updated.foundAt, mapped.foundAt) ?? updated.foundAt,
               time: mapped.createdAt ?? updated.createdAt ?? mapped.foundAt ?? updated.time,
             };
-            rememberItemRegistrationTime(serverId, toApiDateTime(merged.createdAt));
+            rememberItemTimes(serverId, {
+              createdAt: toApiDateTime(merged.createdAt),
+              foundAt: toApiDateTime(merged.foundAt ?? merged.time),
+            });
+            if (merged.reportId) {
+              rememberItemTimes(merged.reportId, {
+                createdAt: toApiDateTime(merged.createdAt),
+                foundAt: toApiDateTime(merged.foundAt ?? merged.time),
+              });
+            }
             upsertPublishedLostItem(merged);
             setHomeLostItems((prev) =>
               sortLostItemsNewestFirst(

@@ -1,4 +1,5 @@
 import { getAuthSession } from "@/lib/auth-session";
+import { getAuthorizationHeaders, getFreshAccessToken } from "@/lib/auth-token";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
@@ -11,17 +12,8 @@ function apiUrl(path: string) {
   return `${API_BASE_URL}${path}`;
 }
 
-export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  if (!API_BASE_URL) {
-    throw new Error("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
-  }
-
-  const session = getAuthSession();
-  const authHeader = session?.accessToken
-    ? ({
-        Authorization: `Bearer ${session.accessToken}`,
-      } as Record<string, string>)
-    : {};
+async function apiFetch(path: string, init?: RequestInit, retried = false): Promise<Response> {
+  const authHeader = await getAuthorizationHeaders();
 
   const response = await fetch(apiUrl(path), {
     ...init,
@@ -31,6 +23,27 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
+
+  if (
+    !retried &&
+    (response.status === 401 || response.status === 403) &&
+    getAuthSession()?.accessToken
+  ) {
+    const fresh = await getFreshAccessToken();
+    if (fresh && fresh !== getAuthSession()?.accessToken) {
+      return apiFetch(path, init, true);
+    }
+  }
+
+  return response;
+}
+
+export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  if (!API_BASE_URL) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.");
+  }
+
+  const response = await apiFetch(path, init);
 
   if (!response.ok) {
     let serverMessage = "요청 처리에 실패했습니다.";

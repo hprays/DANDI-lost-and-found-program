@@ -480,6 +480,7 @@ export default function AdminPage() {
     return () => {
       cancelled = true;
       if (rafId) window.cancelAnimationFrame(rafId);
+      // DOM에서 video를 제거하지 않음 — play() interrupted 방지
     };
   }, [cameraOpen, cameraStream]);
 
@@ -527,15 +528,6 @@ export default function AdminPage() {
     };
   }, [cameraStream]);
 
-  const bindVideoElement = (node: HTMLVideoElement | null) => {
-    videoRef.current = node;
-    if (!node || !cameraStream) return;
-    void attachStreamToVideo(node, cameraStream).then((playError) => {
-      if (playError) setVideoPlayError(playError);
-      else setVideoPlayError(null);
-    });
-  };
-
   const openCamera = async () => {
     if (typeof window !== "undefined" && !window.isSecureContext) {
       setCameraError("카메라는 https:// 또는 http://localhost 에서만 사용할 수 있습니다.");
@@ -549,17 +541,16 @@ export default function AdminPage() {
     setScanToken("");
     setPickupToken("");
     scanHandledRef.current = false;
-    stopCameraStream();
-    setCameraStream(null);
     setCameraOpen(true);
 
     const result = await requestCameraStream();
     if (!result.ok) {
       setCameraError(result.error);
-      setCameraStream(null);
+      stopCameraStream();
       setCameraOpen(false);
       return;
     }
+    cameraStream?.getTracks().forEach((track) => track.stop());
     setCameraStream(result.stream);
   };
 
@@ -1467,18 +1458,21 @@ export default function AdminPage() {
                         <div className="flex h-48 items-center justify-center bg-slate-900 px-4 text-center text-xs text-red-200">
                           {cameraError ?? videoPlayError}
                         </div>
-                      ) : !cameraStream ? (
-                        <div className="flex h-48 items-center justify-center bg-slate-900 px-4 text-center text-xs text-slate-300">
-                          카메라 연결 중...
-                        </div>
                       ) : (
-                        <video
-                          ref={bindVideoElement}
-                          autoPlay
-                          playsInline
-                          muted
-                          className="h-56 w-full bg-black object-cover"
-                        />
+                        <>
+                          {!cameraStream ? (
+                            <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900 px-4 text-center text-xs text-slate-300">
+                              카메라 연결 중...
+                            </div>
+                          ) : null}
+                          <video
+                            ref={videoRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            className="h-56 w-full bg-black object-cover"
+                          />
+                        </>
                       )}
                       <div className="pointer-events-none absolute inset-6 rounded-md border-2 border-white/70" />
                       <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white">
