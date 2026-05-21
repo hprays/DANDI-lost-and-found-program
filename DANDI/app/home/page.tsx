@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
-import { formatCatalogTimeLine } from "@/lib/format-display";
+import { catalogReceivedBadgeLabel, formatCatalogTimeLine } from "@/lib/format-display";
 import { buildings, categories, lostItems } from "@/lib/mock-data";
 
 const ITEMS_PER_PAGE = 8;
@@ -208,6 +208,7 @@ export default function HomePage() {
           {filteredItems.length > 0
             ? paginatedItems.map((item) => {
             const timeLabel = formatCatalogTimeLine(item);
+            const receivedBadge = catalogReceivedBadgeLabel(item.catalogStatus);
             return (
             <Link key={item.id} href={`/lost/${item.id}`}>
               <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
@@ -219,7 +220,14 @@ export default function HomePage() {
                     <Badge>{item.category}</Badge>
                     <span className="text-right text-xs text-muted-foreground">{timeLabel}</span>
                   </div>
-                  <h3 className="text-base font-bold">{item.name}</h3>
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <h3 className="text-base font-bold">{item.name}</h3>
+                    {receivedBadge ? (
+                      <span className="text-[15px] font-bold leading-tight text-slate-900">
+                        {receivedBadge}
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="text-sm text-muted-foreground">{item.place}</p>
                   {item.storage ? <p className="text-xs text-muted-foreground">보관: {item.storage}</p> : null}
                 </CardContent>
