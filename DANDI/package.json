@@ -10,7 +10,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "DANDI frontend web",
+  "description": "단국대학교 분실·습득물 찾기 웹 (DANDI)",
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-label": "^2.1.8",
