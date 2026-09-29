@@ -687,7 +687,7 @@ export default function AdminPage() {
   // 페이지 떠날 때 카메라 자원 정리
   useEffect(() => {
     return () => {
-      stopCameraStream();
+      cameraStream?.getTracks().forEach((track) => track.stop());
       if (scanLoopTimerRef.current != null) {
         window.clearInterval(scanLoopTimerRef.current);
       }
