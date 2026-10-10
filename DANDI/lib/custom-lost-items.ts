@@ -1,5 +1,6 @@
 "use client";
 
+import { catalogIdentityKeys } from "@/lib/catalog-identity";
 import { imageForLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
 export type CustomLostItem = {
@@ -16,7 +17,8 @@ export type CustomLostItem = {
 
 const CUSTOM_LOST_ITEMS_KEY = "dandi.custom.lostItems";
 const LOST_ITEM_OVERRIDES_KEY = "dandi.lostItem.overrides";
-const LOST_ITEM_DELETED_IDS_KEY = "dandi.lostItem.deletedIds";
+// v2: 값은 catalogIdentityKeys 형식(id:/lost:/report:)이라 신고 ID와 물품 ID가 섞이지 않는다
+const LOST_ITEM_DELETED_IDS_KEY = "dandi.lostItem.deletedIds.v2";
 
 function sanitizeCustomItem(item: CustomLostItem): CustomLostItem {
   return {
@@ -124,37 +126,25 @@ export function getDeletedLostItemIds(): string[] {
   }
 }
 
-export function markLostItemDeleted(id: string) {
-  if (typeof window === "undefined") return;
-  const normalized = String(id).trim();
-  if (!normalized) return;
-  const current = new Set(getDeletedLostItemIds());
-  current.add(normalized);
-  safeSetLocalStorage(LOST_ITEM_DELETED_IDS_KEY, JSON.stringify(Array.from(current).slice(0, 200)));
-}
-
 export function isLostItemMarkedDeleted(item: {
   id: string;
   reportId?: string;
   lostItemId?: string;
 }): boolean {
   const deleted = new Set(getDeletedLostItemIds());
-  const aliases = [item.id, item.lostItemId, item.reportId]
-    .map((v) => String(v ?? "").trim())
-    .filter(Boolean);
-  return aliases.some((key) => deleted.has(key));
+  return catalogIdentityKeys(item).some((key) => deleted.has(key));
 }
 
-/** 삭제 표시 — id / lostItemId / reportId 모두 기록 */
+/** 서버 삭제가 끝난 항목을 재조회 전까지 로컬 캐시에서 숨긴다 (물품·연결 신고 키) */
 export function markLostItemDeletedForTarget(item: {
   id: string;
   reportId?: string;
   lostItemId?: string;
 }) {
-  const aliases = [item.id, item.lostItemId, item.reportId]
-    .map((v) => String(v ?? "").trim())
-    .filter(Boolean);
-  aliases.forEach((id) => markLostItemDeleted(id));
+  if (typeof window === "undefined") return;
+  const current = new Set(getDeletedLostItemIds());
+  catalogIdentityKeys(item).forEach((key) => current.add(key));
+  safeSetLocalStorage(LOST_ITEM_DELETED_IDS_KEY, JSON.stringify(Array.from(current).slice(-200)));
 }
 
 export function applyLostItemAdminChanges<T extends { id: string; reportId?: string }>(

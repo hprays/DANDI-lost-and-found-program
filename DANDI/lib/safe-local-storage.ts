@@ -44,10 +44,10 @@ export function safeRemoveLocalStorage(key: string) {
 }
 
 const DANDI_STORAGE_KEYS = [
-  "dandi.published.lostItems",
+  "dandi.published.lostItems.v2",
   "dandi.custom.lostItems",
   "dandi.lostItem.overrides",
-  "dandi.lostItem.deletedIds",
+  "dandi.lostItem.deletedIds.v2",
   "dandi.userPrefs.localNotices",
 ] as const;
 

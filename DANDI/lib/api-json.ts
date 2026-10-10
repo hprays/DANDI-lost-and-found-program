@@ -122,32 +122,23 @@ export type ReportPatchPayload = {
   imageUrl?: string;
 };
 
-/** 백엔드는 /api/reports/{id}/status 만 지원 — 상세는 습득 완료 시 lost-items POST로 반영 */
+/** 검수 대기 신고 상세 수정 (관리자) — 저장된 신고를 반환 */
 export async function patchReportDetails(
-  _reportId: string,
-  _payload: ReportPatchPayload,
-  _options?: { keepStatus?: string }
-): Promise<void> {
-  return;
+  reportId: string,
+  payload: ReportPatchPayload,
+): Promise<Record<string, unknown>> {
+  return apiJson<Record<string, unknown>>(
+    `/api/reports/${encodeURIComponent(String(reportId))}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+    { timeoutMs: API_MUTATION_TIMEOUT_MS },
+  );
 }
 
+/** 상태 변경 실패 시 다른 API로 재시도하지 않는다 (상세 PATCH는 status를 반영하지 않음) */
 export async function patchReportStatus(reportId: string, status: string): Promise<void> {
-  const id = encodeURIComponent(String(reportId));
-  const body = JSON.stringify({ status });
-  const mutationOpts = { timeoutMs: API_MUTATION_TIMEOUT_MS };
-  try {
-    await apiJson<object>(`/api/reports/${id}/status`, { method: "PATCH", body }, mutationOpts);
-    return;
-  } catch (firstError) {
-    const firstMsg = firstError instanceof Error ? firstError.message : "";
-    if (/시간이 초과|timeout|aborted/i.test(firstMsg)) {
-      throw firstError instanceof Error ? firstError : new Error("신고 상태 변경에 실패했습니다.");
-    }
-    try {
-      await apiJson<object>(`/api/reports/${id}`, { method: "PATCH", body }, mutationOpts);
-      return;
-    } catch (secondError) {
-      throw secondError instanceof Error ? secondError : new Error("신고 상태 변경에 실패했습니다.");
-    }
-  }
+  await apiJson<object>(
+    `/api/reports/${encodeURIComponent(String(reportId))}/status`,
+    { method: "PATCH", body: JSON.stringify({ status }) },
+    { timeoutMs: API_MUTATION_TIMEOUT_MS },
+  );
 }

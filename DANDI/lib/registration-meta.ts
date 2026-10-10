@@ -2,7 +2,12 @@ import { formatDateTimeLabel, pickRicherDateTimeLabel } from "@/lib/format-displ
 import { resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { imageForLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
-const KEY = "dandi.itemRegistrationMeta";
+// v2: 신고 메타는 reportMetaKey()로 구분해 물품 ID와 충돌하지 않게 저장한다
+const KEY = "dandi.itemRegistrationMeta.v2";
+
+export function reportMetaKey(reportId: string): string {
+  return `report:${reportId}`;
+}
 
 export type ItemTimeMeta = {
   createdAt?: string;
@@ -96,7 +101,7 @@ function applyMetaToItem<
   T extends { id: string; reportId?: string; createdAt?: string; foundAt?: string; time?: string; image?: string },
 >(item: T): T {
   const byId = lookupItemTimes(item.id);
-  const byReport = item.reportId ? lookupItemTimes(item.reportId) : undefined;
+  const byReport = item.reportId ? lookupItemTimes(reportMetaKey(item.reportId)) : undefined;
   const merged: ItemTimeMeta = { ...byReport, ...byId };
 
   const createdAt = pickRicherDateTimeLabel(item.createdAt, merged.createdAt);

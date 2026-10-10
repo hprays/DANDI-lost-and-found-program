@@ -15,35 +15,22 @@ export async function fetchLostItemById(id: string): Promise<PublishedLostItem |
   const base = getApiBaseUrl();
   if (!base || !id.trim()) return null;
   const encoded = encodeURIComponent(id.trim());
-  const paths = [`/api/lost-items/${encoded}`, `/lost-items/${encoded}`];
-  for (const path of paths) {
-    try {
-      const data = await apiJson<unknown>(path, { method: "GET" });
-      if (data && typeof data === "object" && !Array.isArray(data)) {
-        const row = data as Record<string, unknown>;
-        return mapApiLostItem({ ...row, id: row.id ?? row.lostItemId ?? id });
-      }
-      const fromList = extractLostItemList(data)[0];
-      if (fromList) return fromList;
-    } catch {
-      // try next path
+  try {
+    const data = await apiJson<unknown>(`/api/lost-items/${encoded}`, { method: "GET" });
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      const row = data as Record<string, unknown>;
+      return mapApiLostItem({ ...row, id: row.id ?? row.lostItemId ?? id });
     }
+    return extractLostItemList(data)[0] ?? null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
+/** 실패는 그대로 던진다 — 호출 측이 빈 목록과 조회 실패를 구분해야 한다 */
 async function fetchRemoteLostItemsFromNetwork(): Promise<PublishedLostItem[]> {
-  const base = getApiBaseUrl();
-  if (!base) return [];
-  try {
-    return extractLostItemList(await apiJson<unknown>("/api/lost-items", { method: "GET" }));
-  } catch {
-    try {
-      return extractLostItemList(await apiJson<unknown>("/lost-items", { method: "GET" }));
-    } catch {
-      return [];
-    }
-  }
+  if (!getApiBaseUrl()) return [];
+  return extractLostItemList(await apiJson<unknown>("/api/lost-items", { method: "GET" }));
 }
 
 export async function fetchRemoteLostItems(force = false): Promise<PublishedLostItem[]> {

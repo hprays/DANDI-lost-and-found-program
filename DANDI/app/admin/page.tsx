@@ -32,6 +32,7 @@ import {
 } from '@/lib/catalog-identity';
 import {
   applyLostItemAdminChanges,
+  clearLostItemOverridesForIds,
   setLostItemOverride,
 } from '@/lib/custom-lost-items';
 import { compressImageFile } from '@/lib/image-compress';
@@ -133,9 +134,9 @@ export default function AdminPage() {
     publishAdminLostItem,
     updatePendingReport,
     homeLostItems,
+    catalogLoaded,
     updateHomeLostItem,
     removeHomeLostItem,
-    refreshReports,
     refreshReportsList,
     refreshHomeCatalog,
   } = useDandiState();
@@ -356,11 +357,8 @@ export default function AdminPage() {
           setEditingPendingReportId(null);
           resetRegisterFormForAdmin();
         }
+        // resolveReport가 서버 확정 후 신고·카탈로그를 이미 다시 불러온다 (신고 목록은 대용량이라 중복 조회 금지)
         setAdminTab(status === 'resolved' ? 'processed' : 'pending');
-        void refreshReportsList();
-        if (status === 'resolved') {
-          void refreshHomeCatalog();
-        }
       }
     } finally {
       setStatusUpdatingId(null);
@@ -383,16 +381,10 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!isAdmin || !apiConfigured || adminTab !== 'manage') return;
-    if (homeLostItems.length === 0) {
+    if (!catalogLoaded) {
       void refreshHomeCatalog();
     }
-  }, [
-    isAdmin,
-    apiConfigured,
-    adminTab,
-    homeLostItems.length,
-    refreshHomeCatalog,
-  ]);
+  }, [isAdmin, apiConfigured, adminTab, catalogLoaded, refreshHomeCatalog]);
 
   const pickupItemPool = useMemo(() => {
     if (adminTab !== 'pickup') return [];
@@ -765,7 +757,9 @@ export default function AdminPage() {
         .map((p) => String(p.lostItemId)),
     );
     const available = pickupItemPool.filter(
-      (item) => !verifiedLostIds.has(String(item.id)),
+      (item) =>
+        !verifiedLostIds.has(String(item.id)) &&
+        !/^(RECEIVED|PICKED_UP)$/i.test(String(item.catalogStatus ?? '')),
     );
     const keyword = pickupSearch.trim().toLowerCase();
     if (!keyword) return available.slice(0, 6);
@@ -1026,7 +1020,7 @@ export default function AdminPage() {
       createdAt: origin.createdAt,
     };
 
-    const apiId = resolveServerLostItemId(origin, itemId, managedItems);
+    const apiId = resolveServerLostItemId(origin, itemId, managedItems) || origin.id;
     setManageBusyId(draftKey);
     setManageMessage('');
     try {
@@ -1035,8 +1029,13 @@ export default function AdminPage() {
         setManageMessage(result.message);
         return;
       }
-      setLostItemOverride(draftKey, patch);
-      if (apiId !== draftKey) setLostItemOverride(apiId, patch);
+      if (apiConfigured) {
+        // 서버에 저장된 값이 기준 — 로컬 덮어쓰기를 남기면 다른 관리자의 수정이 가려진다
+        clearLostItemOverridesForIds([draftKey, apiId]);
+      } else {
+        setLostItemOverride(draftKey, patch);
+        if (apiId !== draftKey) setLostItemOverride(apiId, patch);
+      }
       setManageDrafts((prev) => {
         const next = { ...prev };
         delete next[draftKey];
@@ -1059,7 +1058,7 @@ export default function AdminPage() {
       setManageMessage('삭제할 물품을 찾을 수 없습니다.');
       return;
     }
-    const apiId = resolveServerLostItemId(target, itemId, managedItems);
+    const apiId = resolveServerLostItemId(target, itemId, managedItems) || target.id;
     setManageBusyId(target.id);
     setManageMessage('');
     try {
@@ -1619,14 +1618,7 @@ export default function AdminPage() {
                                 {(item as { lostItemId?: string }).lostItemId ??
                                   item.id}
                               </p>
-                              {(item as { reportId?: string }).reportId &&
-                              String(
-                                (item as { reportId?: string }).reportId,
-                              ) !==
-                                String(
-                                  (item as { lostItemId?: string })
-                                    .lostItemId ?? item.id,
-                                ) ? (
+                              {(item as { reportId?: string }).reportId ? (
                                 <p className="text-xs text-muted-foreground">
                                   신고 ID:{' '}
                                   {(item as { reportId?: string }).reportId}

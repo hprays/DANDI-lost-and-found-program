@@ -17,13 +17,21 @@ import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
 import { displayFoundDateTime, displayRegistrationDateTime } from "@/lib/format-display";
 import { fetchLostItemById } from "@/lib/catalog-utils";
 import { getPublishedLostItems, type PublishedLostItem } from "@/lib/published-lost-items";
+import { lostItemPk } from "@/lib/catalog-identity";
+import { getAuthSession } from "@/lib/auth-session";
+import { pickupPassState, useNow } from "@/lib/pickup-pass-state";
 
 const USE_MOCK_LOST_ITEMS = process.env.NEXT_PUBLIC_ENABLE_MOCK_LOST_ITEMS === "true";
 
 export default function LostDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const itemId = id;
-  const { issuePickupPass, pickupPasses, homeLostItems } = useDandiState();
+  const { issuePickupPass, pickupPasses, homeLostItems, refreshPickupPasses } = useDandiState();
+  const now = useNow();
+
+  useEffect(() => {
+    void refreshPickupPasses();
+  }, [refreshPickupPasses]);
   const [fetchedItem, setFetchedItem] = useState<PublishedLostItem | null>(null);
   const [fetchingItem, setFetchingItem] = useState(true);
 
@@ -47,12 +55,9 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
     const merged = USE_MOCK_LOST_ITEMS
       ? applyLostItemAdminChanges([...published, ...stored, ...lostItems])
       : applyLostItemAdminChanges([...published, ...stored]);
+    // 경로의 id는 물품 id — 신고 id(reportId)와 비교하지 않는다
     return (
       merged.find((it) => String(it.id) === itemId) ??
-      merged.find((it) => {
-        const reportId = (it as PublishedLostItem).reportId;
-        return reportId != null && String(reportId) === itemId;
-      }) ??
       (fetchedItem ? applyLostItemAdminChanges([fetchedItem])[0] : null)
     );
   }, [homeLostItems, itemId, fetchedItem]);
@@ -61,25 +66,30 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
   const loading = item !== null && aiGuide === null;
   const [issuingPickup, setIssuingPickup] = useState(false);
   const [pickupMessage, setPickupMessage] = useState("");
-  const existingPass = useMemo(
-    () => pickupPasses.find((pass) => pass.lostItemId === itemId && !pass.usedAt) ?? null,
-    [pickupPasses, itemId]
+  const serverItemId = item ? lostItemPk(item as PublishedLostItem) : undefined;
+  const itemReceived = /^(RECEIVED|PICKED_UP)$/i.test(
+    String((item as PublishedLostItem | null)?.catalogStatus ?? "")
   );
+  // 현재 계정의 이 물품 QR 중 가장 최근 것 (서버 목록 기준, 만료·사용 여부 포함)
+  const latestPass = useMemo(() => {
+    if (!serverItemId) return null;
+    const email = getAuthSession()?.email;
+    return (
+      pickupPasses.find(
+        (pass) =>
+          pass.lostItemId === serverItemId && (!pass.claimantEmail || pass.claimantEmail === email)
+      ) ?? null
+    );
+  }, [pickupPasses, serverItemId]);
+  const latestPassState = latestPass ? pickupPassState(latestPass, now) : null;
 
   const onIssuePickup = async () => {
     if (!item) return;
     setIssuingPickup(true);
     setPickupMessage("");
     try {
-      const lostItemId =
-        (item as { lostItemId?: string }).lostItemId &&
-        /^\d+$/.test(String((item as { lostItemId?: string }).lostItemId))
-          ? String((item as { lostItemId?: string }).lostItemId)
-          : /^\d+$/.test(String(item.id))
-            ? String(item.id)
-            : item.id;
       const result = await issuePickupPass({
-        lostItemId,
+        lostItemId: serverItemId ?? "",
         itemName: item.name,
         itemImage: item.image,
         itemLocation: item.place,
@@ -198,25 +208,36 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
           <p className="text-xs text-muted-foreground">
             QR 발급 후 관리실을 방문하면 담당자가 본인 확인을 진행합니다. QR은 발급 시점부터 10분 동안 유효합니다.
           </p>
-          {existingPass ? (
+          {itemReceived || latestPassState === "used" ? (
+            <p className="rounded-lg border bg-white p-3 text-sm font-semibold text-slate-700">
+              수령이 완료된 물품입니다.
+            </p>
+          ) : latestPass && latestPassState === "active" ? (
             <div className="rounded-lg border bg-white p-3">
               <p className="text-xs text-muted-foreground">발급된 수령 QR</p>
               <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-center">
-                <PickupQr value={existingPass.token} />
+                <PickupQr value={latestPass.token} />
                 <div className="space-y-1 text-sm">
-                  <p className="text-base font-bold tracking-wider">{existingPass.token}</p>
+                  <p className="text-base font-bold tracking-wider">{latestPass.token}</p>
                   <p className="text-xs text-muted-foreground">
-                    유효기간: {new Date(existingPass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
+                    유효기간: {new Date(latestPass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
                   </p>
                   <p className="text-xs font-semibold text-primary">관리실에서 QR 확인 대기 중</p>
                 </div>
               </div>
             </div>
           ) : (
-            <Button onClick={onIssuePickup} disabled={issuingPickup}>
-              {issuingPickup ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-              내 물건 — 수령 QR 발급받기
-            </Button>
+            <>
+              {latestPassState === "expired" ? (
+                <p className="text-xs font-semibold text-amber-700">
+                  이전에 발급한 QR이 만료되었습니다. 새 QR을 발급받아 주세요.
+                </p>
+              ) : null}
+              <Button onClick={onIssuePickup} disabled={issuingPickup || !serverItemId}>
+                {issuingPickup ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                {latestPassState === "expired" ? "수령 QR 다시 발급받기" : "내 물건 — 수령 QR 발급받기"}
+              </Button>
+            </>
           )}
           {pickupMessage ? <p className="text-xs font-medium text-primary">{pickupMessage}</p> : null}
         </CardContent>

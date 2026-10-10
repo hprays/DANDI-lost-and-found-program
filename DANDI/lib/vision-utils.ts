@@ -46,7 +46,6 @@ export function buildVisionFormData(
 ): FormData {
   const formData = new FormData();
   formData.append("image", file, file.name);
-  formData.append("file", file, file.name);
   formData.append("documentType", resolveVisionDocumentType(options));
   return formData;
 }
@@ -144,7 +143,7 @@ export async function resolveVisionPublishImage(options: {
 }): Promise<{ image?: string; notice?: string }> {
   const needsMask = options.documentType !== "NONE";
 
-  let mosaic = pickMosaicImageUrl(options.analyzePayload);
+  const mosaic = pickMosaicImageUrl(options.analyzePayload);
 
   if (mosaic) {
     return {

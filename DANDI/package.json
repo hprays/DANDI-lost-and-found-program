@@ -5,7 +5,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint . --ext .ts,.tsx"
+    "lint": "eslint . --ext .ts,.tsx",
+    "check:ids": "node scripts/check-catalog-identity.mjs"
   },
   "keywords": [],
   "author": "",

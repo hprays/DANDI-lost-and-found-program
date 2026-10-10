@@ -1,5 +1,5 @@
 import { getApiBaseUrl } from '@/lib/api-json';
-import { getAuthorizationHeaders } from '@/lib/auth-token';
+import { getAuthorizationHeaders, getFreshAccessToken } from '@/lib/auth-token';
 import { resolveMediaUrl } from '@/lib/media-url';
 
 function apiUrl(path: string) {
@@ -38,6 +38,7 @@ async function apiFormDataPost<T>(
   path: string,
   formData: FormData,
   method = 'POST',
+  retried = false,
 ): Promise<T> {
   const base = getApiBaseUrl();
   if (!base) throw new Error('NEXT_PUBLIC_API_BASE_URL 설정이 필요합니다.');
@@ -60,6 +61,13 @@ async function apiFormDataPost<T>(
     throw error;
   } finally {
     clearTimeout(timeoutId);
+  }
+
+  // JSON 요청(apiJson)과 같이 토큰 만료 시 갱신 후 한 번 재시도한다
+  if (!retried && (response.status === 401 || response.status === 403)) {
+    if (await getFreshAccessToken()) {
+      return apiFormDataPost<T>(path, formData, method, true);
+    }
   }
 
   if (!response.ok) {
@@ -101,10 +109,8 @@ function appendImageFile(form: FormData, image?: string | null) {
   const trimmed = image?.trim();
   if (!trimmed?.startsWith('data:')) return;
   const file = dataUrlToFile(trimmed);
-  if (file) {
-    form.append('image', file, file.name);
-    form.append('file', file, file.name);
-  }
+  // 백엔드는 image를 먼저 읽는다 — 같은 파일을 file로 한 번 더 보내지 않는다
+  if (file) form.append('image', file, file.name);
 }
 
 /** DANDI_Backend LostItemController.createMultipart — 프론트 필드명 그대로 + image/file */

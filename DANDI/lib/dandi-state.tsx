@@ -13,13 +13,12 @@ import { extractStudentIdFromEmail, getAuthSession } from '@/lib/auth-session';
 import {
   clearLostItemOverridesForIds,
   deleteCustomLostItem,
-  getDeletedLostItemIds,
   isLostItemMarkedDeleted,
-  markLostItemDeleted,
   markLostItemDeletedForTarget,
 } from '@/lib/custom-lost-items';
 import {
   findCatalogItemByHint,
+  lostItemPk,
   resolveServerLostItemId,
 } from '@/lib/catalog-identity';
 import {
@@ -31,7 +30,6 @@ import {
   isSameCatalogItem,
   mergePublishedItems,
   pickRicherCatalogStatus,
-  removePublishedLostItem,
   removePublishedLostItemByTarget,
   reportToPublishedItem,
   upsertPublishedLostItem,
@@ -45,20 +43,22 @@ import {
 import {
   rememberCatalogStatus,
   rememberItemImage,
-  rememberItemRegistrationTime,
   rememberItemTimes,
+  reportMetaKey,
 } from '@/lib/registration-meta';
 import { postLostItemCreate, postReportCreate } from '@/lib/api-upload';
 import {
   apiJson,
   API_MUTATION_TIMEOUT_MS,
   getApiBaseUrl,
+  patchReportDetails,
   patchReportStatus,
+  type ReportPatchPayload,
 } from '@/lib/api-json';
 import {
   formatDateTimeLabel,
   normalizeReportStatus,
-  pickRicherDateTimeLabel,
+  parseDateTimeMs,
   sanitizeLocation,
   toApiDateTime,
 } from '@/lib/format-display';
@@ -68,7 +68,6 @@ import {
   pickImageFromRaw,
   resolveDisplayImageUrl,
   resolveItemImageUrl,
-  resolveMediaUrl,
 } from '@/lib/media-url';
 import {
   compactDandiLocalStorage,
@@ -161,6 +160,10 @@ type DandiStateContextValue = {
   homeLostItems: PublishedLostItem[];
   catalogVersion: number;
   catalogLoading: boolean;
+  /** 최초 카탈로그 조회 완료 여부 (빈 목록과 미조회 구분) */
+  catalogLoaded: boolean;
+  /** 마지막 카탈로그 조회 실패 메시지 */
+  catalogError: string | null;
   notices: UserNotice[];
   noticesLoading: boolean;
   noticesError: string | null;
@@ -204,6 +207,7 @@ type DandiStateContextValue = {
   refreshReports: () => Promise<void>;
   refreshReportsList: () => Promise<void>;
   refreshHomeCatalog: () => Promise<void>;
+  refreshPickupPasses: () => Promise<void>;
   markNoticeRead: (
     noticeId: string,
   ) => Promise<{ ok: boolean; message: string }>;
@@ -213,47 +217,12 @@ type DandiStateContextValue = {
 
 const DandiStateContext = createContext<DandiStateContextValue | null>(null);
 const API_BASE_URL = getApiBaseUrl();
-export const REPORTS_CHANGED_EVENT = 'dandi-reports-changed';
-const PICKUP_PASSES_KEY = 'dandi.pickupPasses';
-const REPORTS_LOCAL_KEY = 'dandi.reports.local';
+/** 신고 캐시는 계정별로 분리한다 (같은 브라우저에서 계정을 바꿔도 섞이지 않게) */
+function reportsLocalKey(): string | null {
+  const email = getAuthSession()?.email;
+  return email ? `dandi.reports.local:${email.toLowerCase()}` : null;
+}
 const SYNC_CHANNEL = 'dandi-sync';
-
-function reportStatusRank(status: ReportStatus): number {
-  switch (status) {
-    case 'picked_up':
-      return 4;
-    case 'resolved':
-      return 3;
-    case 'unavailable':
-      return 2;
-    case 'pending':
-    default:
-      return 1;
-  }
-}
-
-/** 서버가 아직 pending 인데 로컬에서 습득완료한 경우 — 로컬 상태·수정 내용 유지 */
-function mergeReportRecords(
-  existing: LostReport,
-  incoming: LostReport,
-): LostReport {
-  const keepExistingStatus =
-    reportStatusRank(existing.status) >= reportStatusRank(incoming.status);
-  const primary = keepExistingStatus ? existing : incoming;
-  const secondary = keepExistingStatus ? incoming : existing;
-  return {
-    ...secondary,
-    ...primary,
-    status: keepExistingStatus ? existing.status : incoming.status,
-    image:
-      resolveDisplayImageUrl(primary.image) ??
-      resolveDisplayImageUrl(secondary.image) ??
-      primary.image ??
-      secondary.image,
-    ownerName: primary.ownerName ?? secondary.ownerName,
-    ownerEmail: primary.ownerEmail ?? secondary.ownerEmail,
-  };
-}
 
 function imageForReportStorage(image?: string): string | undefined {
   if (!image?.trim()) return undefined;
@@ -269,12 +238,14 @@ function persistReportsLocal(reports: LostReport[]) {
     ...r,
     image: imageForReportStorage(r.image),
   }));
-  safeSetLocalStorage(REPORTS_LOCAL_KEY, JSON.stringify(slim));
+  const key = reportsLocalKey();
+  if (key) safeSetLocalStorage(key, JSON.stringify(slim));
 }
 
 function loadReportsLocal(): LostReport[] {
-  if (typeof window === 'undefined') return [];
-  const raw = window.localStorage.getItem(REPORTS_LOCAL_KEY);
+  const key = typeof window === 'undefined' ? null : reportsLocalKey();
+  if (!key) return [];
+  const raw = window.localStorage.getItem(key);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as LostReport[];
@@ -284,26 +255,67 @@ function loadReportsLocal(): LostReport[] {
   }
 }
 
-function notifyReportsChanged() {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent(REPORTS_CHANGED_EVENT));
-  try {
-    new BroadcastChannel(SYNC_CHANNEL).postMessage({ type: 'reports' });
-  } catch {
-    // BroadcastChannel 미지원 환경
-  }
+let syncChannel: BroadcastChannel | null = null;
+
+function getSyncChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return null;
+  syncChannel ??= new BroadcastChannel(SYNC_CHANNEL);
+  return syncChannel;
 }
 
-function getStoredPickupPasses(): PickupPass[] {
-  if (typeof window === 'undefined') return [];
-  const raw = window.localStorage.getItem(PICKUP_PASSES_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as PickupPass[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+/**
+ * 다른 탭에만 신고 변경을 알린다. 같은 채널 인스턴스로 보내면 자기 탭에는 전달되지 않는다
+ * — 현재 탭은 이미 직접 재조회하므로 신고 목록(대용량)을 한 번 더 받지 않게 한다.
+ */
+function notifyReportsChanged() {
+  getSyncChannel()?.postMessage({ type: 'reports' });
+}
+
+/** 승인 직후 임시 카드처럼 서버 물품 ID를 아직 모를 때 — 로컬만 바꾸고 성공으로 보이지 않게 한다 */
+const NOT_SYNCED_RESULT = {
+  ok: false,
+  message: '서버 물품 정보를 아직 받지 못했습니다. 목록을 새로고침한 뒤 다시 시도해 주세요.',
+};
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : '알 수 없는 오류';
+}
+
+function isTimeoutMessage(message: string): boolean {
+  return /시간이 초과|timeout|aborted/i.test(message);
+}
+
+/** 검수 수정 폼 값 → 백엔드 PATCH /api/reports/{id} 본문 */
+function toReportPatchPayload(patch: PendingReportPatch): ReportPatchPayload {
+  const payload: ReportPatchPayload = {};
+  if (patch.itemName != null) payload.itemName = patch.itemName;
+  if (patch.category != null) payload.category = patch.category;
+  if (patch.location != null) payload.location = sanitizeLocation(patch.location);
+  if (patch.storage != null) payload.storage = sanitizeLocation(patch.storage);
+  if (patch.memo != null) payload.memo = patch.memo;
+  if (patch.lostAt != null) payload.lostAt = toApiDateTime(patch.lostAt);
+  if (patch.image) Object.assign(payload, apiImageFields(patch.image));
+  if (patch.image?.startsWith('data:')) payload.image = patch.image;
+  return payload;
+}
+
+/** 백엔드 수령 QR 응답(발급·내 목록) → PickupPass */
+function mapPickupPass(raw: Record<string, unknown>): PickupPass | null {
+  const token = raw.token != null ? String(raw.token) : '';
+  const lostItemId = raw.lostItemId != null ? String(raw.lostItemId) : '';
+  if (!token || !lostItemId) return null;
+  return {
+    id: String(raw.id ?? token),
+    lostItemId,
+    reportId: raw.reportId != null ? String(raw.reportId) : undefined,
+    itemName: raw.itemName != null ? String(raw.itemName) : undefined,
+    itemLocation: raw.itemLocation != null ? String(raw.itemLocation) : undefined,
+    claimantEmail: raw.claimantEmail != null ? String(raw.claimantEmail) : undefined,
+    token,
+    issuedAt: String(raw.issuedAt ?? ''),
+    expiresAt: String(raw.expiresAt ?? ''),
+    usedAt: raw.usedAt != null ? String(raw.usedAt) : null,
+  };
 }
 
 function nowISO() {
@@ -312,15 +324,6 @@ function nowISO() {
 
 function shortDateTime() {
   return new Date().toLocaleString('ko-KR', { hour12: false });
-}
-
-function minutesLaterISO(minutes: number) {
-  return new Date(Date.now() + minutes * 60_000).toISOString();
-}
-
-function pickupToken() {
-  const rand = Math.floor(100000 + Math.random() * 900000);
-  return `DKU-${rand}`;
 }
 
 function normalizeNotice(raw: Record<string, unknown>): UserNotice | null {
@@ -357,7 +360,7 @@ function extractNoticeList(payload: unknown): UserNotice[] {
     .filter((row): row is UserNotice => row !== null);
 }
 
-function normalizeReport(raw: Record<string, unknown>): LostReport | null {
+export function normalizeReport(raw: Record<string, unknown>): LostReport | null {
   const id = raw.id ?? raw.reportId;
   const itemName = raw.itemName ?? raw.name;
   if (id == null || itemName == null) return null;
@@ -425,40 +428,6 @@ function extractReportList(payload: unknown): LostReport[] {
   return list
     .map((row) => normalizeReport(row as Record<string, unknown>))
     .filter((row): row is LostReport => row !== null);
-}
-
-async function publishLostItemToApi(
-  report: LostReport,
-  imageSource?: string | null,
-): Promise<{ id?: string; lostItemId?: string } | void> {
-  if (!API_BASE_URL) return;
-  const foundAtIso = toApiDateTime(report.lostAt);
-  const createdAtIso = nowISO();
-  const image = imageSource ?? report.image;
-  const linkedReportId = /^\d+$/.test(String(report.id))
-    ? String(report.id)
-    : undefined;
-  const data = await postLostItemCreate(
-    {
-      reportId: linkedReportId,
-      name: report.itemName,
-      itemName: report.itemName,
-      category: report.category,
-      location: report.location,
-      place: report.location,
-      lostAt: foundAtIso,
-      foundAt: foundAtIso,
-      acquiredAt: foundAtIso,
-      createdAt: createdAtIso,
-      registeredAt: createdAtIso,
-      memo: report.memo,
-      itemType: report.itemType,
-      storage: report.storage,
-      status: 'published',
-    },
-    image,
-  );
-  return data;
 }
 
 async function publishAdminLostItemToApi(
@@ -562,6 +531,8 @@ export function DandiStateProvider({
   }, [homeLostItems]);
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   const [notices, setNotices] = useState<UserNotice[]>(() => {
     const stored = getStoredLocalNotices();
@@ -591,9 +562,8 @@ export function DandiStateProvider({
       createdAt: shortDateTime(),
     },
   ]);
-  const [pickupPasses, setPickupPasses] = useState<PickupPass[]>(() =>
-    getStoredPickupPasses(),
-  );
+  // 수령 QR은 서버(GET /api/pickup-passes/me)가 기준 — 계정별로 다시 불러온다
+  const [pickupPasses, setPickupPasses] = useState<PickupPass[]>([]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -604,34 +574,6 @@ export function DandiStateProvider({
     }
     const timer = setTimeout(runCompact, 1200);
     return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    safeSetLocalStorage(
-      PICKUP_PASSES_KEY,
-      JSON.stringify(pickupPasses.slice(0, 80)),
-    );
-  }, [pickupPasses]);
-
-  const purgeCatalogItem = useCallback((target: PublishedLostItem | null, hintId: string) => {
-    if (target) {
-      markLostItemDeletedForTarget(target);
-      removePublishedLostItemByTarget(target);
-      setHomeLostItems((prev) => prev.filter((it) => !isSameCatalogItem(it, target)));
-    } else {
-      markLostItemDeleted(hintId);
-      removePublishedLostItem(hintId);
-      setHomeLostItems((prev) =>
-        prev.filter(
-          (it) =>
-            String(it.id) !== hintId &&
-            String(it.lostItemId ?? '') !== hintId &&
-            String(it.reportId ?? '') !== hintId,
-        ),
-      );
-    }
-    setCatalogVersion((v) => v + 1);
-    invalidateRemoteLostItemsCache();
   }, []);
 
   /** 수령 인증 후 DB RECEIVED 유지 — DELETE·로컬 삭제 없음 */
@@ -653,8 +595,7 @@ export function DandiStateProvider({
       };
 
       rememberCatalogStatus(target.id, 'RECEIVED', receivedLabel);
-      if (target.reportId) rememberCatalogStatus(target.reportId, 'RECEIVED', receivedLabel);
-      if (target.lostItemId) rememberCatalogStatus(target.lostItemId, 'RECEIVED', receivedLabel);
+      if (target.reportId) rememberCatalogStatus(reportMetaKey(target.reportId), 'RECEIVED', receivedLabel);
 
       upsertPublishedLostItem(updated);
       setHomeLostItems((prev) =>
@@ -666,12 +607,10 @@ export function DandiStateProvider({
     [],
   );
 
+  /** 서버 목록을 기준으로 홈 카탈로그를 만든다. 로컬은 사진·시각 보강과 서버에 아직 없는 임시 카드에만 쓴다. */
   const applyCatalogMerge = useCallback(
     (reportList: LostReport[], remoteItems: PublishedLostItem[]) => {
-      const deletedIds = new Set(getDeletedLostItemIds());
-
       const collected: PublishedLostItem[] = [];
-
       const localPools = [
         ...homeLostItemsRef.current,
         ...getPublishedLostItems(),
@@ -680,16 +619,11 @@ export function DandiStateProvider({
       remoteItems
         .filter((item) => {
           if (isLostItemMarkedDeleted(item)) return false;
-          const aliases = [item.id, item.lostItemId, item.reportId]
-            .map((v) => String(v ?? '').trim())
-            .filter(Boolean);
-          if (aliases.some((key) => deletedIds.has(key))) return false;
           if (!item.reportId) return true;
           const linked = reportList.find(
             (r) => String(r.id) === String(item.reportId),
           );
-          if (!linked) return true;
-          return linked.status !== 'pending';
+          return !linked || linked.status !== 'pending';
         })
         .forEach((item) => {
           const existing = localPools.find((local) =>
@@ -698,6 +632,8 @@ export function DandiStateProvider({
           const merged = existing ? mergePublishedItems(item, existing) : item;
           collected.push({
             ...merged,
+            // 상태는 서버 값이 기준
+            catalogStatus: item.catalogStatus ?? merged.catalogStatus,
             image:
               resolveDisplayImageUrl(merged.image) ??
               resolveItemImageUrl(merged.image) ??
@@ -705,20 +641,10 @@ export function DandiStateProvider({
           });
         });
 
-      const remoteKeys = new Set<string>();
-      remoteItems.forEach((item) => {
-        [item.id, item.lostItemId, item.reportId]
-          .map((v) => String(v ?? '').trim())
-          .filter(Boolean)
-          .forEach((key) => remoteKeys.add(key));
-      });
-
+      // 서버 PK가 있는 로컬 항목이 서버 목록에 없으면 이미 삭제된 것 — 임시 카드만 남긴다
       getPublishedLostItems().forEach((item) => {
-        if (isLostItemMarkedDeleted(item)) return;
-        const localKeys = [item.id, item.lostItemId, item.reportId]
-          .map((v) => String(v ?? '').trim())
-          .filter(Boolean);
-        if (localKeys.some((key) => remoteKeys.has(key))) return;
+        if (isLostItemMarkedDeleted(item) || lostItemPk(item)) return;
+        if (remoteItems.some((remote) => isSameCatalogItem(remote, item))) return;
         collected.push({
           ...item,
           image:
@@ -739,11 +665,7 @@ export function DandiStateProvider({
         .filter(
           (r) =>
             r.status === 'resolved' &&
-            !linkedReportIds.has(String(r.id)) &&
-            !isLostItemMarkedDeleted({
-              id: String(r.id),
-              reportId: String(r.id),
-            }),
+            !linkedReportIds.has(String(r.id)),
         )
         .map((r) => reportToPublishedItem(r))
         .filter(
@@ -779,17 +701,19 @@ export function DandiStateProvider({
       const blocking = options?.blocking !== false;
       if (blocking) setCatalogLoading(true);
       try {
-        let remoteItems: PublishedLostItem[] = [];
-        try {
-          remoteItems = await fetchRemoteLostItems();
-        } catch {
-          remoteItems = [];
-        }
+        const remoteItems = await fetchRemoteLostItems();
+        setCatalogError(null);
         setReports((current) => {
           applyCatalogMerge(current, remoteItems);
           return current;
         });
+      } catch (error) {
+        // 실패를 빈 목록으로 바꾸지 않는다 — 기존 목록을 유지하고 오류를 알린다
+        setCatalogError(
+          `분실물 목록을 불러오지 못했습니다. (${errorMessage(error)})`,
+        );
       } finally {
+        setCatalogLoaded(true);
         if (blocking) setCatalogLoading(false);
       }
     },
@@ -813,52 +737,60 @@ export function DandiStateProvider({
     await refreshHomeCatalogInner();
   }, [refreshHomeCatalogInner]);
 
+  const replaceReportLocal = useCallback((updated: LostReport) => {
+    setReports((prev) => {
+      const next = prev.map((report) =>
+        String(report.id) === String(updated.id) ? updated : report,
+      );
+      persistReportsLocal(next);
+      return next;
+    });
+  }, []);
+
+  /** 서버 신고 목록이 기준. 서버 ID가 아닌 로컬 임시 신고만 덧붙인다. */
   const refreshReportsList = useCallback(async () => {
-    if (!API_BASE_URL || !getAuthSession()?.accessToken) return;
+    const email = getAuthSession()?.email;
+    if (!API_BASE_URL || !email) return;
     try {
       const remote = extractReportList(
         await apiJson<unknown>('/api/reports', { method: 'GET' }),
       );
+      if (getAuthSession()?.email !== email) return; // 요청 중 계정이 바뀜
       setReports((prev) => {
-        const map = new Map<string, LostReport>();
-        loadReportsLocal().forEach((r) => map.set(String(r.id), r));
-        prev.forEach((r) => {
-          const key = String(r.id);
-          const existing = map.get(key);
-          map.set(key, existing ? mergeReportRecords(existing, r) : r);
-        });
-        remote.forEach((r) => {
-          const key = String(r.id);
-          const existing = map.get(key);
-          map.set(key, existing ? mergeReportRecords(existing, r) : r);
-        });
-        prev
-          .filter((r) => r.status === 'pending')
-          .forEach((r) => {
-            const key = String(r.id);
-            const onServer = remote.some((row) => String(row.id) === key);
-            if (!map.has(key) && !onServer) map.set(key, r);
-          });
-        const next = Array.from(map.values()).sort((a, b) =>
-          a.createdAt < b.createdAt ? 1 : -1,
+        const remoteIds = new Set(remote.map((r) => String(r.id)));
+        const localOnly = prev.filter(
+          (r) => !/^\d+$/.test(String(r.id)) && !remoteIds.has(String(r.id)),
+        );
+        // 표시용 라벨("2026. 10. 10. …")은 문자열 비교로 정렬되지 않는다 — 시각으로 비교
+        const next = [...localOnly, ...remote].sort(
+          (a, b) => parseDateTimeMs(b.createdAt) - parseDateTimeMs(a.createdAt),
         );
         persistReportsLocal(next);
         return next;
       });
     } catch {
-      const local = loadReportsLocal();
-      if (local.length > 0) {
-        setReports((prev) => {
-          const map = new Map<string, LostReport>();
-          local.forEach((r) => map.set(String(r.id), r));
-          prev.forEach((r) => {
-            const key = String(r.id);
-            const existing = map.get(key);
-            map.set(key, existing ? mergeReportRecords(existing, r) : r);
-          });
-          return Array.from(map.values());
-        });
-      }
+      // 조회 실패 시 기존 목록 유지 (빈 목록으로 덮지 않음)
+    }
+  }, []);
+
+  const refreshPickupPasses = useCallback(async () => {
+    const email = getAuthSession()?.email;
+    if (!API_BASE_URL || !email) return;
+    try {
+      const data = await apiJson<unknown>('/api/pickup-passes/me', { method: 'GET' });
+      if (getAuthSession()?.email !== email) return;
+      const rows = Array.isArray(data) ? data : [];
+      const remote = rows
+        .map((row) => mapPickupPass(row as Record<string, unknown>))
+        .filter((row): row is PickupPass => row !== null);
+      setPickupPasses((prev) =>
+        remote.map((pass) => {
+          const local = prev.find((it) => it.id === pass.id);
+          return local ? { ...local, ...pass } : pass;
+        }),
+      );
+    } catch {
+      // 기존 목록 유지
     }
   }, []);
 
@@ -888,11 +820,13 @@ export function DandiStateProvider({
   }, []);
 
   const refreshNotices = useCallback(async () => {
-    if (!API_BASE_URL) return;
+    const email = getAuthSession()?.email;
+    if (!API_BASE_URL || !email) return;
     setNoticesLoading(true);
     setNoticesError(null);
     try {
       const data = await apiJson<unknown>('/api/notices', { method: 'GET' });
+      if (getAuthSession()?.email !== email) return; // 요청 중 계정이 바뀜
       const remote = extractNoticeList(data);
       setNotices((prev) => {
         const localOnly = prev.filter((it) => it.id.startsWith('n-'));
@@ -914,17 +848,29 @@ export function DandiStateProvider({
     }
   }, []);
 
+  const sessionEmailRef = useRef<string | undefined>(undefined);
+
   const bootstrapAfterAuth = useCallback(async () => {
-    if (!getAuthSession()?.accessToken) return;
+    const session = getAuthSession();
+    const email = session?.accessToken ? session.email : undefined;
+    if (email !== sessionEmailRef.current) {
+      // 로그아웃 또는 다른 계정 로그인 — 이전 사용자의 개인 상태를 비운다
+      sessionEmailRef.current = email;
+      setReports(email ? loadReportsLocal() : []);
+      setPickupPasses([]);
+      setNotices(email ? getStoredLocalNotices() : []);
+      setNoticesError(null);
+      setAdminAuditLogs([]);
+    }
+    if (!email) return;
     void refreshNotices();
     void refreshHomeCatalogInner({ blocking: false });
     void refreshReportsList();
-  }, [refreshHomeCatalogInner, refreshNotices, refreshReportsList]);
+    void refreshPickupPasses();
+  }, [refreshHomeCatalogInner, refreshNotices, refreshPickupPasses, refreshReportsList]);
 
   useEffect(() => {
-    if (getAuthSession()?.accessToken) {
-      void bootstrapAfterAuth();
-    }
+    void bootstrapAfterAuth();
     const onAuthChanged = () => {
       void bootstrapAfterAuth();
     };
@@ -938,21 +884,14 @@ export function DandiStateProvider({
       if (getAuthSession()?.accessToken) scheduleReportsSync();
     };
 
-    window.addEventListener(REPORTS_CHANGED_EVENT, syncReportsDebounced);
-
-    let channel: BroadcastChannel | null = null;
-    try {
-      channel = new BroadcastChannel(SYNC_CHANNEL);
-      channel.onmessage = (event) => {
-        if (event.data?.type === 'reports') syncReportsDebounced();
-      };
-    } catch {
-      // ignore
-    }
+    const channel = getSyncChannel();
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'reports') syncReportsDebounced();
+    };
+    channel?.addEventListener('message', onMessage);
 
     return () => {
-      window.removeEventListener(REPORTS_CHANGED_EVENT, syncReportsDebounced);
-      channel?.close();
+      channel?.removeEventListener('message', onMessage);
       if (catalogRefreshTimerRef.current)
         clearTimeout(catalogRefreshTimerRef.current);
       if (reportsSyncTimerRef.current)
@@ -966,6 +905,8 @@ export function DandiStateProvider({
       homeLostItems,
       catalogVersion,
       catalogLoading,
+      catalogLoaded,
+      catalogError,
       notices,
       noticesLoading,
       noticesError,
@@ -1005,9 +946,8 @@ export function DandiStateProvider({
               memo: normalizedPayload.memo,
               lostAt: lostAtIso,
               foundAt: lostAtIso,
+              // 신고자 이름은 보내지 않는다 — 서버가 메모에 붙여 공개 설명으로 노출하던 문제
               ownerEmail,
-              ownerName,
-              reporterName: ownerName,
               reporterEmail: ownerEmail,
             },
             payload.image,
@@ -1034,10 +974,13 @@ export function DandiStateProvider({
             persistReportsLocal(next);
             return next;
           });
-          appendLocalNotice(
-            '분실물 신고 접수',
-            `${report.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`,
-          );
+          // 서버가 접수 알림을 만든다 — 로컬 알림을 또 만들면 알림함에 두 번 보인다
+          if (!API_BASE_URL) {
+            appendLocalNotice(
+              '분실물 신고 접수',
+              `${report.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`,
+            );
+          }
           void refreshNotices();
           void refreshReportsList();
           return {
@@ -1057,7 +1000,8 @@ export function DandiStateProvider({
                 (r) =>
                   r.itemName === payload.itemName &&
                   r.location === sanitizeLocation(payload.location) &&
-                  r.status === 'pending',
+                  r.status === 'pending' &&
+                  r.ownerEmail === ownerEmail,
               );
               if (matched) {
                 setReports((prev) => {
@@ -1068,10 +1012,7 @@ export function DandiStateProvider({
                   persistReportsLocal(next);
                   return next;
                 });
-                appendLocalNotice(
-                  '분실물 신고 접수',
-                  `${matched.itemName} 신고가 접수되어 검수 대기에 등록되었습니다.`,
-                );
+                void refreshNotices();
                 void refreshReportsList();
                 return {
                   ok: true,
@@ -1160,13 +1101,13 @@ export function DandiStateProvider({
             const foundIso = toApiDateTime(lostAtDisplay);
             rememberItemTimes(itemId, { createdAt: regIso, foundAt: foundIso });
             if (mapped.reportId)
-              rememberItemTimes(mapped.reportId, {
+              rememberItemTimes(reportMetaKey(mapped.reportId), {
                 createdAt: regIso,
                 foundAt: foundIso,
               });
             rememberItemImage(itemId, mapped.image ?? displayImage);
             if (mapped.reportId)
-              rememberItemImage(mapped.reportId, mapped.image ?? displayImage);
+              rememberItemImage(reportMetaKey(mapped.reportId), mapped.image ?? displayImage);
             upsertPublishedLostItem(mapped);
             setHomeLostItems((prev) =>
               sortLostItemsNewestFirst(
@@ -1221,7 +1162,7 @@ export function DandiStateProvider({
       updatePendingReport: async (reportId, patch) => {
         const normalizedId = String(reportId);
         const normalizedPatch = normalizePendingPatch(patch);
-        let sourceReport = reportsRef.current.find(
+        const sourceReport = reportsRef.current.find(
           (report) => String(report.id) === normalizedId,
         );
         if (!sourceReport) {
@@ -1237,29 +1178,33 @@ export function DandiStateProvider({
           };
         }
 
-        const updated: LostReport = { ...sourceReport, ...normalizedPatch };
-        setReports((prev) => {
-          const next = prev.map((report) =>
-            String(report.id) === normalizedId ? updated : report,
-          );
-          persistReportsLocal(next);
-          return next;
-        });
-        if (updated.image) {
-          rememberItemImage(normalizedId, updated.image);
+        let updated: LostReport = { ...sourceReport, ...normalizedPatch };
+        if (API_BASE_URL) {
+          try {
+            const saved = await patchReportDetails(
+              normalizedId,
+              toReportPatchPayload(patch),
+            );
+            updated = normalizeReport(saved) ?? updated;
+          } catch (error) {
+            return {
+              ok: false,
+              message: `검수 내용 저장에 실패했습니다. (${errorMessage(error)})`,
+            };
+          }
         }
 
+        replaceReportLocal(updated);
+        notifyReportsChanged();
         return {
           ok: true,
-          message: '검수 대기 내용이 저장되었습니다. 습득 완료 시 서버에 함께 반영됩니다.',
+          message: API_BASE_URL
+            ? '검수 내용이 서버에 저장되었습니다.'
+            : '검수 내용이 저장되었습니다. (API 미연동)',
         };
       },
       resolveReport: async (reportId, status, overrides) => {
         const normalizedId = String(reportId);
-        const normalizedOverrides = overrides
-          ? normalizePendingPatch(overrides)
-          : undefined;
-
         const sourceReport = reportsRef.current.find(
           (report) => String(report.id) === normalizedId,
         );
@@ -1270,60 +1215,39 @@ export function DandiStateProvider({
           };
         }
 
-        const resolvedReport: LostReport = {
+        let resolvedReport: LostReport = {
           ...sourceReport,
-          ...normalizedOverrides,
+          ...(overrides ? normalizePendingPatch(overrides) : {}),
           status,
         };
 
-        const publishResolvedToHome = () => {
-          const registeredAtIso = nowISO();
-          const registeredLabel =
-            formatDateTimeLabel(registeredAtIso) || shortDateTime();
-          let published = reportToPublishedItem(resolvedReport);
-          if (!resolveItemImageUrl(published.image) && resolvedReport.image) {
-            published = {
-              ...published,
-              image:
-                resolveDisplayImageUrl(resolvedReport.image) ??
-                resolveItemImageUrl(resolvedReport.image),
-            };
+        if (API_BASE_URL) {
+          try {
+            // 검수 수정 내용을 먼저 신고에 저장 → 승인 시 서버가 그 신고로 물품을 생성·갱신한다
+            if (overrides && status === 'resolved') {
+              const saved = await patchReportDetails(
+                normalizedId,
+                toReportPatchPayload(overrides),
+              );
+              resolvedReport = { ...(normalizeReport(saved) ?? resolvedReport), status };
+            }
+            await patchReportStatus(normalizedId, status);
+          } catch (error) {
+            const message = errorMessage(error);
+            if (isTimeoutMessage(message)) {
+              // 서버 처리 여부가 불명확 — 최신 상태를 다시 불러와 확인하게 한다
+              void refreshReportsList();
+              return {
+                ok: false,
+                message:
+                  '서버 응답이 지연되었습니다. 목록을 다시 불러왔으니 상태를 확인한 뒤 필요하면 다시 시도해 주세요.',
+              };
+            }
+            return { ok: false, message: `처리에 실패했습니다. (${message})` };
           }
-          published = {
-            ...published,
-            createdAt: registeredLabel,
-            catalogStatus: 'ACQUIRED',
-          };
-          rememberItemTimes(resolvedReport.id, {
-            createdAt: registeredAtIso,
-            foundAt: toApiDateTime(resolvedReport.lostAt),
-          });
-          rememberCatalogStatus(resolvedReport.id, 'ACQUIRED');
-          rememberItemImage(resolvedReport.id, published.image);
-          upsertPublishedLostItem(published);
-          setHomeLostItems((prev) =>
-            sortLostItemsNewestFirst(
-              dedupePublishedCatalog([
-                published,
-                ...prev.filter((it) => !isSameCatalogItem(it, published)),
-              ]),
-            ),
-          );
-          setCatalogVersion((v) => v + 1);
-        };
-
-        setReports((prev) => {
-          const next = prev.map((report) =>
-            String(report.id) === normalizedId ? resolvedReport : report,
-          );
-          persistReportsLocal(next);
-          return next;
-        });
-
-        if (status === 'resolved') {
-          publishResolvedToHome();
         }
 
+        replaceReportLocal(resolvedReport);
         setAdminAuditLogs((prev) => [
           {
             id: `a-${Date.now()}`,
@@ -1333,87 +1257,27 @@ export function DandiStateProvider({
           ...prev,
         ]);
 
-        if (status === 'resolved') {
-          appendLocalNotice(
-            '습득 완료 알림',
-            `[${resolvedReport.itemName}] 습득이 확인되어 홈 목록에 공개되었습니다.`,
+        if (API_BASE_URL) {
+          invalidateRemoteLostItemsCache();
+          await Promise.all([
+            refreshReportsList(),
+            refreshHomeCatalogInner({ blocking: false }),
+          ]);
+          notifyReportsChanged();
+        } else if (status === 'resolved') {
+          const published = reportToPublishedItem(resolvedReport);
+          upsertPublishedLostItem(published);
+          setHomeLostItems((prev) =>
+            sortLostItemsNewestFirst(dedupePublishedCatalog([published, ...prev])),
           );
-        } else {
-          appendLocalNotice(
-            '습득 불가 알림',
-            '신고하신 물품은 아직 습득되지 않은 것으로 처리되었습니다.',
-          );
+          setCatalogVersion((v) => v + 1);
         }
-
-        void (async () => {
-          if (!API_BASE_URL) return;
-          try {
-            await patchReportStatus(normalizedId, status);
-            if (status === 'resolved') {
-              try {
-                const posted = await publishLostItemToApi(
-                  resolvedReport,
-                  resolvedReport.image,
-                );
-                const postedId = String(posted?.id ?? posted?.lostItemId ?? '');
-                if (postedId) {
-                  const mapped =
-                    mapApiLostItem({
-                      ...(posted as Record<string, unknown>),
-                      id: postedId,
-                    }) ?? reportToPublishedItem(resolvedReport, postedId);
-                  let published: PublishedLostItem = {
-                    ...mapped,
-                    id: postedId,
-                    reportId: resolvedReport.id,
-                    catalogStatus: pickRicherCatalogStatus(
-                      mapped.catalogStatus,
-                      'ACQUIRED',
-                    ),
-                  };
-                  rememberCatalogStatus(postedId, published.catalogStatus ?? 'ACQUIRED');
-                  if (
-                    !resolveItemImageUrl(published.image) &&
-                    resolvedReport.image
-                  ) {
-                    published = {
-                      ...published,
-                      image:
-                        resolveItemImageUrl(resolvedReport.image) ??
-                        resolvedReport.image,
-                    };
-                  }
-                  rememberItemImage(postedId, published.image);
-                  rememberItemImage(resolvedReport.id, published.image);
-                  upsertPublishedLostItem(published);
-                  setHomeLostItems((prev) =>
-                    sortLostItemsNewestFirst(
-                      dedupePublishedCatalog([
-                        published,
-                        ...prev.filter(
-                          (it) => !isSameCatalogItem(it, published),
-                        ),
-                      ]),
-                    ),
-                  );
-                }
-              } catch {
-                // 화면 반영은 이미 완료
-              }
-            }
-            scheduleHomeCatalogRefresh();
-          } catch {
-            // 로컬 처리는 완료됨
-          }
-        })();
-
-        void refreshNotices();
 
         return {
           ok: true,
           message:
             status === 'resolved'
-              ? '습득 완료 처리되었습니다. 홈에 바로 반영되었습니다.'
+              ? '습득 완료 처리되었습니다. 홈 목록에 공개되었습니다.'
               : '습득 불가 처리되었습니다.',
         };
       },
@@ -1446,144 +1310,99 @@ export function DandiStateProvider({
           createdAt: formatDateTimeLabel(createdAtLabel) || createdAtLabel,
         };
 
-        const patchBody: Record<string, string> = {
-          itemName: updated.name,
-          category,
-          itemType: detailType,
-          place: updated.place,
-          location: updated.place,
-          foundAt: toApiDateTime(updated.foundAt ?? updated.time),
-        };
-        if (updated.storage?.trim()) patchBody.storage = updated.storage.trim();
-        if (updated.memo?.trim()) patchBody.memo = updated.memo.trim();
-        Object.assign(patchBody, apiImageFields(updated.image));
-
         const serverId = resolveServerLostItemId(target, normalizedId, pools);
-        const mergedLocal: PublishedLostItem = {
-          ...updated,
-          id: serverId,
-          lostItemId: /^\d+$/.test(serverId) ? serverId : updated.lostItemId,
-        };
-        rememberItemTimes(serverId, {
-          createdAt: toApiDateTime(mergedLocal.createdAt),
-          foundAt: toApiDateTime(mergedLocal.foundAt ?? mergedLocal.time),
-        });
-        if (mergedLocal.reportId) {
-          rememberItemTimes(mergedLocal.reportId, {
-            createdAt: toApiDateTime(mergedLocal.createdAt),
-            foundAt: toApiDateTime(mergedLocal.foundAt ?? mergedLocal.time),
-          });
+        if (API_BASE_URL && !serverId) return NOT_SYNCED_RESULT;
+        let saved: PublishedLostItem = updated;
+
+        if (API_BASE_URL) {
+          const patchBody: Record<string, string> = {
+            itemName: updated.name,
+            category,
+            itemType: detailType,
+            place: updated.place,
+            location: updated.place,
+            foundAt: toApiDateTime(updated.foundAt ?? updated.time),
+          };
+          if (updated.storage?.trim()) patchBody.storage = updated.storage.trim();
+          if (updated.memo?.trim()) patchBody.memo = updated.memo.trim();
+          Object.assign(patchBody, apiImageFields(updated.image));
+          try {
+            const data = await apiJson<Record<string, unknown>>(
+              `/api/lost-items/${encodeURIComponent(serverId)}`,
+              { method: 'PATCH', body: JSON.stringify(patchBody) },
+              { timeoutMs: API_MUTATION_TIMEOUT_MS },
+            );
+            const mapped = mapApiLostItem({ ...data, id: data.id ?? serverId });
+            saved = mapped ? mergePublishedItems(mapped, updated) : updated;
+          } catch (error) {
+            return {
+              ok: false,
+              message: `저장에 실패했습니다. (${errorMessage(error)})`,
+            };
+          }
         }
-        rememberItemImage(serverId, mergedLocal.image);
-        if (mergedLocal.reportId)
-          rememberItemImage(mergedLocal.reportId, mergedLocal.image);
-        upsertPublishedLostItem(mergedLocal);
+
+        upsertPublishedLostItem(saved);
         setHomeLostItems((prev) =>
           sortLostItemsNewestFirst(
-            prev.map((it) =>
-              isSameCatalogItem(it, mergedLocal) ? mergedLocal : it,
-            ),
+            prev.map((it) => (isSameCatalogItem(it, saved) ? saved : it)),
           ),
         );
         setCatalogVersion((v) => v + 1);
+        invalidateRemoteLostItemsCache();
 
-        if (API_BASE_URL && getAuthSession()?.accessToken) {
-          void (async () => {
-            try {
-              const data = await apiJson<Record<string, unknown>>(
-                `/api/lost-items/${encodeURIComponent(serverId)}`,
-                {
-                  method: 'PATCH',
-                  body: JSON.stringify(patchBody),
-                },
-                { timeoutMs: 12_000 },
-              );
-              const mapped =
-                mapApiLostItem({ ...data, id: serverId }) ?? mergedLocal;
-              const merged: PublishedLostItem = {
-                ...mergedLocal,
-                ...mapped,
-                id: serverId,
-                image:
-                  resolveDisplayImageUrl(mapped.image) ??
-                  resolveItemImageUrl(mapped.image) ??
-                  mergedLocal.image,
-              };
-              rememberItemImage(serverId, merged.image);
-              upsertPublishedLostItem(merged);
-              setHomeLostItems((prev) =>
-                sortLostItemsNewestFirst(
-                  prev.map((it) =>
-                    isSameCatalogItem(it, merged) ? merged : it,
-                  ),
-                ),
-              );
-              invalidateRemoteLostItemsCache();
-            } catch {
-              // 화면 저장은 이미 반영됨
-            }
-          })();
-          return {
-            ok: true,
-            message: '저장되었습니다. 화면에 바로 반영되었습니다.',
-          };
-        }
-
-        return { ok: true, message: '로컬에 저장되었습니다. (API 미연동)' };
+        return {
+          ok: true,
+          message: API_BASE_URL
+            ? '저장되었습니다.'
+            : '로컬에 저장되었습니다. (API 미연동)',
+        };
       },
       removeHomeLostItem: async (itemId) => {
         const normalizedId = String(itemId);
         const pools = [...homeLostItemsRef.current, ...getPublishedLostItems()];
         const target = findCatalogItemByHint(normalizedId, pools);
+        if (!target) {
+          return {
+            ok: false,
+            message: '삭제할 물품을 찾을 수 없습니다. 목록을 새로고침해 주세요.',
+          };
+        }
+        const serverId = resolveServerLostItemId(target, normalizedId, pools);
+        if (API_BASE_URL && !serverId) return NOT_SYNCED_RESULT;
 
-        const serverId = target
-          ? resolveServerLostItemId(target, normalizedId, pools)
-          : normalizedId;
-        if (target) {
-          markLostItemDeletedForTarget(target);
-          removePublishedLostItemByTarget(target);
-          clearLostItemOverridesForIds([
-            target.id,
-            target.lostItemId,
-            target.reportId,
-            serverId,
-            normalizedId,
-          ]);
-          deleteCustomLostItem(target.id);
-          setHomeLostItems((prev) => prev.filter((it) => !isSameCatalogItem(it, target)));
-        } else {
-          markLostItemDeleted(normalizedId);
-          markLostItemDeleted(serverId);
-          removePublishedLostItem(normalizedId);
-          removePublishedLostItem(serverId);
-          clearLostItemOverridesForIds([normalizedId, serverId]);
-          deleteCustomLostItem(normalizedId);
-          setHomeLostItems((prev) =>
-            prev.filter(
-              (it) =>
-                String(it.id) !== normalizedId &&
-                String(it.id) !== serverId &&
-                String(it.lostItemId ?? '') !== serverId &&
-                String(it.reportId ?? '') !== normalizedId,
-            ),
-          );
+        if (API_BASE_URL) {
+          try {
+            await apiJson<object>(
+              `/api/lost-items/${encodeURIComponent(serverId)}`,
+              { method: 'DELETE' },
+              { timeoutMs: API_MUTATION_TIMEOUT_MS },
+            );
+          } catch (error) {
+            return {
+              ok: false,
+              message: `삭제에 실패했습니다. (${errorMessage(error)})`,
+            };
+          }
+        }
+
+        markLostItemDeletedForTarget(target);
+        removePublishedLostItemByTarget(target);
+        clearLostItemOverridesForIds([target.id, serverId]);
+        deleteCustomLostItem(target.id);
+        setHomeLostItems((prev) => prev.filter((it) => !isSameCatalogItem(it, target)));
+        if (target.reportId) {
+          // 서버는 물품 삭제 시 연결 신고도 함께 삭제한다
+          const linkedReportId = String(target.reportId);
+          setReports((prev) => {
+            const next = prev.filter((r) => String(r.id) !== linkedReportId);
+            persistReportsLocal(next);
+            return next;
+          });
         }
         setCatalogVersion((v) => v + 1);
         invalidateRemoteLostItemsCache();
-
-        if (
-          API_BASE_URL &&
-          getAuthSession()?.accessToken &&
-          /^\d+$/.test(serverId)
-        ) {
-          void apiJson<object>(
-            `/api/lost-items/${encodeURIComponent(serverId)}`,
-            { method: 'DELETE' },
-            { timeoutMs: API_MUTATION_TIMEOUT_MS },
-          ).catch(() => {
-            // 화면에서는 이미 제거됨
-          });
-        }
+        if (API_BASE_URL) notifyReportsChanged();
 
         return {
           ok: true,
@@ -1591,80 +1410,42 @@ export function DandiStateProvider({
         };
       },
       issuePickupPass: async (payload) => {
-        if (!payload?.lostItemId) {
+        const lostItemId = String(payload?.lostItemId ?? '').trim();
+        if (!/^\d+$/.test(lostItemId)) {
           return {
             ok: false,
-            message: '발급할 분실물 정보가 없습니다.',
-            token: undefined,
+            message: '서버에 등록된 물품만 수령 QR을 발급할 수 있습니다.',
           };
         }
 
-        const session = getAuthSession();
-        const claimantName = session?.name;
-        const claimantEmail = session?.email;
-
-        const buildPass = (override?: Partial<PickupPass>): PickupPass => ({
-          id: override?.id ?? `p-${Date.now()}`,
-          lostItemId: payload.lostItemId,
-          itemName: payload.itemName,
-          itemImage: payload.itemImage,
-          itemLocation: payload.itemLocation,
-          claimantName,
-          claimantEmail,
-          token: override?.token ?? pickupToken(),
-          issuedAt: override?.issuedAt ?? shortDateTime(),
-          expiresAt: override?.expiresAt ?? minutesLaterISO(10),
-          usedAt: override?.usedAt ?? null,
-          reportId: override?.reportId,
-        });
-
-        const finalize = (pass: PickupPass, message: string) => {
+        try {
+          const data = await apiJson<Record<string, unknown>>('/api/pickup-passes', {
+            method: 'POST',
+            body: JSON.stringify({ lostItemId }),
+          });
+          const pass = mapPickupPass({
+            ...data,
+            itemName: payload.itemName,
+            itemLocation: payload.itemLocation,
+            claimantEmail: getAuthSession()?.email,
+          });
+          if (!pass) {
+            return { ok: false, message: 'QR 발급 응답을 해석할 수 없습니다.' };
+          }
           setPickupPasses((prev) => [
-            pass,
+            { ...pass, itemImage: payload.itemImage, claimantName: getAuthSession()?.name },
             ...prev.filter((it) => it.id !== pass.id),
           ]);
-          void refreshNotices();
-          return { ok: true, message, token: pass.token, pass };
-        };
-
-        try {
-          const data = await apiJson<{
-            id?: string;
-            token?: string;
-            expiresAt?: string;
-            issuedAt?: string;
-            usedAt?: string | null;
-            message?: string;
-            reportId?: string;
-          }>('/api/pickup-passes', {
-            method: 'POST',
-            body: JSON.stringify({
-              lostItemId: payload.lostItemId,
-              itemName: payload.itemName,
-              itemImage: payload.itemImage,
-              itemLocation: payload.itemLocation,
-              claimantName,
-              claimantEmail,
-            }),
-          });
-
-          const pass = buildPass({
-            id: data.id,
-            token: data.token,
-            issuedAt: data.issuedAt,
-            expiresAt: data.expiresAt,
-            usedAt: data.usedAt ?? null,
-            reportId: data.reportId,
-          });
-          return finalize(pass, data.message ?? '수령 QR이 발급되었습니다.');
+          return {
+            ok: true,
+            message: String(data.message ?? '수령 QR이 발급되었습니다.'),
+            token: pass.token,
+            pass,
+          };
         } catch (error) {
           return {
             ok: false,
-            message:
-              error instanceof Error
-                ? `QR 발급에 실패했습니다. (${error.message})`
-                : 'QR 발급에 실패했습니다.',
-            token: undefined,
+            message: `QR 발급에 실패했습니다. (${errorMessage(error)})`,
           };
         }
       },
@@ -1687,54 +1468,14 @@ export function DandiStateProvider({
           return { ok: false, message: '이미 수령 인증이 완료된 코드입니다.' };
         }
 
-        const finalize = (
-          pass: PickupPass,
-          usedAt: string,
-          message: string,
-        ): PickupVerifyResult => {
-          setPickupPasses((prev) =>
-            prev.map((it) =>
-              it.token.toUpperCase() === normalized ? { ...it, usedAt } : it,
-            ),
-          );
-          if (pass.reportId) {
-            setReports((prev) =>
-              prev.map((report) =>
-                String(report.id) === String(pass.reportId)
-                  ? { ...report, status: 'picked_up', pickedUpAt: usedAt }
-                  : report,
-              ),
-            );
-          }
-          const pickupLostId = String(pass.lostItemId ?? '').trim();
-          if (pickupLostId) {
-            markLostItemReceivedAfterPickup(pickupLostId, usedAt);
-          }
-          invalidateRemoteLostItemsCache();
-          scheduleHomeCatalogRefresh();
-          setAdminAuditLogs((prev) => [
-            {
-              id: `a-${Date.now()}`,
-              message: `[${pass.itemName ?? '물품'}] QR 수령 인증 완료 — 인수자: ${pass.claimantName ?? '이름 없음'} (${pass.claimantEmail ?? '이메일 없음'})`,
-              createdAt: usedAt,
-            },
-            ...prev,
-          ]);
-          void refreshNotices();
-          return { ok: true, message, pass: { ...pass, usedAt } };
-        };
-
         try {
           const data = await apiJson<{
             ok?: boolean;
-            reportId?: string;
-            usedAt?: string;
             message?: string;
             lostItemId?: string;
-            itemName?: string;
-            claimantName?: string;
-            claimantEmail?: string;
+            reportId?: string | null;
             requesterEmail?: string;
+            usedAt?: string;
           }>(
             '/api/pickup-passes/verify',
             {
@@ -1751,47 +1492,68 @@ export function DandiStateProvider({
             };
           }
 
-          const usedAt = data.usedAt ?? shortDateTime();
-          const lostItemIdFromApi = String(
-            data.lostItemId ??
-              (/^\d+$/.test(String(data.reportId ?? '')) ? data.reportId : '') ??
-              localPass?.lostItemId ??
-              '',
-          );
-          const merged: PickupPass = {
+          const usedAt = data.usedAt ?? nowISO();
+          const lostItemId = String(data.lostItemId ?? localPass?.lostItemId ?? '');
+          const reportId = data.reportId ? String(data.reportId) : undefined;
+          const pass: PickupPass = {
             id: localPass?.id ?? `p-${Date.now()}`,
-            lostItemId: lostItemIdFromApi,
-            itemName: data.itemName ?? localPass?.itemName,
+            lostItemId,
+            reportId,
+            itemName: localPass?.itemName,
             itemImage: localPass?.itemImage,
             itemLocation: localPass?.itemLocation,
-            claimantName: data.claimantName ?? localPass?.claimantName,
-            claimantEmail:
-              data.claimantEmail ??
-              data.requesterEmail ??
-              localPass?.claimantEmail,
-            token: localPass?.token ?? normalized,
-            issuedAt: localPass?.issuedAt ?? shortDateTime(),
-            expiresAt: localPass?.expiresAt ?? minutesLaterISO(10),
+            claimantName: localPass?.claimantName,
+            claimantEmail: data.requesterEmail ?? localPass?.claimantEmail,
+            token: normalized,
+            issuedAt: localPass?.issuedAt ?? usedAt,
+            expiresAt: localPass?.expiresAt ?? usedAt,
             usedAt,
-            reportId: localPass?.reportId,
           };
-          invalidateRemoteLostItemsCache();
-          return finalize(
-            merged,
-            usedAt,
-            data.message ?? 'QR 인증 완료: 최종 수령 처리되었습니다.',
+
+          setPickupPasses((prev) =>
+            prev.map((it) =>
+              it.token.toUpperCase() === normalized ? { ...it, usedAt } : it,
+            ),
           );
+          if (reportId) {
+            const pickedUpAt = formatDateTimeLabel(usedAt) || usedAt;
+            setReports((prev) =>
+              prev.map((report) =>
+                String(report.id) === reportId
+                  ? { ...report, status: 'picked_up', pickedUpAt }
+                  : report,
+              ),
+            );
+          }
+          if (lostItemId) markLostItemReceivedAfterPickup(lostItemId, usedAt);
+          invalidateRemoteLostItemsCache();
+          scheduleHomeCatalogRefresh();
+          void refreshReportsList();
+          notifyReportsChanged();
+          setAdminAuditLogs((prev) => [
+            {
+              id: `a-${Date.now()}`,
+              message: `[${pass.itemName ?? '물품'}] QR 수령 인증 완료 — 인수자: ${pass.claimantEmail ?? '이메일 없음'}`,
+              createdAt: formatDateTimeLabel(usedAt) || usedAt,
+            },
+            ...prev,
+          ]);
+          return {
+            ok: true,
+            message: data.message ?? 'QR 인증 완료: 최종 수령 처리되었습니다.',
+            pass,
+          };
         } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : 'QR 인증 처리에 실패했습니다.';
+          const message = errorMessage(error);
           if (/403|권한|admin/i.test(message)) {
             return {
               ok: false,
               message:
                 '관리자 권한이 필요합니다. 관리자 계정으로 로그인해 주세요.',
             };
+          }
+          if (/이미 수령 완료/.test(message)) {
+            return { ok: false, message: '이미 수령 완료된 물품입니다.' };
           }
           if (/409|이미 사용|already/i.test(message)) {
             return { ok: false, message: '이미 사용된 수령 코드입니다.' };
@@ -1807,7 +1569,11 @@ export function DandiStateProvider({
       },
       deleteReport: async (reportId) => {
         const removeLocal = () => {
-          setReports((prev) => prev.filter((report) => report.id !== reportId));
+          setReports((prev) => {
+            const next = prev.filter((report) => report.id !== reportId);
+            persistReportsLocal(next);
+            return next;
+          });
           setAdminAuditLogs((prev) => [
             {
               id: `a-${Date.now()}`,
@@ -1818,8 +1584,8 @@ export function DandiStateProvider({
           ]);
         };
 
-        // 로컬 임시 신고(r-local-...)는 백엔드 호출 없이 바로 삭제
-        if (!API_BASE_URL || reportId.startsWith('r-local-')) {
+        // 서버에 없는 로컬 임시 신고는 백엔드 호출 없이 바로 삭제
+        if (!API_BASE_URL || !/^\d+$/.test(reportId)) {
           removeLocal();
           return { ok: true, message: '신고 항목이 삭제되었습니다.' };
         }
@@ -1828,63 +1594,60 @@ export function DandiStateProvider({
           await apiJson<object>(
             `/api/reports/${encodeURIComponent(reportId)}`,
             { method: 'DELETE' },
+            { timeoutMs: API_MUTATION_TIMEOUT_MS },
           );
-          removeLocal();
-          return { ok: true, message: '신고 항목이 삭제되었습니다.' };
         } catch (error) {
-          // 백엔드 실패해도 사용자 화면에서는 사라지도록 로컬 제거 진행
-          removeLocal();
           return {
-            ok: true,
-            message:
-              error instanceof Error
-                ? `로컬에서만 삭제되었습니다. (서버 오류: ${error.message})`
-                : '로컬에서만 삭제되었습니다. (서버 오류)',
+            ok: false,
+            message: `신고 삭제에 실패했습니다. (${errorMessage(error)})`,
           };
         }
+        removeLocal();
+        // 서버는 연결된 물품도 함께 삭제한다
+        invalidateRemoteLostItemsCache();
+        scheduleHomeCatalogRefresh();
+        notifyReportsChanged();
+        return { ok: true, message: '신고 항목이 삭제되었습니다.' };
       },
       refreshNotices,
       refreshReports,
       refreshReportsList,
       refreshHomeCatalog,
+      refreshPickupPasses,
       deleteNotice: async (noticeId) => {
         const target = notices.find((notice) => notice.id === noticeId);
         if (!target) {
           return { ok: false, message: '삭제할 알림을 찾을 수 없습니다.' };
         }
 
+        if (API_BASE_URL && !noticeId.startsWith('n-')) {
+          try {
+            await apiJson<object>(
+              `/api/notices/${encodeURIComponent(noticeId)}`,
+              { method: 'DELETE' },
+            );
+          } catch (error) {
+            return {
+              ok: false,
+              message: `알림 삭제에 실패했습니다. (${errorMessage(error)})`,
+            };
+          }
+        }
         setNotices((prev) => prev.filter((notice) => notice.id !== noticeId));
-
-        if (!API_BASE_URL || noticeId.startsWith('n-')) {
-          return { ok: true, message: '알림이 삭제되었습니다.' };
-        }
-
-        try {
-          await apiJson<object>(
-            `/api/notices/${encodeURIComponent(noticeId)}`,
-            { method: 'DELETE' },
-          );
-          return { ok: true, message: '알림이 삭제되었습니다.' };
-        } catch (error) {
-          return {
-            ok: true,
-            message:
-              error instanceof Error
-                ? `화면에서 삭제했습니다. (서버: ${error.message})`
-                : '화면에서 삭제했습니다.',
-          };
-        }
+        return { ok: true, message: '알림이 삭제되었습니다.' };
       },
       deleteAllNotices: async () => {
+        if (API_BASE_URL) {
+          try {
+            await apiJson<object>('/api/notices', { method: 'DELETE' });
+          } catch (error) {
+            return {
+              ok: false,
+              message: `알림 삭제에 실패했습니다. (${errorMessage(error)})`,
+            };
+          }
+        }
         setNotices([]);
-        if (!API_BASE_URL) {
-          return { ok: true, message: '모든 알림을 삭제했습니다.' };
-        }
-        try {
-          await apiJson<object>('/api/notices', { method: 'DELETE' });
-        } catch {
-          // 백엔드 일괄 삭제 미지원 시 로컬만 비움
-        }
         return { ok: true, message: '모든 알림을 삭제했습니다.' };
       },
       markNoticeRead: async (noticeId) => {
@@ -1892,53 +1655,55 @@ export function DandiStateProvider({
         if (!target) {
           return { ok: false, message: '대상 알림을 찾을 수 없습니다.' };
         }
+        const setRead = (read: boolean) =>
+          setNotices((prev) =>
+            prev.map((notice) =>
+              notice.id === noticeId ? { ...notice, read } : notice,
+            ),
+          );
 
-        // 낙관적 업데이트
-        setNotices((prev) =>
-          prev.map((notice) =>
-            notice.id === noticeId ? { ...notice, read: true } : notice,
-          ),
-        );
-
+        setRead(true);
         // 프론트 임시 알림(n- prefix)이거나 백엔드 미설정이면 로컬만 처리
         if (!API_BASE_URL || noticeId.startsWith('n-')) {
           return { ok: true, message: '읽음 처리되었습니다.' };
         }
 
         try {
-          // PATCH body 없이 호출 (백엔드 스펙: PATCH /api/notices/{id}/read)
           await apiJson<{ message?: string }>(`/api/notices/${noticeId}/read`, {
             method: 'PATCH',
           });
           return { ok: true, message: '읽음 처리되었습니다.' };
         } catch (error) {
-          // 백엔드 실패해도 사용자 경험상 읽음 상태는 유지 (다음 새로고침 때 동기화 시도)
+          setRead(target.read);
           return {
-            ok: true,
-            message:
-              error instanceof Error
-                ? `읽음 처리 (서버 연동 실패: ${error.message})`
-                : '읽음 처리 (서버 연동 실패)',
+            ok: false,
+            message: `읽음 처리에 실패했습니다. (${errorMessage(error)})`,
           };
         }
       },
     }),
     [
       adminAuditLogs,
-      applyCatalogMerge,
+      appendLocalNotice,
+      catalogError,
+      catalogLoaded,
       catalogLoading,
       catalogVersion,
       homeLostItems,
+      markLostItemReceivedAfterPickup,
       notices,
       noticesError,
       noticesLoading,
       pickupPasses,
       refreshHomeCatalog,
+      refreshHomeCatalogInner,
       refreshNotices,
-      appendLocalNotice,
+      refreshPickupPasses,
       refreshReports,
+      refreshReportsList,
+      replaceReportLocal,
       reports,
-      pickupPasses,
+      scheduleHomeCatalogRefresh,
     ],
   );
 

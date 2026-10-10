@@ -20,6 +20,8 @@ import {
 } from "@/lib/auth-session";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
+import { apiJson } from "@/lib/api-json";
+import { pickupPassState, useNow } from "@/lib/pickup-pass-state";
 import {
   addUserKeyword,
   deleteUserKeyword,
@@ -36,8 +38,23 @@ import {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
 export default function MyPage() {
-  const { notices, reports, pickupPasses, markNoticeRead, refreshNotices, noticesLoading, noticesError, apiConfigured, apiBaseUrl } =
-    useDandiState();
+  const {
+    notices,
+    reports,
+    pickupPasses,
+    markNoticeRead,
+    refreshNotices,
+    refreshPickupPasses,
+    noticesLoading,
+    noticesError,
+    apiConfigured,
+    apiBaseUrl,
+  } = useDandiState();
+  const now = useNow();
+
+  useEffect(() => {
+    void refreshPickupPasses();
+  }, [refreshPickupPasses]);
 
   // SSR/hydration 안전을 위해 첫 렌더 후 세션을 읽어온다.
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -116,13 +133,13 @@ export default function MyPage() {
   };
 
   const myPickupPasses = useMemo(() => {
-    if (!session?.email) return pickupPasses;
+    if (!session?.email) return [];
     return pickupPasses.filter((pass) => !pass.claimantEmail || pass.claimantEmail === session.email);
   }, [pickupPasses, session?.email]);
 
   const myReports = useMemo(() => {
-    if (!session?.email) return reports;
-    return reports.filter((report) => !report.ownerEmail || report.ownerEmail === session.email);
+    if (!session?.email) return [];
+    return reports.filter((report) => report.ownerEmail === session.email);
   }, [reports, session?.email]);
 
   const studentId = session?.studentId ?? extractStudentIdFromEmail(session?.email);
@@ -217,40 +234,21 @@ export default function MyPage() {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/users/me/profile`, {
+      // apiJson은 토큰 만료(401/403) 시 갱신 후 한 번 재시도한다
+      await apiJson<object>("/api/users/me/profile", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.accessToken}`,
-        },
         body: JSON.stringify({
           name: editName.trim(),
           department: editDepartment.trim(),
           studentId,
         }),
       });
-
-      if (!response.ok) {
-        let serverMessage = "프로필 저장에 실패했습니다.";
-        try {
-          const err = (await response.json()) as { message?: string; error?: string };
-          serverMessage = err.message || err.error || serverMessage;
-        } catch {
-          // ignore parse error
-        }
-        persistLocal();
-        setProfileMessage(`${serverMessage} (로컬 세션에는 저장됨)`);
-        return;
-      }
-
       persistLocal();
       setProfileMessage("프로필이 저장되었습니다.");
     } catch (error) {
-      persistLocal();
+      // 서버에 저장되지 않은 값은 세션에 반영하지 않는다 (입력값은 화면에 그대로 남음)
       setProfileMessage(
-        error instanceof Error
-          ? `${error.message} (로컬 세션에는 저장됨)`
-          : "저장 중 오류가 발생했지만 로컬 세션에는 저장되었습니다."
+        `프로필 저장에 실패했습니다. (${error instanceof Error ? error.message : "알 수 없는 오류"}) 다시 시도하거나 다시 로그인해 주세요.`
       );
     } finally {
       setProfileSaving(false);
@@ -410,24 +408,36 @@ export default function MyPage() {
                 아직 발급받은 수령 QR이 없습니다. 홈에서 내 물건을 찾았다면 상세 페이지의 <b>“내 물건 — 수령 QR 발급받기”</b> 버튼을 눌러주세요.
               </p>
             ) : null}
-            {myPickupPasses.map((pass) => (
+            {myPickupPasses.map((pass) => {
+              const state = pickupPassState(pass, now);
+              return (
               <div key={pass.id} className="rounded-xl border p-3 text-sm">
                 <div className="flex items-center justify-between">
                   <p className="font-semibold">{pass.itemName ?? "분실물"}</p>
-                  {pass.usedAt ? <Badge variant="secondary">수령 완료</Badge> : <Badge>대기 중</Badge>}
+                  {state === "used" ? (
+                    <Badge variant="secondary">수령 완료</Badge>
+                  ) : state === "expired" ? (
+                    <Badge variant="outline">만료</Badge>
+                  ) : (
+                    <Badge>대기 중</Badge>
+                  )}
                 </div>
                 {pass.itemLocation ? <p className="text-muted-foreground">{pass.itemLocation}</p> : null}
                 <div className="mt-2 rounded-lg border bg-slate-50 p-3">
                   <p className="text-xs text-muted-foreground">수령 코드 (QR)</p>
                   <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-center">
-                    <PickupQr value={pass.token} />
+                    {state === "active" ? <PickupQr value={pass.token} /> : null}
                     <div className="space-y-1">
                       <p className="text-lg font-bold tracking-wider">{pass.token}</p>
                       <p className="text-xs text-muted-foreground">
                         유효기간: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
                       </p>
                       <p className="text-xs font-semibold text-primary">
-                        {pass.usedAt ? `인증 완료 (${pass.usedAt})` : "관리실에서 QR 확인 대기 중"}
+                        {state === "used"
+                          ? `인증 완료 (${formatDateTimeLabel(pass.usedAt ?? "") || pass.usedAt})`
+                          : state === "expired"
+                            ? "만료된 QR입니다. 물품 상세에서 다시 발급받아 주세요."
+                            : "관리실에서 QR 확인 대기 중"}
                       </p>
                     </div>
                   </div>
@@ -436,7 +446,8 @@ export default function MyPage() {
                   <Link href={`/lost/${pass.lostItemId}`}>해당 분실물 상세 보기</Link>
                 </Button>
               </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
 

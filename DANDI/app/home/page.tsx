@@ -14,6 +14,10 @@ import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
 import { useDandiState } from "@/lib/dandi-state";
 import { catalogReceivedBadgeLabel, formatCatalogTimeLine } from "@/lib/format-display";
 import { buildings, categories, lostItems } from "@/lib/mock-data";
+import type { PublishedLostItem } from "@/lib/published-lost-items";
+
+// mock 항목도 실제 카탈로그 타입으로 다룬다
+const MOCK_CATALOG_ITEMS: PublishedLostItem[] = lostItems;
 
 const ITEMS_PER_PAGE = 8;
 const USE_MOCK_LOST_ITEMS = process.env.NEXT_PUBLIC_ENABLE_MOCK_LOST_ITEMS === "true";
@@ -35,22 +39,23 @@ function getVisiblePages(current: number, total: number): Array<number | "ellips
 }
 
 export default function HomePage() {
-  const { homeLostItems, catalogLoading, refreshHomeCatalog } = useDandiState();
+  const { homeLostItems, catalogLoading, catalogLoaded, catalogError, refreshHomeCatalog } = useDandiState();
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [selectedBuilding, setSelectedBuilding] = useState<string>("전체");
   const [searchKeyword, setSearchKeyword] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
 
+  // 목록 길이가 아니라 최초 조회 여부로 판단 — 정상 빈 목록에서 재조회가 반복되지 않는다
   useEffect(() => {
-    if (homeLostItems.length === 0 && !catalogLoading) {
+    if (!catalogLoaded && !catalogLoading) {
       void refreshHomeCatalog();
     }
-  }, [homeLostItems.length, catalogLoading, refreshHomeCatalog]);
+  }, [catalogLoaded, catalogLoading, refreshHomeCatalog]);
 
   const mergedItems = useMemo(() => {
     const published = applyLostItemAdminChanges(homeLostItems);
     if (!USE_MOCK_LOST_ITEMS) return published;
-    return applyLostItemAdminChanges([...published, ...lostItems]);
+    return applyLostItemAdminChanges([...published, ...MOCK_CATALOG_ITEMS]);
   }, [homeLostItems]);
 
   const filteredItems = useMemo(() => {
@@ -200,9 +205,25 @@ export default function HomePage() {
               분실물 목록을 불러오는 중…
             </div>
           ) : null}
-          {filteredItems.length === 0 && !catalogLoading ? (
+          {catalogError ? (
+            <div
+              role="alert"
+              className="md:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+            >
+              <span>
+                {catalogError}
+                {mergedItems.length > 0 ? " 아래는 이전에 불러온 목록입니다." : ""}
+              </span>
+              <Button size="sm" variant="outline" onClick={() => void refreshHomeCatalog()} disabled={catalogLoading}>
+                다시 시도
+              </Button>
+            </div>
+          ) : null}
+          {filteredItems.length === 0 && !catalogLoading && !catalogError ? (
             <div className="md:col-span-2 rounded-xl border bg-white p-6 text-center text-sm text-muted-foreground">
-              습득 완료 처리된 분실물만 표시됩니다. 관리자 검수 후 목록에 노출됩니다.
+              {mergedItems.length === 0
+                ? "등록된 분실물이 없습니다. 습득 완료 처리된 분실물만 표시됩니다."
+                : "조건에 맞는 분실물이 없습니다."}
             </div>
           ) : null}
           {filteredItems.length > 0

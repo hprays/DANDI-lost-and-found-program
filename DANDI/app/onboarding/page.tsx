@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { extractStudentIdFromEmail, getAuthSession, setAuthSession } from "@/lib/auth-session";
+import { apiJson } from "@/lib/api-json";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
@@ -58,7 +59,6 @@ export default function OnboardingPage() {
     setLoading(true);
     setMessage("");
 
-    // 백엔드가 없거나 호출이 실패해도 로컬 세션은 진행되도록 폴백 처리
     if (!API_BASE_URL) {
       persistSession();
       router.replace("/home");
@@ -67,44 +67,22 @@ export default function OnboardingPage() {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/users/me/profile`, {
+      // apiJson은 토큰 만료(401/403) 시 갱신 후 한 번 재시도한다
+      await apiJson<object>("/api/users/me/profile", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.accessToken}`,
-        },
         body: JSON.stringify({
           name: trimmedName,
           department: trimmedDepartment,
           studentId,
         }),
       });
-
-      if (!response.ok) {
-        let serverMessage = "프로필 저장에 실패했습니다.";
-        try {
-          const err = (await response.json()) as { message?: string; error?: string };
-          serverMessage = err.message || err.error || serverMessage;
-        } catch {
-          // ignore parse error
-        }
-        // 백엔드 실패해도 로컬에 저장하고 진행 (데모/오프라인 환경 대응)
-        persistSession();
-        setMessage(`${serverMessage} (로컬 세션으로 진행합니다.)`);
-        router.replace("/home");
-        return;
-      }
-
       persistSession();
       router.replace("/home");
     } catch (error) {
-      persistSession();
+      // 서버에 저장되지 않았으면 완료 처리하지 않는다 — 입력값을 유지한 채 다시 시도하게 한다
       setMessage(
-        error instanceof Error
-          ? `${error.message} (로컬 세션으로 진행합니다.)`
-          : "프로필 저장 중 오류가 발생했지만 로컬 세션으로 진행합니다."
+        `프로필 저장에 실패했습니다. (${error instanceof Error ? error.message : "알 수 없는 오류"}) 다시 시도해 주세요.`
       );
-      router.replace("/home");
     } finally {
       setLoading(false);
     }

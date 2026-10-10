@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { resolveItemImageUrl } from "@/lib/media-url";
 
 type ItemImageProps = {
@@ -19,13 +19,10 @@ export function ItemImage({
   sizes = "(max-width: 768px) 100vw, 50vw",
   fit = "contain",
 }: ItemImageProps) {
-  const [failed, setFailed] = useState(false);
+  // 실패한 주소를 기억 — src가 바뀌면 자동으로 다시 시도된다 (effect에서 상태를 초기화하지 않음)
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const resolvedSrc = useMemo(() => resolveItemImageUrl(src), [src]);
-  const showImage = Boolean(resolvedSrc && !failed);
-
-  useEffect(() => {
-    setFailed(false);
-  }, [src]);
+  const showImage = Boolean(resolvedSrc && failedSrc !== resolvedSrc);
 
   if (!showImage) {
     return (
@@ -51,7 +48,7 @@ export function ItemImage({
           src={resolvedSrc}
           alt={alt}
           className={`h-full w-full ${fit === "cover" ? "object-cover object-center" : "object-contain object-center"}`}
-          onError={() => setFailed(true)}
+          onError={() => setFailedSrc(resolvedSrc ?? null)}
         />
       </div>
     );
@@ -65,7 +62,7 @@ export function ItemImage({
         fill
         sizes={sizes}
         className={fit === "cover" ? "object-cover object-center" : "object-contain object-center"}
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(resolvedSrc ?? null)}
         unoptimized={!resolvedSrc!.startsWith("/")}
       />
     </div>

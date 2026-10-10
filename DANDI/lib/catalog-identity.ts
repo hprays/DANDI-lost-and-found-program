@@ -1,97 +1,73 @@
 import type { PublishedLostItem } from "@/lib/published-lost-items";
 
-function isLostItemPkRow(item: PublishedLostItem): boolean {
-  const id = String(item.id);
-  const reportId = item.reportId ? String(item.reportId) : "";
-  return /^\d+$/.test(id) && (!reportId || reportId !== id);
+/**
+ * 카탈로그 항목 식별 규칙
+ * - lostItemId: lost_item PK. 숫자 id를 가진 항목은 id === lostItemId.
+ * - reportId: report PK. lost_item과 별개 테이블이라 숫자가 같아도 서로 연결하지 않는다.
+ * - 승인 전 임시 카드는 id가 `report-<reportId>` 라서 숫자 id와 겹치지 않는다.
+ */
+type CatalogIdentity = Pick<PublishedLostItem, "id" | "lostItemId" | "reportId">;
+
+const isNumeric = (value?: string | null) => /^\d+$/.test(String(value ?? "").trim());
+
+/** lost_item PK (없으면 undefined) */
+export function lostItemPk(item: CatalogIdentity): string | undefined {
+  if (isNumeric(item.lostItemId)) return String(item.lostItemId).trim();
+  if (isNumeric(item.id)) return String(item.id).trim();
+  return undefined;
 }
 
-/** 분실물 PK — API lost_item.id 우선 (신고 id로 덮지 않음) */
-export function canonicalLostItemId(
-  primary: PublishedLostItem,
-  secondary?: PublishedLostItem | null
-): string {
-  const candidates = [primary, secondary].filter(Boolean) as PublishedLostItem[];
-  const lostRows = candidates.filter(isLostItemPkRow);
-  if (lostRows.length) {
-    const nums = lostRows.map((it) => Number(it.id)).filter((n) => !Number.isNaN(n));
-    return String(Math.max(...nums));
-  }
-  for (const item of candidates) {
-    const reportId = item.reportId ? String(item.reportId) : "";
-    const id = String(item.id);
-    if (reportId && reportId !== id && /^\d+$/.test(id)) return id;
-  }
-  const nums = candidates.map((it) => Number(it.id)).filter((n) => !Number.isNaN(n) && n > 0);
-  if (nums.length) return String(Math.max(...nums));
-  return String(primary.id);
+/** 같은 종류의 ID끼리만 비교한다 (lost_item ↔ lost_item, report ↔ report). */
+export function catalogIdentityKeys(item: CatalogIdentity): string[] {
+  const keys = [`id:${String(item.id)}`];
+  const pk = lostItemPk(item);
+  if (pk) keys.push(`lost:${pk}`);
+  const reportId = String(item.reportId ?? "").trim();
+  if (reportId) keys.push(`report:${reportId}`);
+  return keys;
+}
+
+export function isSameCatalogItem(a: CatalogIdentity, b: CatalogIdentity): boolean {
+  const aPk = lostItemPk(a);
+  const bPk = lostItemPk(b);
+  // 서로 다른 lost_item PK면 reportId가 같아도 다른 물품
+  if (aPk && bPk) return aPk === bPk;
+  if (String(a.id) === String(b.id)) return true;
+  const aReport = String(a.reportId ?? "").trim();
+  return Boolean(aReport) && aReport === String(b.reportId ?? "").trim();
 }
 
 export function normalizeCatalogItemIdentity(item: PublishedLostItem): PublishedLostItem {
-  const id = isLostItemPkRow(item)
-    ? String(item.id)
-    : item.lostItemId && /^\d+$/.test(String(item.lostItemId))
-      ? String(item.lostItemId)
-      : /^\d+$/.test(String(item.id))
-        ? String(item.id)
-        : String(item.id);
-  const reportId =
-    item.reportId ??
-    (String(item.id) !== id && /^\d+$/.test(String(item.id)) === false ? String(item.id) : undefined);
-  const lostItemId = /^\d+$/.test(id) ? id : item.lostItemId;
-  if (String(item.id) === id && item.reportId === reportId && item.lostItemId === lostItemId) {
-    return item;
-  }
-  return { ...item, id, lostItemId: lostItemId ?? (/^\d+$/.test(id) ? id : undefined), reportId };
+  const pk = lostItemPk(item);
+  if (!pk || (String(item.id) === pk && item.lostItemId === pk)) return item;
+  return { ...item, id: pk, lostItemId: pk };
 }
 
-/** id / lostItemId / reportId 로 카탈로그 항목 찾기 */
+/** 화면 경로·버튼의 id(= item.id)로 항목 찾기. reportId와는 비교하지 않는다. */
 export function findCatalogItemByHint(
   hintId: string,
   pools: PublishedLostItem[]
 ): PublishedLostItem | undefined {
   const hint = String(hintId).trim();
   if (!hint) return undefined;
-  const seen = new Set<string>();
-  for (const item of pools) {
-    const key = String(item.id);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (
-      String(item.id) === hint ||
-      String(item.lostItemId ?? "") === hint ||
-      String(item.reportId ?? "") === hint
-    ) {
-      return item;
-    }
-  }
-  return undefined;
+  return pools.find((item) => String(item.id) === hint || lostItemPk(item) === hint);
 }
 
-/** PATCH/DELETE·수령 QR용 lost_item 숫자 PK */
+/** PATCH/DELETE·수령 QR용 lost_item 숫자 PK. 서버 물품이 아니면 빈 문자열. */
 export function resolveServerLostItemId(
   item: PublishedLostItem | undefined,
   hintId: string,
   lookupItems: PublishedLostItem[] = []
 ): string {
-  const stub = item ?? { id: hintId, name: "", category: "", place: "", time: "" };
-  const normalized = normalizeCatalogItemIdentity(stub);
-  if (normalized.lostItemId && /^\d+$/.test(String(normalized.lostItemId))) {
-    return String(normalized.lostItemId);
-  }
-  if (normalized.reportId && String(normalized.reportId) !== String(normalized.id)) {
-    return String(normalized.id);
-  }
-
-  const hint = String(hintId);
-  const byLost = lookupItems.find((r) => String(r.id) === hint || String(r.lostItemId) === hint);
-  if (byLost) return String(byLost.lostItemId ?? byLost.id);
-
-  const byReport = lookupItems.find(
-    (r) => String(r.reportId ?? "") === hint && /^\d+$/.test(String(r.id))
+  const target = item ?? findCatalogItemByHint(hintId, lookupItems);
+  if (!target) return isNumeric(hintId) ? String(hintId).trim() : "";
+  const pk = lostItemPk(target);
+  if (pk) return pk;
+  // 승인 직후 임시 카드: 같은 신고에서 생성된 서버 물품을 찾는다
+  const reportId = String(target.reportId ?? "").trim();
+  if (!reportId) return "";
+  const linked = lookupItems.find(
+    (it) => String(it.reportId ?? "").trim() === reportId && lostItemPk(it)
   );
-  if (byReport) return String(byReport.lostItemId ?? byReport.id);
-
-  if (/^\d+$/.test(hint)) return hint;
-  return String(normalized.id);
+  return linked ? (lostItemPk(linked) as string) : "";
 }

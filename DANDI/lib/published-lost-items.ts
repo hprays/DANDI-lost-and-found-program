@@ -8,15 +8,12 @@ import {
   sanitizeLocation,
 } from "@/lib/format-display";
 import {
-  canonicalLostItemId,
+  catalogIdentityKeys,
+  findCatalogItemByHint,
+  isSameCatalogItem,
+  lostItemPk,
   normalizeCatalogItemIdentity,
 } from "@/lib/catalog-identity";
-
-function isLostItemPkRow(item: PublishedLostItem): boolean {
-  const id = String(item.id);
-  const reportId = item.reportId ? String(item.reportId) : "";
-  return /^\d+$/.test(id) && (!reportId || reportId !== id);
-}
 import { enrichWithRegistrationMeta } from "@/lib/registration-meta";
 import { pickImageFromRaw, resolveDisplayImageUrl, resolveItemImageUrl } from "@/lib/media-url";
 import { imageForLocalStorage, safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
@@ -41,7 +38,8 @@ export type PublishedLostItem = {
   pickedUpAt?: string;
 };
 
-const PUBLISHED_KEY = "dandi.published.lostItems";
+// v2: 신고 ID와 물품 ID를 섞어 저장한 이전 캐시는 버린다
+export const PUBLISHED_KEY = "dandi.published.lostItems.v2";
 /** localStorage 백업용 — 홈 전체 목록은 API가 기준, 여기는 습득완료 직후 보조만 */
 const MAX_STORED_ITEMS = 200;
 
@@ -98,69 +96,26 @@ export function setPublishedLostItems(items: PublishedLostItem[]) {
   safeSetLocalStorage(PUBLISHED_KEY, JSON.stringify(minimal));
 }
 
-/** 같은 신고·분실물을 id/reportId 조합으로 판별 */
-export function isSameCatalogItem(a: PublishedLostItem, b: PublishedLostItem): boolean {
-  if (String(a.id) === String(b.id)) return true;
-  const aLost = a.lostItemId ? String(a.lostItemId) : null;
-  const bLost = b.lostItemId ? String(b.lostItemId) : null;
-  if (aLost && (aLost === String(b.id) || aLost === bLost)) return true;
-  if (bLost && (bLost === String(a.id) || bLost === aLost)) return true;
-  const aReport = a.reportId ? String(a.reportId) : null;
-  const bReport = b.reportId ? String(b.reportId) : null;
-  if (aReport && (aReport === String(b.id) || aReport === bReport)) return true;
-  if (bReport && (bReport === String(a.id) || bReport === aReport)) return true;
-  return false;
-}
+export { isSameCatalogItem };
 
-/** 삭제·수령 시 id / lostItemId / reportId 전부 수집 */
-export function collectCatalogAliasIds(item: {
-  id: string;
-  lostItemId?: string;
-  reportId?: string;
-}): string[] {
-  return Array.from(
-    new Set(
-      [item.id, item.lostItemId, item.reportId]
-        .map((v) => String(v ?? "").trim())
-        .filter(Boolean)
-    )
-  );
-}
-
-/** reportId·lostItemId가 달라도 홈에 카드 1장만 */
+/** 같은 물품(lost_item PK 또는 같은 신고에서 나온 카드)을 카드 1장으로 합친다 */
 export function dedupePublishedCatalog(items: PublishedLostItem[]): PublishedLostItem[] {
   const groups = new Map<string, PublishedLostItem>();
-  const aliasToGroup = new Map<string, string>();
-
-  const linkAliases = (groupKey: string, item: PublishedLostItem) => {
-    aliasToGroup.set(`id:${item.id}`, groupKey);
-    if (item.reportId) {
-      aliasToGroup.set(`id:${item.reportId}`, groupKey);
-      aliasToGroup.set(`report:${item.reportId}`, groupKey);
-    }
-  };
-
-  const findGroupKey = (item: PublishedLostItem): string | null => {
-    const probes = [
-      `id:${item.id}`,
-      item.reportId ? `id:${item.reportId}` : "",
-      item.reportId ? `report:${item.reportId}` : "",
-    ].filter(Boolean);
-    for (const probe of probes) {
-      const group = aliasToGroup.get(probe);
-      if (group) return group;
-    }
-    return null;
-  };
+  const keyToGroup = new Map<string, string>();
 
   for (const item of items) {
-    const existingGroup = findGroupKey(item);
-    const groupKey = existingGroup ?? (item.reportId ? `report:${item.reportId}` : `item:${item.id}`);
+    const keys = catalogIdentityKeys(item);
+    const groupKey = keys.map((key) => keyToGroup.get(key)).find(Boolean) ?? keys[0];
     const existing = groups.get(groupKey);
+    // 서로 다른 lost_item PK는 합치지 않는다
+    if (existing && !isSameCatalogItem(existing, item)) {
+      const ownKey = `id:${String(item.id)}`;
+      groups.set(ownKey, normalizeCatalogItemIdentity(item));
+      continue;
+    }
     const merged = existing ? mergePublishedItems(item, existing) : item;
     groups.set(groupKey, normalizeCatalogItemIdentity(merged));
-    linkAliases(groupKey, item);
-    linkAliases(groupKey, merged);
+    for (const key of [...keys, ...catalogIdentityKeys(merged)]) keyToGroup.set(key, groupKey);
   }
 
   return Array.from(groups.values()).filter(
@@ -177,13 +132,9 @@ export function upsertPublishedLostItem(item: PublishedLostItem) {
 }
 
 export function removePublishedLostItem(id: string) {
-  const targetId = String(id);
-  const next = getPublishedLostItems().filter((it) => {
-    if (String(it.id) === targetId) return false;
-    if (String(it.lostItemId ?? "") === targetId) return false;
-    if (String(it.reportId ?? "") === targetId) return false;
-    return true;
-  });
+  const items = getPublishedLostItems();
+  const target = findCatalogItemByHint(id, items);
+  const next = target ? items.filter((it) => !isSameCatalogItem(it, target)) : items;
   setPublishedLostItems(next);
   return next;
 }
@@ -210,9 +161,8 @@ export function mergePublishedItems(
     secondary.image;
   const foundAt = pickRicherDateTimeLabel(primary.foundAt ?? primary.time, secondary.foundAt ?? secondary.time);
   const createdAt = pickRicherDateTimeLabel(primary.createdAt, secondary.createdAt);
-  const apiRow = [primary, secondary].find(isLostItemPkRow) ?? secondary ?? primary;
-  const id = canonicalLostItemId(primary, secondary);
-  const lostItemId = /^\d+$/.test(id) ? id : apiRow.lostItemId;
+  const pk = lostItemPk(primary) ?? lostItemPk(secondary);
+  const id = pk ?? String(primary.id);
   const merged: PublishedLostItem = {
     ...secondary,
     ...primary,
@@ -226,9 +176,9 @@ export function mergePublishedItems(
     foundAt,
     createdAt,
     time: createdAt || foundAt || primary.time || secondary.time,
-    reportId: primary.reportId ?? secondary.reportId ?? apiRow.reportId,
+    reportId: primary.reportId ?? secondary.reportId,
     id,
-    lostItemId: lostItemId ?? (/^\d+$/.test(id) ? id : undefined),
+    lostItemId: pk,
     catalogStatus: pickRicherCatalogStatus(primary.catalogStatus, secondary.catalogStatus),
     pickedUpAt: pickRicherDateTimeLabel(primary.pickedUpAt, secondary.pickedUpAt) ?? primary.pickedUpAt ?? secondary.pickedUpAt,
   };
@@ -286,8 +236,8 @@ export function enrichPublishedItemsWithReports(
 ): PublishedLostItem[] {
   const byId = new Map(reports.map((r) => [String(r.id), r]));
   return items.map((item) => {
-    const linked =
-      (item.reportId ? byId.get(String(item.reportId)) : undefined) ?? byId.get(String(item.id));
+    // 물품 id와 신고 id는 다른 테이블 — reportId로만 연결한다
+    const linked = item.reportId ? byId.get(String(item.reportId)) : undefined;
     let next: PublishedLostItem = { ...item };
     const resolvedImage = resolveItemImageUrl(item.image);
     if (resolvedImage && !resolvedImage.startsWith("data:")) {
