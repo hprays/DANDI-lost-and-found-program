@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
-import { AlertCircle, KeyRound, Loader2, MapPinned, Megaphone } from "lucide-react";
+import { AlertCircle, Clock3, KeyRound, Loader2, MapPinned, Megaphone, Phone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { ItemImage } from "@/components/item-image";
+import { FavoriteButton, ReceivedOverlay } from "@/components/lost-item-card";
 import { PickupQr } from "@/components/pickup-qr";
 import { QAChatbot } from "@/components/qa-chatbot";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -12,7 +13,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchAIGuidance, useDandiState } from "@/lib/dandi-state";
-import { lostItems } from "@/lib/mock-data";
+import { lostItems, officeMarkers } from "@/lib/mock-data";
+import { useFavorites } from "@/lib/favorites";
+import { findOfficeForStorage, formatRemaining } from "@/lib/item-filters";
 import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
 import { displayFoundDateTime, displayRegistrationDateTime } from "@/lib/format-display";
 import { fetchLostItemById } from "@/lib/catalog-utils";
@@ -27,7 +30,9 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const itemId = id;
   const { issuePickupPass, pickupPasses, homeLostItems, refreshPickupPasses } = useDandiState();
-  const now = useNow();
+  // 1초 간격 — QR 남은 유효 시간을 실시간으로 표시
+  const now = useNow(1000);
+  const favorites = useFavorites();
 
   useEffect(() => {
     void refreshPickupPasses();
@@ -82,6 +87,10 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
     );
   }, [pickupPasses, serverItemId]);
   const latestPassState = latestPass ? pickupPassState(latestPass, now) : null;
+  const remainingMs = latestPass ? Date.parse(latestPass.expiresAt) - now : 0;
+  // 보관 장소가 등록되지 않으면 기본 보관실(혜당관 학생팀)로 안내
+  const storageOffice =
+    findOfficeForStorage(item?.storage, officeMarkers) ?? officeMarkers.find((o) => o.name === "혜당관 학생팀");
 
   const onIssuePickup = async () => {
     if (!item) return;
@@ -147,10 +156,20 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
       <Card className="overflow-hidden">
         <div className="relative h-80 bg-slate-100 md:h-[32rem]">
           <ItemImage src={item.image} alt={item.name} category={item.category} sizes="(max-width: 768px) 100vw, 70vw" fit="contain" />
+          {itemReceived || latestPassState === "used" ? <ReceivedOverlay large /> : null}
         </div>
         <CardContent className="space-y-4 p-5">
-          <Badge>{item.category}</Badge>
-          <h1 className="text-2xl font-bold">{item.name}</h1>
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-2">
+              <Badge>{item.category}</Badge>
+              <h1 className="text-2xl font-bold">{item.name}</h1>
+            </div>
+            <FavoriteButton
+              active={favorites.isFavorite(String(item.id))}
+              onToggle={() => favorites.toggle(String(item.id))}
+              className="shrink-0 border"
+            />
+          </div>
           <div className="grid gap-2 text-sm text-muted-foreground">
             <p>습득 위치: {item.place}</p>
             {(() => {
@@ -165,6 +184,32 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
             })()}
             {item.storage ? <p>보관 장소: {item.storage}</p> : <p>보관 장소: 혜당관 학생팀 425호</p>}
           </div>
+
+          {storageOffice ? (
+            <div className="rounded-xl border bg-slate-50 p-4 text-sm">
+              {/* 보관 호실과 관리실 호실이 다를 수 있어 보관 장소를 우선 표시하고 관리실은 문의처로 안내 */}
+              <p className="font-semibold">수령 장소 · {item.storage || `${storageOffice.name} ${storageOffice.location}`}</p>
+              <p className="text-muted-foreground">
+                문의처: {storageOffice.name} {storageOffice.location}
+              </p>
+              <div className="mt-2 grid gap-1">
+                <p className="flex items-center gap-2">
+                  <Clock3 className="h-4 w-4 text-primary" />
+                  {storageOffice.hours}
+                </p>
+                <a href={`tel:${storageOffice.phone}`} className="flex items-center gap-2 text-primary underline">
+                  <Phone className="h-4 w-4" />
+                  {storageOffice.phone}
+                </a>
+              </div>
+              <Button asChild size="sm" variant="outline" className="mt-3">
+                <Link href={`/map?office=${encodeURIComponent(storageOffice.name)}`}>
+                  <MapPinned className="h-4 w-4" />
+                  지도에서 위치 보기
+                </Link>
+              </Button>
+            </div>
+          ) : null}
 
           <Accordion type="single" collapsible className="rounded-xl border px-4">
             <AccordionItem value="details" className="border-none">
@@ -210,7 +255,7 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
           </p>
           {itemReceived || latestPassState === "used" ? (
             <p className="rounded-lg border bg-white p-3 text-sm font-semibold text-slate-700">
-              수령이 완료된 물품입니다.
+              수령이 완료된 물품입니다. QR을 발급할 수 없습니다.
             </p>
           ) : latestPass && latestPassState === "active" ? (
             <div className="rounded-lg border bg-white p-3">
@@ -219,6 +264,9 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
                 <PickupQr value={latestPass.token} />
                 <div className="space-y-1 text-sm">
                   <p className="text-base font-bold tracking-wider">{latestPass.token}</p>
+                  <p className="text-lg font-bold text-primary" role="timer">
+                    남은 시간 {formatRemaining(remainingMs)}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     유효기간: {new Date(latestPass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
                   </p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { ImagePlus, Loader2, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,35 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
 import { useBuildingLocationField } from "@/lib/building-location";
+import { getAuthSession } from "@/lib/auth-session";
+import { safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 import { useDandiState } from "@/lib/dandi-state";
 import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
 import { resolveDisplayImageUrl } from "@/lib/media-url";
 import { MAX_IMAGE_BYTES } from "@/lib/constants";
 import { categories } from "@/lib/mock-data";
+
+type ReportDraft = {
+  itemName: string;
+  dateTime: string;
+  category: string;
+  memo: string;
+  building: string;
+  detail: string;
+  customText: string;
+};
+
+// 계정별 신고 임시 저장 — 사진은 용량 문제로 제외 (글·장소·일시만)
+const draftKey = () => `dandi.reportDraft.v1:${getAuthSession()?.email ?? "guest"}`;
+
+function readDraft(): Partial<ReportDraft> | null {
+  try {
+    const raw = window.localStorage.getItem(draftKey());
+    return raw ? (JSON.parse(raw) as Partial<ReportDraft>) : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function RegisterItemPage() {
   const { reports, submitReport, deleteReport, apiConfigured, apiBaseUrl } = useDandiState();
@@ -30,6 +54,43 @@ export default function RegisterItemPage() {
   const selectableCategories = categories.filter((c) => c !== "전체");
   const [category, setCategory] = useState<string>(selectableCategories[0] ?? "기타");
   const [savedMessage, setSavedMessage] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const { setBuilding, setDetail, setCustomText } = reportLocation;
+
+  // 뒤로 가기·화면 닫기 후 다시 들어오면 작성 중이던 내용을 복구
+  useEffect(() => {
+    const draft = readDraft();
+    if (draft) {
+      setItemName(draft.itemName ?? "");
+      setDateTime(draft.dateTime ?? "");
+      if (draft.category) setCategory(draft.category);
+      setMemo(draft.memo ?? "");
+      setBuilding(draft.building ?? "");
+      setDetail(draft.detail ?? "");
+      setCustomText(draft.customText ?? "");
+      setDraftRestored(true);
+    }
+    setDraftReady(true);
+  }, [setBuilding, setDetail, setCustomText]);
+
+  const { building, detail, customText } = reportLocation;
+  useEffect(() => {
+    if (!draftReady) return;
+    const draft: ReportDraft = { itemName, dateTime, category, memo, building, detail, customText };
+    const empty = !itemName.trim() && !dateTime && !memo.trim() && !building && !detail.trim() && !customText.trim();
+    if (empty) safeRemoveLocalStorage(draftKey());
+    else safeSetLocalStorage(draftKey(), JSON.stringify(draft));
+  }, [draftReady, itemName, dateTime, category, memo, building, detail, customText]);
+
+  const discardDraft = () => {
+    setItemName("");
+    setDateTime("");
+    setCategory(selectableCategories[0] ?? "기타");
+    setMemo("");
+    reportLocation.reset();
+    setDraftRestored(false);
+  };
 
   const clearPhoto = () => {
     setPhotoFile(null);
@@ -94,6 +155,7 @@ export default function RegisterItemPage() {
       reportLocation.reset();
       setMemo("");
       clearPhoto();
+      setDraftRestored(false);
       setSavedMessage(result.message || "관리자에게 신고가 전달되었습니다. 처리 상태는 마이페이지에서 확인하세요.");
     } finally {
       setIsSubmitting(false);
@@ -114,6 +176,15 @@ export default function RegisterItemPage() {
           ) : (
             <p className="text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
           )}
+
+          {draftRestored ? (
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+              <span>작성 중이던 신고 내용을 불러왔습니다. (사진은 다시 선택해 주세요)</span>
+              <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={discardDraft}>
+                새로 작성
+              </Button>
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <Label>분실물 사진 (선택)</Label>

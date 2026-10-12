@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Clock3, MapPin, Navigation, Phone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { CampusMap } from "@/components/campus-map";
@@ -10,6 +10,15 @@ import { officeMarkers } from "@/lib/mock-data";
 
 export default function MapPage() {
   const [activeOffice, setActiveOffice] = useState(officeMarkers[0]);
+
+  // 상세 화면에서 넘어온 보관실(?office=이름)을 먼저 보여준다
+  useEffect(() => {
+    const name = new URLSearchParams(window.location.search).get("office");
+    const office = officeMarkers.find((o) => o.name === name);
+    if (!office) return;
+    const rafId = window.requestAnimationFrame(() => setActiveOffice(office));
+    return () => window.cancelAnimationFrame(rafId);
+  }, []);
 
   return (
     <AppShell subtitle="관리실 위치와 운영시간을 확인해보세요.">

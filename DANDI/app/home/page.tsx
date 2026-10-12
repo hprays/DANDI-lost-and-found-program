@@ -1,26 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { ChevronLeft, ChevronRight, CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { ItemImage } from "@/components/item-image";
+import { LostItemCard } from "@/components/lost-item-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { applyLostItemAdminChanges } from "@/lib/custom-lost-items";
-import { useDandiState } from "@/lib/dandi-state";
-import { catalogReceivedBadgeLabel, formatCatalogTimeLine } from "@/lib/format-display";
-import { buildings, categories, lostItems } from "@/lib/mock-data";
-import type { PublishedLostItem } from "@/lib/published-lost-items";
-
-// mock 항목도 실제 카탈로그 타입으로 다룬다
-const MOCK_CATALOG_ITEMS: PublishedLostItem[] = lostItems;
+import { useFavorites } from "@/lib/favorites";
+import { catalogReceivedBadgeLabel, parseDateTimeMs } from "@/lib/format-display";
+import {
+  PERIOD_FILTERS,
+  STATUS_FILTERS,
+  periodStartMs,
+  type PeriodFilter,
+  type StatusFilter,
+} from "@/lib/item-filters";
+import { buildings, categories } from "@/lib/mock-data";
+import { useNow } from "@/lib/pickup-pass-state";
+import { itemSearchText, useCatalogItems } from "@/lib/use-catalog-items";
 
 const ITEMS_PER_PAGE = 8;
-const USE_MOCK_LOST_ITEMS = process.env.NEXT_PUBLIC_ENABLE_MOCK_LOST_ITEMS === "true";
 
 function getVisiblePages(current: number, total: number): Array<number | "ellipsis"> {
   if (total <= 7) {
@@ -39,43 +42,35 @@ function getVisiblePages(current: number, total: number): Array<number | "ellips
 }
 
 export default function HomePage() {
-  const { homeLostItems, catalogLoading, catalogLoaded, catalogError, refreshHomeCatalog } = useDandiState();
+  const { items: mergedItems, catalogLoading, catalogError, refreshHomeCatalog } = useCatalogItems();
+  const favorites = useFavorites();
+  const now = useNow(60_000);
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodFilter>("전체");
+  const [selectedStatus, setSelectedStatus] = useState<StatusFilter>("전체");
   const [selectedCategory, setSelectedCategory] = useState<string>("전체");
   const [selectedBuilding, setSelectedBuilding] = useState<string>("전체");
   const [searchKeyword, setSearchKeyword] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
 
-  // 목록 길이가 아니라 최초 조회 여부로 판단 — 정상 빈 목록에서 재조회가 반복되지 않는다
-  useEffect(() => {
-    if (!catalogLoaded && !catalogLoading) {
-      void refreshHomeCatalog();
-    }
-  }, [catalogLoaded, catalogLoading, refreshHomeCatalog]);
-
-  const mergedItems = useMemo(() => {
-    const published = applyLostItemAdminChanges(homeLostItems);
-    if (!USE_MOCK_LOST_ITEMS) return published;
-    return applyLostItemAdminChanges([...published, ...MOCK_CATALOG_ITEMS]);
-  }, [homeLostItems]);
-
   const filteredItems = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();
+    const periodStart = periodStartMs(selectedPeriod, now);
     return mergedItems.filter((item) => {
+      // 습득 일시 기준, 없으면 등록 일시 — 날짜를 모르는 물품은 기간 필터에서 제외
+      const periodOk =
+        periodStart === 0 || parseDateTimeMs(item.foundAt ?? item.createdAt ?? item.time) >= periodStart;
+      const received = catalogReceivedBadgeLabel(item.catalogStatus) !== null;
+      const statusOk =
+        selectedStatus === "전체" || (selectedStatus === "수령 완료" ? received : !received);
       const categoryOk = selectedCategory === "전체" || item.category === selectedCategory;
       const buildingOk =
         selectedBuilding === "전체" ||
         (item.place ?? "").toLowerCase().includes(selectedBuilding.toLowerCase()) ||
         (item.storage ?? "").toLowerCase().includes(selectedBuilding.toLowerCase());
-      const keywordOk =
-        keyword.length === 0 ||
-        [item.name, item.category, item.type, item.place, item.storage, (item as { memo?: string }).memo]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase()
-          .includes(keyword);
-      return categoryOk && buildingOk && keywordOk;
+      const keywordOk = keyword.length === 0 || itemSearchText(item).includes(keyword);
+      return periodOk && statusOk && categoryOk && buildingOk && keywordOk;
     });
-  }, [mergedItems, selectedCategory, selectedBuilding, searchKeyword]);
+  }, [mergedItems, now, selectedPeriod, selectedStatus, selectedCategory, selectedBuilding, searchKeyword]);
 
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / ITEMS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
@@ -88,6 +83,8 @@ export default function HomePage() {
   const visiblePages = useMemo(() => getVisiblePages(safePage, totalPages), [safePage, totalPages]);
 
   const resetFilters = () => {
+    setSelectedPeriod("전체");
+    setSelectedStatus("전체");
     setSelectedCategory("전체");
     setSelectedBuilding("전체");
     setSearchKeyword("");
@@ -139,6 +136,45 @@ export default function HomePage() {
             />
           </div>
 
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground">습득 기간</p>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {PERIOD_FILTERS.map((period) => (
+                  <Badge
+                    key={period}
+                    variant={selectedPeriod === period ? "default" : "outline"}
+                    className="cursor-pointer whitespace-nowrap px-3 py-1"
+                    onClick={() => {
+                      setSelectedPeriod(period);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    {period}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground">수령 상태</p>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {STATUS_FILTERS.map((status) => (
+                  <Badge
+                    key={status}
+                    variant={selectedStatus === status ? "default" : "outline"}
+                    className="cursor-pointer whitespace-nowrap px-3 py-1"
+                    onClick={() => {
+                      setSelectedStatus(status);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    {status}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+
           <div className="mt-4 space-y-2">
             <p className="text-xs font-semibold text-muted-foreground">카테고리 분류</p>
             <div className="flex gap-2 overflow-x-auto pb-1">
@@ -185,7 +221,10 @@ export default function HomePage() {
                   · {safePage}/{totalPages}페이지
                 </span>
               ) : null}
-              {selectedCategory !== "전체" || selectedBuilding !== "전체" || searchKeyword ? (
+              {selectedPeriod !== "전체" ||
+              selectedStatus !== "전체" ||
+              selectedCategory !== "전체" ||
+              selectedBuilding !== "전체" || searchKeyword ? (
                 <button
                   type="button"
                   className="ml-2 rounded-md border px-2 py-0.5 text-[11px] hover:bg-slate-50"
@@ -227,35 +266,14 @@ export default function HomePage() {
             </div>
           ) : null}
           {filteredItems.length > 0
-            ? paginatedItems.map((item) => {
-            const timeLabel = formatCatalogTimeLine(item);
-            const receivedBadge = catalogReceivedBadgeLabel(item.catalogStatus);
-            return (
-            <Link key={item.id} href={`/lost/${item.id}`}>
-              <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
-                <div className="relative h-64 overflow-hidden bg-slate-100 md:h-72">
-                  <ItemImage src={item.image} alt={item.name} category={item.category} fit="contain" />
-                </div>
-                <CardContent className="space-y-2 p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <Badge>{item.category}</Badge>
-                    <span className="text-right text-xs text-muted-foreground">{timeLabel}</span>
-                  </div>
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <h3 className="text-base font-bold">{item.name}</h3>
-                    {receivedBadge ? (
-                      <span className="text-lg font-bold leading-tight text-red-600">
-                        {receivedBadge}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="text-sm text-muted-foreground">{item.place}</p>
-                  {item.storage ? <p className="text-xs text-muted-foreground">보관: {item.storage}</p> : null}
-                </CardContent>
-              </Card>
-            </Link>
-            );
-              })
+            ? paginatedItems.map((item) => (
+                <LostItemCard
+                  key={item.id}
+                  item={item}
+                  favorite={favorites.isFavorite(String(item.id))}
+                  onToggleFavorite={() => favorites.toggle(String(item.id))}
+                />
+              ))
             : null}
         </div>
 
