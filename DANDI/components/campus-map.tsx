@@ -94,7 +94,11 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
       });
 
       officeMarkers.forEach((office) => {
-        const marker = L.marker([office.lat, office.lng], { icon: officeIcon }).addTo(map);
+        const marker = L.marker([office.lat, office.lng], {
+          icon: officeIcon,
+          title: office.name,
+          alt: office.name,
+        }).addTo(map);
         marker.bindPopup(`<strong>${office.name}</strong><br/>${office.location}<br/>${office.hours}`);
         marker.on("click", () => onOfficeSelectRef.current(office));
         markerMap.set(office.name, marker);
@@ -190,7 +194,7 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
       if (!osmMapRef.current || !mapRef.current?.isConnected) return;
       try {
         map.invalidateSize({ animate: false });
-        map.setView([activeOffice.lat, activeOffice.lng], 17, { animate: true });
+        map.setView(marker?.getLatLng() ?? [activeOffice.lat, activeOffice.lng], 17, { animate: true });
         marker?.openPopup();
       } catch {
         // Leaflet pane not ready (_leaflet_pos)
