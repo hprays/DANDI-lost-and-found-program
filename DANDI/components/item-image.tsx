@@ -1,6 +1,10 @@
 "use client";
 
 import Image from "next/image";
+import {
+  BookOpen, CreditCard, CupSoda, Dumbbell, Gem, IdCard, KeyRound, Music, Package,
+  Shirt, Smartphone, Sparkles, Umbrella, Wallet, type LucideIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { resolveItemImageUrl } from "@/lib/media-url";
 
@@ -12,10 +16,27 @@ type ItemImageProps = {
   fit?: "contain" | "cover";
 };
 
-/** 사진이 없거나 로드 실패 시 단색 빈 영역만 표시 (AI 예비 이미지 미사용) */
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  "전자기기": Smartphone,
+  "지갑/가방": Wallet,
+  "신분증": IdCard,
+  "카드/티켓": CreditCard,
+  "의류": Shirt,
+  "악세서리": Gem,
+  "도서/문구": BookOpen,
+  "스포츠/운동": Dumbbell,
+  "악기": Music,
+  "텀블러/생활용품": CupSoda,
+  "열쇠/키링": KeyRound,
+  "우산/우비": Umbrella,
+  "화장품": Sparkles,
+};
+
+/** 사진이 없거나 로드 실패 시 카테고리 아이콘 표시 (AI 예비 이미지 미사용 — 실물과 혼동 방지) */
 export function ItemImage({
   src,
   alt,
+  category,
   sizes = "(max-width: 768px) 100vw, 50vw",
   fit = "contain",
 }: ItemImageProps) {
@@ -25,12 +46,16 @@ export function ItemImage({
   const showImage = Boolean(resolvedSrc && failedSrc !== resolvedSrc);
 
   if (!showImage) {
+    const Icon = (category && CATEGORY_ICONS[category]) || Package;
     return (
       <div
-        className="h-full w-full bg-slate-100"
+        className="flex h-full w-full flex-col items-center justify-center gap-2 bg-slate-100 text-slate-400"
         role="img"
         aria-label={`${alt} (사진 없음)`}
-      />
+      >
+        <Icon className="h-14 w-14" strokeWidth={1.5} aria-hidden="true" />
+        <span className="text-xs font-medium">사진 없음</span>
+      </div>
     );
   }
 

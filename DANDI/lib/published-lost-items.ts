@@ -2,6 +2,7 @@
 
 import type { LostReport } from "@/lib/dandi-state";
 import { isLostItemMarkedDeleted } from "@/lib/custom-lost-items";
+import { resolveCategory } from "@/lib/item-category";
 import {
   formatDateTimeLabel,
   pickRicherDateTimeLabel,
@@ -275,8 +276,8 @@ export function mapApiLostItem(raw: Record<string, unknown>): PublishedLostItem 
   const name = readString(raw, "itemName", "name", "item_name");
   if (id == null || !name) return null;
 
-  const category =
-    readString(raw, "category", "itemType", "item_type") ?? "기타";
+  // itemType에는 물품명이 들어오므로 카테고리로 쓰지 않는다
+  const category = resolveCategory(readString(raw, "category", "categoryName"), name);
   const type = readString(raw, "type", "itemType", "item_type");
   const memo = readString(raw, "memo", "contact", "description");
   const place = sanitizeLocation(
