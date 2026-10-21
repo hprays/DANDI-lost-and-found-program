@@ -1,5 +1,7 @@
 "use client";
 
+import { isValidStudentId } from "@/lib/student-id";
+
 export type AuthSession = {
   accessToken: string;
   profileCompleted: boolean;
@@ -8,6 +10,8 @@ export type AuthSession = {
   email?: string;
   department?: string;
   studentId?: string;
+  /** v2 student numbers were explicitly entered and saved, never inferred from email. */
+  profileSchemaVersion?: 2;
   isAdmin?: boolean;
 };
 
@@ -33,7 +37,13 @@ export function getAuthSession(): AuthSession | null {
   const raw = window.localStorage.getItem(AUTH_SESSION_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as AuthSession;
+    const session = JSON.parse(raw) as AuthSession;
+    const hasStudentId = session.profileSchemaVersion === 2 && isValidStudentId(session.studentId);
+    return {
+      ...session,
+      studentId: hasStudentId ? session.studentId : undefined,
+      profileCompleted: Boolean(session.profileCompleted && hasStudentId),
+    };
   } catch {
     return null;
   }
@@ -55,16 +65,6 @@ export function clearAuthSession() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(AUTH_SESSION_KEY);
   window.dispatchEvent(new CustomEvent("dandi-auth-changed"));
-}
-
-/**
- * dankook.ac.kr 이메일에서 학번(prefix)을 뽑아낸다.
- * 예) dlwjddn5534@dankook.ac.kr -> dlwjddn5534
- */
-export function extractStudentIdFromEmail(email?: string | null): string | undefined {
-  if (!email) return undefined;
-  const match = email.match(/^([^@]+)@dankook\.ac\.kr$/i);
-  return match ? match[1] : undefined;
 }
 
 /**

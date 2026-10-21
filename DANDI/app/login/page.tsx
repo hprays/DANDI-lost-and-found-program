@@ -6,7 +6,6 @@ import { Search } from 'lucide-react';
 import { signInWithPopup, type AuthError } from 'firebase/auth';
 import { firebaseAuth, googleProvider } from '@/lib/firebase-client';
 import {
-  extractStudentIdFromEmail,
   isAdminEmail,
   isDankookEmail,
   setAuthSession,
@@ -19,6 +18,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { isValidStudentId } from '@/lib/student-id';
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, '') ?? '';
@@ -74,21 +74,20 @@ export default function LoginPage() {
 
       const firebaseIdToken = await credential.user.getIdToken();
       const userName = credential.user.displayName ?? undefined;
-      const studentId = extractStudentIdFromEmail(userEmail);
       const adminFlag = isAdminEmail(userEmail);
 
       if (AUTH_DEMO_MODE) {
         const demoAdmin = true;
         setAuthSession({
           accessToken: firebaseIdToken,
-          profileCompleted: true,
+          profileCompleted: false,
+          profileSchemaVersion: 2,
           provider: 'firebase-google',
           name: userName,
           email: userEmail,
-          studentId,
           isAdmin: demoAdmin,
         });
-        router.replace(demoAdmin ? '/admin' : '/home');
+        router.replace('/onboarding');
         window.dispatchEvent(new CustomEvent('dandi-auth-changed'));
         return;
       }
@@ -123,10 +122,13 @@ export default function LoginPage() {
         department?: string;
         isAdmin?: boolean;
         role?: string;
+        name?: string | null;
+        studentId?: string | null;
       };
 
       const accessToken = data.accessToken ?? firebaseIdToken;
-      const profileCompleted = Boolean(data.profileCompleted);
+      const studentId = isValidStudentId(data.studentId) ? data.studentId : undefined;
+      const profileCompleted = Boolean(data.profileCompleted && studentId);
       const backendAdmin =
         Boolean(data.isAdmin) ||
         data.role === 'ADMIN' ||
@@ -135,9 +137,10 @@ export default function LoginPage() {
         accessToken,
         profileCompleted,
         provider: 'firebase-google',
-        name: userName,
+        name: data.name ?? userName,
         email: userEmail,
         studentId,
+        profileSchemaVersion: 2,
         department: data.department,
         isAdmin: backendAdmin || adminFlag,
       });

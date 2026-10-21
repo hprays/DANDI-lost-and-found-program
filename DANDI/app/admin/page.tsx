@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 import {
-  extractStudentIdFromEmail,
   getAuthSession,
   type AuthSession,
 } from '@/lib/auth-session';
@@ -1865,7 +1864,6 @@ export default function AdminPage() {
                             <p>
                               신고자:{' '}
                               {report.ownerName?.trim() ||
-                                extractStudentIdFromEmail(report.ownerEmail) ||
                                 '프로필 미등록 (마이페이지에서 이름 저장 필요)'}{' '}
                               {report.ownerEmail ? (
                                 <>({report.ownerEmail})</>

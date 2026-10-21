@@ -14,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
-  extractStudentIdFromEmail,
   getAuthSession,
   updateAuthSession,
   type AuthSession,
@@ -22,7 +21,8 @@ import {
 import { formatDateTimeLabel, parseDateTimeMs, sanitizeLocation } from "@/lib/format-display";
 import { useListPagination } from "@/lib/use-list-pagination";
 import { useDandiState } from "@/lib/dandi-state";
-import { apiJson } from "@/lib/api-json";
+import { fetchMyProfile, saveMyProfile, type UserProfileResponse } from "@/lib/user-profile-api";
+import { isValidStudentId, STUDENT_ID_LENGTH, STUDENT_ID_MESSAGE } from "@/lib/student-id";
 import { pickupPassState, useNow } from "@/lib/pickup-pass-state";
 import {
   addUserKeyword,
@@ -62,6 +62,8 @@ export default function MyPage() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [editName, setEditName] = useState("");
   const [editDepartment, setEditDepartment] = useState("");
+  const [editStudentId, setEditStudentId] = useState("");
+  const [profileLoading, setProfileLoading] = useState(Boolean(API_BASE_URL));
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
 
@@ -80,11 +82,39 @@ export default function MyPage() {
       setSession(s);
       setEditName(s?.name ?? "");
       setEditDepartment(s?.department ?? "");
+      setEditStudentId(s?.studentId ?? "");
       setAlertEnabled(getStoredAlertEnabled());
       setTagsReady(false);
     });
     return () => window.cancelAnimationFrame(rafId);
   }, []);
+
+  // The stored server profile is authoritative, including after a browser refresh.
+  useEffect(() => {
+    const email = session?.email;
+    if (!API_BASE_URL || !email) return;
+    let cancelled = false;
+    void fetchMyProfile().then((profile) => {
+      if (cancelled || getAuthSession()?.email !== email) return;
+      const fields = {
+        name: profile.name ?? "",
+        department: profile.department ?? "",
+        studentId: isValidStudentId(profile.studentId) ? profile.studentId : undefined,
+        profileCompleted: Boolean(profile.profileCompleted && isValidStudentId(profile.studentId)),
+        profileSchemaVersion: 2 as const,
+      };
+      updateAuthSession(fields);
+      setSession((prev) => prev ? { ...prev, ...fields } : prev);
+      setEditName(fields.name);
+      setEditDepartment(fields.department);
+      setEditStudentId(fields.studentId ?? "");
+    }).catch(() => {
+      if (!cancelled) setProfileMessage("프로필을 불러오지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.");
+    }).finally(() => {
+      if (!cancelled) setProfileLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [session?.email]);
 
   useEffect(() => {
     if (!session?.accessToken) return;
@@ -152,8 +182,6 @@ export default function MyPage() {
   const pickupPage = useListPagination(myPickupPasses, 3, session?.email);
   const noticePage = useListPagination(sortedNotices, 5, session?.email);
 
-  const studentId = session?.studentId ?? extractStudentIdFromEmail(session?.email);
-
   const addTag = async () => {
     const trimmed = keyword.trim();
     if (!trimmed || keywordRows.some((r) => r.keyword === trimmed)) return;
@@ -206,8 +234,12 @@ export default function MyPage() {
   };
 
   const onSaveProfile = async () => {
-    if (!editName.trim() || !editDepartment.trim()) {
-      setProfileMessage("이름과 학과를 모두 입력해 주세요.");
+    if (!editName.trim() || !editDepartment.trim() || !editStudentId.trim()) {
+      setProfileMessage("이름, 학과, 학번을 모두 입력해 주세요.");
+      return;
+    }
+    if (!isValidStudentId(editStudentId.trim())) {
+      setProfileMessage(STUDENT_ID_MESSAGE);
       return;
     }
     if (!session?.accessToken) {
@@ -218,22 +250,18 @@ export default function MyPage() {
     setProfileSaving(true);
     setProfileMessage("");
 
-    const persistLocal = () => {
-      updateAuthSession({
-        name: editName.trim(),
-        department: editDepartment.trim(),
-        studentId,
-      });
-      setSession((prev) =>
-        prev
-          ? {
-              ...prev,
-              name: editName.trim(),
-              department: editDepartment.trim(),
-              studentId,
-            }
-          : prev
-      );
+    const payload = { name: editName.trim(), department: editDepartment.trim(), studentId: editStudentId.trim() };
+    const persistLocal = (saved?: UserProfileResponse) => {
+      const fields = {
+        name: saved?.name ?? payload.name,
+        department: saved?.department ?? payload.department,
+        studentId: saved?.studentId ?? payload.studentId,
+        profileCompleted: saved?.profileCompleted ?? true,
+        profileSchemaVersion: 2 as const,
+      };
+      updateAuthSession(fields);
+      setSession((prev) => prev ? { ...prev, ...fields } : prev);
+      setEditStudentId(fields.studentId);
     };
 
     if (!API_BASE_URL) {
@@ -245,15 +273,9 @@ export default function MyPage() {
 
     try {
       // apiJson은 토큰 만료(401/403) 시 갱신 후 한 번 재시도한다
-      await apiJson<object>("/api/users/me/profile", {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: editName.trim(),
-          department: editDepartment.trim(),
-          studentId,
-        }),
-      });
-      persistLocal();
+      const saved = await saveMyProfile(payload);
+      if (getAuthSession()?.email !== session.email) return;
+      persistLocal(saved);
       setProfileMessage("프로필이 저장되었습니다.");
     } catch (error) {
       // 서버에 저장되지 않은 값은 세션에 반영하지 않는다 (입력값은 화면에 그대로 남음)
@@ -268,10 +290,10 @@ export default function MyPage() {
   return (
     <AppShell subtitle="내 정보와 알림 설정을 관리하세요.">
       <div className="space-y-4">
-        <Card>
+        <Card role="region" aria-labelledby="my-profile-title">
           <CardHeader>
-            <CardTitle>내 계정</CardTitle>
-            <p className="text-sm text-muted-foreground">학교 이메일/학번은 자동으로 채워지며 수정할 수 없습니다.</p>
+            <CardTitle id="my-profile-title">내 계정</CardTitle>
+            <p className="text-sm text-muted-foreground">이름, 학과, 학번을 수정할 수 있습니다. 학교 이메일은 로그인 계정 정보입니다.</p>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
             {!apiConfigured ? (
@@ -288,6 +310,7 @@ export default function MyPage() {
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 placeholder="이름을 입력하세요"
+                disabled={profileLoading || profileSaving}
               />
             </div>
             <div className="space-y-2">
@@ -301,19 +324,23 @@ export default function MyPage() {
                 value={editDepartment}
                 onChange={(e) => setEditDepartment(e.target.value)}
                 placeholder="예: 소프트웨어학과"
+                disabled={profileLoading || profileSaving}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="profile-studentid">학번</Label>
-              <Input id="profile-studentid" value={studentId ?? ""} readOnly placeholder="이메일에서 자동 추출" />
+              <Input id="profile-studentid" value={editStudentId} onChange={(e) => setEditStudentId(e.target.value)}
+                inputMode="numeric" maxLength={STUDENT_ID_LENGTH} placeholder="8자리 학번을 입력하세요"
+                aria-describedby="profile-studentid-help" disabled={profileLoading || profileSaving} />
+              <p id="profile-studentid-help" className="text-xs text-muted-foreground">직접 입력한 학번입니다. 수령 시 학생증으로 본인 확인을 진행합니다.</p>
             </div>
             <div className="col-span-full flex items-center justify-between">
               {profileMessage ? (
                 <p className="text-sm font-medium text-primary">{profileMessage}</p>
               ) : (
-                <span className="text-xs text-muted-foreground">변경 후 [저장] 버튼을 눌러 주세요.</span>
+                <span className="text-xs text-muted-foreground">{profileLoading ? "프로필을 불러오는 중입니다." : "변경 후 [저장] 버튼을 눌러 주세요."}</span>
               )}
-              <Button onClick={onSaveProfile} disabled={profileSaving}>
+              <Button onClick={onSaveProfile} disabled={profileLoading || profileSaving}>
                 {profileSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 저장
               </Button>

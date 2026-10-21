@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { extractStudentIdFromEmail, getAuthSession } from '@/lib/auth-session';
+import { getAuthSession } from '@/lib/auth-session';
 import {
   clearLostItemOverridesForIds,
   deleteCustomLostItem,
@@ -907,10 +907,7 @@ export function DandiStateProvider({
       submitReport: async (payload) => {
         const session = getAuthSession();
         const ownerEmail = session?.email;
-        const ownerName =
-          session?.name?.trim() ||
-          extractStudentIdFromEmail(session?.email) ||
-          undefined;
+        const ownerName = session?.name?.trim() || undefined;
         const lostAtDisplay =
           formatDateTimeLabel(payload.lostAt) || payload.lostAt;
         const lostAtIso = toApiDateTime(payload.lostAt);
