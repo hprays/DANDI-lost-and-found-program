@@ -6,6 +6,7 @@ import { BellRing, Loader2, Plus, Save, X } from "lucide-react";
 import { AccountMenu } from "@/components/account-menu";
 import { AppShell } from "@/components/app-shell";
 import { PickupQr } from "@/components/pickup-qr";
+import { ListPagination } from "@/components/list-pagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +19,8 @@ import {
   updateAuthSession,
   type AuthSession,
 } from "@/lib/auth-session";
-import { formatDateTimeLabel, sanitizeLocation } from "@/lib/format-display";
+import { formatDateTimeLabel, parseDateTimeMs, sanitizeLocation } from "@/lib/format-display";
+import { useListPagination } from "@/lib/use-list-pagination";
 import { useDandiState } from "@/lib/dandi-state";
 import { apiJson } from "@/lib/api-json";
 import { pickupPassState, useNow } from "@/lib/pickup-pass-state";
@@ -134,13 +136,21 @@ export default function MyPage() {
 
   const myPickupPasses = useMemo(() => {
     if (!session?.email) return [];
-    return pickupPasses.filter((pass) => !pass.claimantEmail || pass.claimantEmail === session.email);
+    return pickupPasses.filter((pass) => !pass.claimantEmail || pass.claimantEmail === session.email)
+      .sort((a, b) => parseDateTimeMs(b.issuedAt) - parseDateTimeMs(a.issuedAt));
   }, [pickupPasses, session?.email]);
 
   const myReports = useMemo(() => {
     if (!session?.email) return [];
-    return reports.filter((report) => report.ownerEmail === session.email);
+    return reports.filter((report) => report.ownerEmail === session.email)
+      .sort((a, b) => parseDateTimeMs(b.createdAt) - parseDateTimeMs(a.createdAt));
   }, [reports, session?.email]);
+
+  const sortedNotices = useMemo(() => [...notices]
+    .sort((a, b) => parseDateTimeMs(b.createdAt) - parseDateTimeMs(a.createdAt)), [notices]);
+  const reportPage = useListPagination(myReports, 5, session?.email);
+  const pickupPage = useListPagination(myPickupPasses, 3, session?.email);
+  const noticePage = useListPagination(sortedNotices, 5, session?.email);
 
   const studentId = session?.studentId ?? extractStudentIdFromEmail(session?.email);
 
@@ -364,16 +374,16 @@ export default function MyPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="report-history" role="region" aria-labelledby="report-history-title">
           <CardHeader>
-            <CardTitle>분실물 처리 기록</CardTitle>
+            <CardTitle id="report-history-title">분실물 처리 기록</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {myReports.length === 0 ? (
               <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">분실물 처리 기록이 없습니다.</p>
             ) : (
-              myReports.map((entry) => (
-                <div key={entry.id} className="rounded-xl border p-3 text-sm">
+              reportPage.items.map((entry) => (
+                <article key={entry.id} className="rounded-xl border p-3 text-sm">
                   <p className="font-semibold">{entry.itemName}</p>
                   <p className="text-muted-foreground">
                     {formatDateTimeLabel(entry.createdAt) || entry.createdAt} / {sanitizeLocation(entry.location)}
@@ -389,15 +399,16 @@ export default function MyPage() {
                           : "습득 불가"}
                   </p>
                   {entry.pickedUpAt ? <p className="mt-1 text-xs text-muted-foreground">수령 시각: {entry.pickedUpAt}</p> : null}
-                </div>
+                </article>
               ))
             )}
+            <ListPagination label="처리 기록" {...reportPage} onPageChange={reportPage.setPage} />
           </CardContent>
         </Card>
 
-        <Card>
+        <Card id="pickup-passes" role="region" aria-labelledby="pickup-passes-title">
           <CardHeader>
-            <CardTitle>내 수령 QR</CardTitle>
+            <CardTitle id="pickup-passes-title">내 수령 QR</CardTitle>
             <p className="text-sm text-muted-foreground">
               홈/검색에서 분실물을 찾았을 때 발급한 수령 QR이 여기에 모입니다. 관리실 방문 시 QR을 보여주세요.
             </p>
@@ -408,10 +419,10 @@ export default function MyPage() {
                 아직 발급받은 수령 QR이 없습니다. 홈에서 내 물건을 찾았다면 상세 페이지의 <b>“내 물건 — 수령 QR 발급받기”</b> 버튼을 눌러주세요.
               </p>
             ) : null}
-            {myPickupPasses.map((pass) => {
+            {pickupPage.items.map((pass) => {
               const state = pickupPassState(pass, now);
               return (
-              <div key={pass.id} className="rounded-xl border p-3 text-sm">
+              <article key={pass.id} className="rounded-xl border p-3 text-sm">
                 <div className="flex items-center justify-between">
                   <p className="font-semibold">{pass.itemName ?? "분실물"}</p>
                   {state === "used" ? (
@@ -445,15 +456,16 @@ export default function MyPage() {
                 <Button asChild variant="outline" size="sm" className="mt-3">
                   <Link href={`/lost/${pass.lostItemId}`}>해당 분실물 상세 보기</Link>
                 </Button>
-              </div>
+              </article>
               );
             })}
+            <ListPagination label="수령 QR" {...pickupPage} onPageChange={pickupPage.setPage} />
           </CardContent>
         </Card>
 
-        <Card id="notices">
+        <Card id="notices" role="region" aria-labelledby="notices-title">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle id="notices-title" className="flex items-center gap-2">
               <BellRing className="h-4 w-4 text-primary" />
               사용자 알림함
             </CardTitle>
@@ -470,7 +482,7 @@ export default function MyPage() {
             {notices.length === 0 ? (
               <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">도착한 알림이 없습니다.</p>
             ) : (
-              notices.map((notice) => (
+              noticePage.items.map((notice) => (
                 <button
                   key={notice.id}
                   type="button"
@@ -496,6 +508,7 @@ export default function MyPage() {
                 </button>
               ))
             )}
+            <ListPagination label="알림함" {...noticePage} onPageChange={noticePage.setPage} />
             {noticeMessage ? <p className="text-sm font-semibold text-primary">{noticeMessage}</p> : null}
           </CardContent>
         </Card>
