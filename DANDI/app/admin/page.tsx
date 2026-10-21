@@ -51,11 +51,12 @@ import {
 import { attachStreamToVideo, requestCameraStream } from '@/lib/camera-stream';
 import { BuildingLocationPicker } from '@/components/building-location-picker';
 import { ManageLocationPickers } from '@/components/manage-location-pickers';
-import { useBuildingLocationField } from '@/lib/building-location';
+import { storageForLocation, useBuildingLocationField } from '@/lib/building-location';
 import {
   displayFoundDateTime,
   displayRegistrationDateTime,
   formatDateTimeLabel,
+  koreanDateTime,
   sanitizeLocation,
   toDatetimeLocalValue,
 } from '@/lib/format-display';
@@ -94,7 +95,7 @@ function formatFoundAtLabel(foundAt: string): string {
   if (!foundAt) return '';
   const parsed = new Date(foundAt);
   if (Number.isNaN(parsed.getTime())) return foundAt;
-  return parsed.toLocaleString('ko-KR', { hour12: false });
+  return koreanDateTime(parsed);
 }
 
 function buildManageDraft(item: {
@@ -270,7 +271,7 @@ export default function AdminPage() {
     setRegName(report.itemName);
     setRegCategory(report.category || selectableCategories[0] || '기타');
     regFoundLocation.applyFromLocation(report.location);
-    regStorageLocation.applyFromLocation(report.storage ?? report.location);
+    regStorageLocation.applyFromLocation(storageForLocation(report.location));
     setRegFoundAt(toDatetimeLocalValue(report.lostAt));
     setRegMemo(report.memo ?? '');
     const image = resolveDisplayImageUrl(report.image) ?? null;
@@ -432,7 +433,7 @@ export default function AdminPage() {
       return;
     }
 
-    const registeredAt = new Date().toLocaleString('ko-KR', { hour12: false });
+    const registeredAt = koreanDateTime(new Date());
     setRegisteredItems((prev) => [
       {
         id: publishResult.itemId ?? `adm-${Date.now()}`,
@@ -1310,18 +1311,8 @@ export default function AdminPage() {
                               setVisionMaskCard(e.target.checked)
                             }
                           />
-                          <span>
-                            카드·체크카드 (documentType=BANK_CARD, 모자이크
-                            이미지 생성)
-                          </span>
+                          <span>카드·체크카드 (모자이크 이미지 생성)</span>
                         </label>
-                        <p className="text-muted-foreground">
-                          체크 시 <b>documentType</b> 전송 (신분증→ID_CARD,
-                          카드→BANK_CARD). 등록·홈·DB에는 백엔드 응답{' '}
-                          <b>mosaicImageUrl</b>만 사용합니다 (originalImageUrl
-                          미사용). BANK_CARD는 카드번호·유효기간·카드명 등 넓게
-                          마스킹됩니다.
-                        </p>
                       </div>
                       {visionPreview ? (
                         <div className="overflow-hidden rounded-lg border">
@@ -1469,7 +1460,11 @@ export default function AdminPage() {
                       building={regFoundLocation.building}
                       detail={regFoundLocation.detail}
                       customText={regFoundLocation.customText}
-                      onBuildingChange={regFoundLocation.setBuilding}
+                      onBuildingChange={(building) => {
+                        regFoundLocation.setBuilding(building);
+                        // 습득 건물이 바뀌면 보관 장소를 그 건물 관리실로 맞춘다 (이후 직접 수정 가능)
+                        regStorageLocation.applyFromLocation(storageForLocation(building));
+                      }}
                       onDetailChange={regFoundLocation.setDetail}
                       onCustomTextChange={regFoundLocation.setCustomText}
                       detailPlaceholder="예: 1층 북카페, 307호"

@@ -74,20 +74,27 @@ export function normalizeReportStatus(raw: unknown): NormalizedReportStatus {
 /**
  * ISO·datetime-local 문자열을 한국어 날짜/시간 표기로 변환합니다. (T 제거)
  */
+const KO_SECONDS = /(\d{1,2}분)\s*\d{1,2}초$/;
+
+/** "2026. 10. 10. 20시 51분" — 분실·습득·접수 일시는 분까지만 표시 */
+export function koreanDateTime(date: Date): string {
+  return date.toLocaleString('ko-KR', { hour12: false }).replace(KO_SECONDS, '$1');
+}
+
 export function formatDateTimeLabel(value: string | undefined | null): string {
   if (!value?.trim()) return '';
   const trimmed = value.trim();
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)) {
     const parsed = new Date(trimmed);
     if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toLocaleString('ko-KR', { hour12: false });
+      return koreanDateTime(parsed);
     }
     return trimmed.replace('T', ' ').slice(0, 16);
   }
   if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(trimmed)) {
     const parsed = new Date(trimmed);
     if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toLocaleString('ko-KR', { hour12: false });
+      return koreanDateTime(parsed);
     }
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
@@ -96,7 +103,8 @@ export function formatDateTimeLabel(value: string | undefined | null): string {
       return parsed.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
     }
   }
-  return trimmed;
+  // 예전에 초까지 저장된 표시 문자열도 분까지만
+  return trimmed.replace(KO_SECONDS, '$1');
 }
 
 /** datetime-local 입력용 (관리자 습득 시간) */

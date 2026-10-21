@@ -21,7 +21,7 @@ export function AccountMenu({ className, fullWidth = false, label = "마이" }: 
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100",
+          "inline-flex h-10 items-center gap-1 whitespace-nowrap rounded-lg px-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100",
           fullWidth ? "w-full justify-between border" : ""
         )}
         aria-expanded={open}
@@ -38,7 +38,7 @@ export function AccountMenu({ className, fullWidth = false, label = "마이" }: 
         className={cn(
           "overflow-hidden transition-all duration-200",
           fullWidth ? "mt-2" : "absolute right-0 mt-1 w-40",
-          open ? "max-h-48 opacity-100" : "max-h-0 opacity-0"
+          open ? "max-h-48 opacity-100" : "invisible max-h-0 opacity-0"
         )}
       >
         <div className={cn("rounded-lg border bg-white p-1.5 shadow-lg", fullWidth ? "shadow-none" : "")}>

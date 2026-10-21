@@ -14,11 +14,11 @@
   --secondary: 210 40% 95%;
   --secondary-foreground: 223 47% 20%;
   --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
+  --muted-foreground: 215 19% 35%;
   --accent: 213 66% 95%;
   --accent-foreground: 221 39% 23%;
-  --border: 214 32% 90%;
-  --input: 214 32% 90%;
+  --border: 214 32% 89%;
+  --input: 214 28% 84%;
   --ring: 216 70% 43%;
   --radius: 0.9rem;
 }
@@ -32,9 +32,26 @@ html {
 }
 
 body {
-  @apply bg-background text-foreground antialiased;
-  background-image: radial-gradient(circle at 20% -20%, rgba(59, 130, 246, 0.12), transparent 42%),
-    radial-gradient(circle at 100% 0%, rgba(148, 163, 184, 0.12), transparent 36%);
+  @apply bg-background font-sans text-foreground antialiased;
+  word-break: keep-all;
+}
+
+:focus-visible {
+  @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .container-mobile {

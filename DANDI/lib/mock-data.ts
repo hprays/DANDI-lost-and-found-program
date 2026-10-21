@@ -16,8 +16,7 @@ export const categories = [
   "기타",
 ];
 
-// 지도에 등록된 모든 건물 + 사용자 친화 줄임말을 자동 포함
-const additionalBuildings = ["퇴계도서관", "혜당관", "법학관", "음악관"];
+// 지도에 등록된 모든 건물
 
 export const buildings = (() => {
   const all = new Set<string>(["전체"]);
@@ -45,7 +44,6 @@ export const buildings = (() => {
     "무용관",
   ];
   officeBuildingNames.forEach((name) => all.add(name));
-  additionalBuildings.forEach((name) => all.add(name));
   return Array.from(all);
 })();
 
@@ -249,7 +247,7 @@ export const officeMarkers: OfficeMarker[] = [
   },
   {
     name: "사회과학관",
-    location: "미디어커뮤니케이션 학부(미디어센터 103호)",
+    location: "사회과학관 102호",
     address: "사회과학관",
     hours: "평일 09:00-18:00",
     phone: "031-000-0007",

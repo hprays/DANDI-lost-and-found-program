@@ -57,6 +57,7 @@ import {
 } from '@/lib/api-json';
 import {
   formatDateTimeLabel,
+  koreanDateTime,
   normalizeReportStatus,
   parseDateTimeMs,
   sanitizeLocation,
@@ -211,6 +212,7 @@ type DandiStateContextValue = {
   markNoticeRead: (
     noticeId: string,
   ) => Promise<{ ok: boolean; message: string }>;
+  markAllNoticesRead: () => Promise<{ ok: boolean; message: string }>;
   deleteNotice: (noticeId: string) => Promise<{ ok: boolean; message: string }>;
   deleteAllNotices: () => Promise<{ ok: boolean; message: string }>;
 };
@@ -323,7 +325,7 @@ function nowISO() {
 }
 
 function shortDateTime() {
-  return new Date().toLocaleString('ko-KR', { hour12: false });
+  return koreanDateTime(new Date());
 }
 
 function normalizeNotice(raw: Record<string, unknown>): UserNotice | null {
@@ -534,19 +536,7 @@ export function DandiStateProvider({
   const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
-  const [notices, setNotices] = useState<UserNotice[]>(() => {
-    const stored = getStoredLocalNotices();
-    if (stored.length > 0) return stored;
-    return [
-      {
-        id: 'n-1001',
-        title: '알림 설정이 활성화되었습니다',
-        message: '관심 키워드와 일치하는 습득물이 등록되면 바로 알려드려요.',
-        createdAt: shortDateTime(),
-        read: false,
-      },
-    ];
-  });
+  const [notices, setNotices] = useState<UserNotice[]>(() => getStoredLocalNotices());
   const [noticesLoading, setNoticesLoading] = useState(false);
   const [noticesError, setNoticesError] = useState<string | null>(null);
 
@@ -1680,6 +1670,34 @@ export function DandiStateProvider({
             message: `읽음 처리에 실패했습니다. (${errorMessage(error)})`,
           };
         }
+      },
+      markAllNoticesRead: async () => {
+        const unreadIds = notices.filter((notice) => !notice.read).map((notice) => notice.id);
+        if (unreadIds.length === 0) {
+          return { ok: true, message: '읽지 않은 알림이 없습니다.' };
+        }
+        setNotices((prev) => prev.map((notice) => ({ ...notice, read: true })));
+
+        // ponytail: 일괄 읽음 API가 없어 알림마다 PATCH, 알림이 많아지면 백엔드 일괄 API로 교체
+        const remoteIds = API_BASE_URL ? unreadIds.filter((id) => !id.startsWith('n-')) : [];
+        const results = await Promise.allSettled(
+          remoteIds.map((id) =>
+            apiJson<{ message?: string }>(`/api/notices/${encodeURIComponent(id)}/read`, {
+              method: 'PATCH',
+            }),
+          ),
+        );
+        const failedIds = new Set(remoteIds.filter((_, idx) => results[idx].status === 'rejected'));
+        if (failedIds.size === 0) {
+          return { ok: true, message: '모든 알림을 읽음 처리했습니다.' };
+        }
+        setNotices((prev) =>
+          prev.map((notice) => (failedIds.has(notice.id) ? { ...notice, read: false } : notice)),
+        );
+        return {
+          ok: false,
+          message: `알림 ${failedIds.size}건의 읽음 처리에 실패했습니다.`,
+        };
       },
     }),
     [

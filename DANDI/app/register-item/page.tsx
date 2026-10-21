@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BuildingLocationPicker } from "@/components/building-location-picker";
-import { useBuildingLocationField } from "@/lib/building-location";
+import { storageForLocation, useBuildingLocationField } from "@/lib/building-location";
 import { getAuthSession } from "@/lib/auth-session";
 import { safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 import { useDandiState } from "@/lib/dandi-state";
@@ -142,7 +142,8 @@ export default function RegisterItemPage() {
         category,
         lostAt: dateTime,
         location: place,
-        storage: place,
+        // 보관 장소는 신고 장소 건물의 관리실 (관리자가 등록할 때 바꿀 수 있음)
+        storage: storageForLocation(place),
         memo: memo.trim(),
         image: photoPreview ?? undefined,
       });
@@ -302,7 +303,7 @@ export default function RegisterItemPage() {
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold">{report.itemName}</p>
                     <p className="text-muted-foreground">
-                      {report.category} · {sanitizeLocation(report.storage ?? report.location)} /{" "}
+                      {report.category} · {sanitizeLocation(report.location)} /{" "}
                       {formatDateTimeLabel(report.lostAt) || report.createdAt}
                     </p>
                     {report.memo ? <p className="mt-1 text-xs text-muted-foreground">메모: {report.memo}</p> : null}

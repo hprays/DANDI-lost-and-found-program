@@ -76,8 +76,8 @@ export function LostItemCard({
 }) {
   const receivedBadge = catalogReceivedBadgeLabel(item.catalogStatus);
   return (
-    <Link href={`/lost/${item.id}`}>
-      <Card className="cursor-pointer overflow-hidden transition-transform hover:-translate-y-0.5">
+    <Link href={`/lost/${item.id}`} className="group block rounded-2xl">
+      <Card className="cursor-pointer overflow-hidden transition-[transform,box-shadow] duration-200 group-hover:-translate-y-0.5 group-hover:shadow-md">
         <div className="relative h-64 overflow-hidden bg-slate-100 md:h-72">
           <ItemImage
             src={item.image}
@@ -94,7 +94,7 @@ export function LostItemCard({
         </div>
         <CardContent className="space-y-2 p-4">
           <div className="flex items-center justify-between gap-2">
-            <Badge>{item.category}</Badge>
+            <Badge className="shrink-0 whitespace-nowrap">{item.category}</Badge>
             <span className="text-right text-xs text-muted-foreground">
               {formatCatalogTimeLine(item)}
             </span>

@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { selectableBuildings } from "@/lib/mock-data";
+import { officeForBuilding, officeStorageLabel } from "@/lib/item-filters";
+import { officeMarkers, selectableBuildings } from "@/lib/mock-data";
 
 export const BUILDING_CUSTOM = "__custom__";
 
@@ -36,6 +37,17 @@ export function parseBuildingLocation(location: string): BuildingLocationValue {
   }
 
   return { building: BUILDING_CUSTOM, detail: "", customText: trimmed };
+}
+
+const DEFAULT_STORAGE_OFFICE = "혜당관 학생팀";
+
+/** 습득 위치 건물의 관리실을 보관 장소로 — 관리실이 없는 건물·직접 작성한 위치는 기본 보관실 */
+export function storageForLocation(location: string): string {
+  const { building } = parseBuildingLocation(location);
+  const office =
+    officeForBuilding(building === BUILDING_CUSTOM ? "" : building, officeMarkers) ??
+    officeMarkers.find((o) => o.name === DEFAULT_STORAGE_OFFICE)!;
+  return officeStorageLabel(office);
 }
 
 export function isBuildingLocationValid({ building, customText }: BuildingLocationValue): boolean {

@@ -157,18 +157,18 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-safe">
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-md shadow-soft">
         <CardHeader className="space-y-3 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <Search className="h-6 w-6 text-primary" />
           </div>
-          <CardTitle className="text-3xl">단디 로그인</CardTitle>
+          <CardTitle className="text-2xl font-bold">단디 로그인</CardTitle>
           <CardDescription>
             단국대학교 계정(@dankook.ac.kr)으로 안전하게 로그인하세요.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Button className="w-full" onClick={onGoogleLogin} disabled={loading}>
+          <Button size="lg" className="w-full" onClick={onGoogleLogin} disabled={loading}>
             {loading ? '로그인 진행 중...' : '학교 계정으로 로그인'}
           </Button>
           {AUTH_DEMO_MODE ? (

@@ -6,7 +6,6 @@ import { Loader2 } from "lucide-react";
 import { ChevronLeft, ChevronRight, CirclePlus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { LostItemCard } from "@/components/lost-item-card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,6 +20,7 @@ import {
 } from "@/lib/item-filters";
 import { buildings, categories } from "@/lib/mock-data";
 import { useNow } from "@/lib/pickup-pass-state";
+import { cn } from "@/lib/utils";
 import { itemSearchText, useCatalogItems } from "@/lib/use-catalog-items";
 
 const ITEMS_PER_PAGE = 8;
@@ -39,6 +39,47 @@ function getVisiblePages(current: number, total: number): Array<number | "ellips
   if (current < total - 2) pages.push("ellipsis");
   pages.push(total);
   return pages;
+}
+
+function ChipGroup<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+  className,
+}: {
+  label: string;
+  options: readonly T[];
+  value: T;
+  onChange: (value: T) => void;
+  className?: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className={cn("space-y-2", className)}>
+      <p className="text-xs font-semibold text-muted-foreground">{label}</p>
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {options.map((option) => {
+          const active = option === value;
+          return (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange(option)}
+              className={cn(
+                "h-9 shrink-0 cursor-pointer whitespace-nowrap rounded-full border px-3.5 text-sm font-medium transition-colors",
+                active
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-input bg-card text-slate-700 hover:border-primary/40 hover:bg-accent",
+              )}
+            >
+              {option}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export default function HomePage() {
@@ -137,83 +178,49 @@ export default function HomePage() {
           </div>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-muted-foreground">습득 기간</p>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {PERIOD_FILTERS.map((period) => (
-                  <Badge
-                    key={period}
-                    variant={selectedPeriod === period ? "default" : "outline"}
-                    className="cursor-pointer whitespace-nowrap px-3 py-1"
-                    onClick={() => {
-                      setSelectedPeriod(period);
-                      setCurrentPage(1);
-                    }}
-                  >
-                    {period}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-muted-foreground">수령 상태</p>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {STATUS_FILTERS.map((status) => (
-                  <Badge
-                    key={status}
-                    variant={selectedStatus === status ? "default" : "outline"}
-                    className="cursor-pointer whitespace-nowrap px-3 py-1"
-                    onClick={() => {
-                      setSelectedStatus(status);
-                      setCurrentPage(1);
-                    }}
-                  >
-                    {status}
-                  </Badge>
-                ))}
-              </div>
-            </div>
+            <ChipGroup
+              label="습득 기간"
+              options={PERIOD_FILTERS}
+              value={selectedPeriod}
+              onChange={(period) => {
+                setSelectedPeriod(period);
+                setCurrentPage(1);
+              }}
+            />
+            <ChipGroup
+              label="수령 상태"
+              options={STATUS_FILTERS}
+              value={selectedStatus}
+              onChange={(status) => {
+                setSelectedStatus(status);
+                setCurrentPage(1);
+              }}
+            />
           </div>
 
-          <div className="mt-4 space-y-2">
-            <p className="text-xs font-semibold text-muted-foreground">카테고리 분류</p>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {categories.map((category) => (
-                <Badge
-                  key={category}
-                  variant={selectedCategory === category ? "default" : "outline"}
-                  className="cursor-pointer whitespace-nowrap px-3 py-1"
-                  onClick={() => {
-                    setSelectedCategory(category);
-                    setCurrentPage(1);
-                  }}
-                >
-                  {category}
-                </Badge>
-              ))}
-            </div>
-          </div>
+          <ChipGroup
+            className="mt-4"
+            label="카테고리 분류"
+            options={categories}
+            value={selectedCategory}
+            onChange={(category) => {
+              setSelectedCategory(category);
+              setCurrentPage(1);
+            }}
+          />
 
-          <div className="mt-4 space-y-2">
-            <p className="text-xs font-semibold text-muted-foreground">건물별 분류</p>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {buildings.map((building) => (
-                <Badge
-                  key={building}
-                  variant={selectedBuilding === building ? "default" : "secondary"}
-                  className="cursor-pointer whitespace-nowrap px-3 py-1"
-                  onClick={() => {
-                    setSelectedBuilding(building);
-                    setCurrentPage(1);
-                  }}
-                >
-                  {building}
-                </Badge>
-              ))}
-            </div>
-          </div>
+          <ChipGroup
+            className="mt-4"
+            label="건물별 분류"
+            options={buildings}
+            value={selectedBuilding}
+            onChange={(building) => {
+              setSelectedBuilding(building);
+              setCurrentPage(1);
+            }}
+          />
 
-          <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+          <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
             <span>
               총 <b className="text-foreground">{filteredItems.length}</b>건
               {filteredItems.length > 0 ? (
@@ -227,7 +234,7 @@ export default function HomePage() {
               selectedBuilding !== "전체" || searchKeyword ? (
                 <button
                   type="button"
-                  className="ml-2 rounded-md border px-2 py-0.5 text-[11px] hover:bg-slate-50"
+                  className="ml-2 cursor-pointer rounded-md border px-2 py-1 text-xs font-medium text-foreground hover:bg-accent"
                   onClick={resetFilters}
                 >
                   필터 초기화

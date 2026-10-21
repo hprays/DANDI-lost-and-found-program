@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Bell, ChevronLeft, Trash2, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -10,12 +12,15 @@ import { formatDateTimeLabel } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
 
 export function NotificationBell() {
-  const { notices, noticesLoading, refreshNotices, markNoticeRead, deleteNotice, deleteAllNotices } = useDandiState();
+  const { notices, noticesLoading, refreshNotices, markNoticeRead, markAllNoticesRead, deleteNotice, deleteAllNotices } =
+    useDandiState();
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const unreadCount = useMemo(() => notices.filter((n) => !n.read).length, [notices]);
+  // 패널에는 안 읽은 알림만 보여준다. 읽은 알림은 마이페이지 사용자 알림함에서 계속 볼 수 있다.
+  const unreadNotices = useMemo(() => notices.filter((n) => !n.read), [notices]);
+  const unreadCount = unreadNotices.length;
   const selected = useMemo(
     () => notices.find((notice) => notice.id === selectedId) ?? null,
     [notices, selectedId]
@@ -51,8 +56,18 @@ export function NotificationBell() {
     }
   };
 
+  const onReadAll = async () => {
+    setBusyId("read-all");
+    try {
+      const result = await markAllNoticesRead();
+      if (!result.ok) window.alert(result.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const onDeleteAll = async () => {
-    if (!window.confirm("모든 알림을 삭제할까요?")) return;
+    if (!window.confirm("사용자 알림함의 지난 알림까지 모든 알림을 삭제할까요?")) return;
     setBusyId("all");
     try {
       await deleteAllNotices();
@@ -80,6 +95,8 @@ export function NotificationBell() {
         ) : null}
       </Button>
 
+      {/* 헤더의 backdrop-blur가 fixed 자식의 기준 영역이 되어 배경이 헤더 높이만 덮던 문제 → body로 portal */}
+      {typeof document !== "undefined" ? createPortal(
       <AnimatePresence>
         {open ? (
           <>
@@ -97,7 +114,8 @@ export function NotificationBell() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -8, scale: 0.98 }}
               transition={{ duration: 0.18 }}
-              className="fixed left-1/2 top-[calc(4.5rem+env(safe-area-inset-top))] z-50 w-[min(92vw,24rem)] -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0"
+              // transform(translate)로 가운데 정렬하면 framer-motion 애니메이션이 덮어써서 inset+margin으로 정렬
+              className="fixed inset-x-0 top-[calc(4.5rem+env(safe-area-inset-top))] z-50 mx-auto w-[min(92vw,24rem)] md:left-auto md:right-6 md:mx-0"
             >
               <Card className="max-h-[70vh] overflow-hidden shadow-xl">
                 <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
@@ -110,6 +128,18 @@ export function NotificationBell() {
                     <CardTitle className="text-base">{selected ? "알림 상세" : "알림"}</CardTitle>
                   </motion.div>
                   <div className="flex items-center gap-1">
+                    {!selected && unreadCount > 0 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-xs text-primary"
+                        disabled={busyId === "read-all"}
+                        onClick={() => void onReadAll()}
+                      >
+                        모두 읽음
+                      </Button>
+                    ) : null}
                     {!selected && notices.length > 0 ? (
                       <Button
                         type="button"
@@ -156,27 +186,28 @@ export function NotificationBell() {
                       <p className="text-sm font-semibold">{selected.title}</p>
                       <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{selected.message}</p>
                     </motion.div>
-                  ) : notices.length === 0 ? (
-                    <p className="py-6 text-center text-sm text-muted-foreground">새 알림이 없습니다.</p>
+                  ) : unreadNotices.length === 0 ? (
+                    <div className="space-y-2 py-6 text-center text-sm text-muted-foreground">
+                      <p>새 알림이 없습니다.</p>
+                      <Link href="/mypage#notices" onClick={onClose} className="inline-block text-xs font-medium text-primary hover:underline">
+                        지난 알림은 사용자 알림함에서 보기
+                      </Link>
+                    </div>
                   ) : (
                     <ul className="space-y-2">
-                      {notices.map((notice) => (
+                      {unreadNotices.map((notice) => (
                         <li key={notice.id}>
                           <button
                             type="button"
                             onClick={() => void onSelect(notice.id)}
-                            className={`w-full rounded-xl border p-3 text-left transition hover:border-primary/40 ${
-                              notice.read ? "bg-white" : "border-primary/30 bg-primary/5"
-                            }`}
+                            className="w-full rounded-xl border border-primary/30 bg-primary/5 p-3 text-left transition hover:border-primary/40"
                           >
                             <motion.div className="flex items-start justify-between gap-2">
                               <motion.div className="min-w-0">
                                 <p className="truncate text-sm font-semibold">{notice.title}</p>
                                 <p className="mt-0.5 truncate text-xs text-muted-foreground">{notice.message}</p>
                               </motion.div>
-                              {!notice.read ? (
-                                <Badge className="shrink-0 bg-red-500 text-[10px]">NEW</Badge>
-                              ) : null}
+                              <Badge className="shrink-0 bg-red-500 text-[10px]">NEW</Badge>
                             </motion.div>
                             <p className="mt-1 text-[11px] text-muted-foreground">{formatDateTimeLabel(notice.createdAt) || notice.createdAt}</p>
                           </button>
@@ -189,7 +220,9 @@ export function NotificationBell() {
             </motion.div>
           </>
         ) : null}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body,
+      ) : null}
     </>
   );
 }

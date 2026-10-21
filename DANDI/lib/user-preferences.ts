@@ -57,7 +57,8 @@ export function getStoredLocalNotices(): StoredNotice[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as StoredNotice[];
-    return Array.isArray(parsed) ? parsed : [];
+    // n-1001: 예전에 목록이 비면 자동으로 다시 만들던 기본 알림. 이미 저장된 것도 걸러낸다.
+    return Array.isArray(parsed) ? parsed.filter((it) => it.id !== "n-1001") : [];
   } catch {
     return [];
   }

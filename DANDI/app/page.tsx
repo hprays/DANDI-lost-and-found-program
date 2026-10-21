@@ -3,11 +3,10 @@ import {
   Bot,
   Camera,
   Check,
-  ChevronRight,
   ListChecks,
   LocateFixed,
+  LogIn,
   Search,
-  Shirt,
   Wallet,
 } from "lucide-react";
 import { LandingHeader } from "@/components/landing-header";
@@ -38,6 +37,12 @@ const featureCards = [
   },
 ];
 
+const heroStats = [
+  { label: "실시간", desc: "습득물 업데이트" },
+  { label: "AI", desc: "수령 안내 제공" },
+  { label: "지도", desc: "관리실 위치 안내" },
+];
+
 const categories = ["전자기기", "지갑/가방", "신분증", "의류/악세서리", "도서/문구", "기타"];
 
 const faqs = [
@@ -64,17 +69,17 @@ export default function LandingPage() {
     <div className="min-h-screen bg-slate-50">
       <LandingHeader />
 
-      <section className="bg-gradient-to-b from-primary to-[#3d88ec] px-4 pb-14 pt-14 text-white md:pt-20">
+      <section className="bg-primary px-4 pb-12 pt-12 text-white md:pb-16 md:pt-20">
         <div className="mx-auto max-w-screen-lg">
           <div className="mx-auto max-w-3xl text-center">
-            <Badge variant="secondary" className="rounded-full bg-white/20 px-4 py-1 text-slate-100">
+            <Badge variant="secondary" className="rounded-full bg-white/15 px-4 py-1 text-white">
               단국대학교 재학생 전용 서비스
             </Badge>
-            <h1 className="mt-6 text-4xl font-extrabold leading-tight tracking-tight md:text-6xl">
+            <h1 className="mt-6 text-4xl font-extrabold leading-[1.15] tracking-tight md:text-6xl">
               <span className="block">잃어버린 물건</span>
               <span className="block">단디가 찾아드려요</span>
             </h1>
-            <p className="mt-4 text-base text-blue-100 md:text-xl">
+            <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-white/85 md:text-lg">
               캠퍼스 내 분실물 현황을 실시간으로 확인하고, AI 수령 안내와 지도 기반 경로로 빠르게 되찾아보세요.
             </p>
 
@@ -85,7 +90,7 @@ export default function LandingPage() {
                   분실물 찾기
                 </Link>
               </Button>
-              <Button asChild size="lg" variant="secondary" className="rounded-xl bg-white/20 text-white hover:bg-white/30">
+              <Button asChild size="lg" variant="outline" className="rounded-xl border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white">
                 <Link href="/login">
                   <Camera className="h-4 w-4" />
                   습득물 등록하기
@@ -94,20 +99,14 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className="mt-10 grid gap-3 md:grid-cols-3">
-            {["실시간", "AI", "지도"].map((item) => (
-              <Card key={item} className="border-white/20 bg-white/10 text-white backdrop-blur">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-2xl">{item}</CardTitle>
-                </CardHeader>
-                <CardContent className="text-sm text-blue-100">
-                  {item === "실시간" && "습득물 업데이트"}
-                  {item === "AI" && "수령 안내 제공"}
-                  {item === "지도" && "관리실 위치 안내"}
-                </CardContent>
-              </Card>
+          <dl className="mx-auto mt-10 grid max-w-3xl grid-cols-3 divide-x divide-white/20 rounded-2xl border border-white/20 bg-white/10">
+            {heroStats.map((stat) => (
+              <div key={stat.label} className="px-3 py-4 text-center md:py-5">
+                <dt className="text-lg font-bold md:text-2xl">{stat.label}</dt>
+                <dd className="mt-1 text-xs text-white/80 md:text-sm">{stat.desc}</dd>
+              </div>
             ))}
-          </div>
+          </dl>
         </div>
       </section>
 
@@ -120,15 +119,15 @@ export default function LandingPage() {
 
         <div className="mt-10 grid gap-5 md:grid-cols-3">
           {featureCards.map((card) => (
-            <Card key={card.title} className={card.emphasized ? "bg-primary text-white" : ""}>
+            <Card key={card.title} className={card.emphasized ? "border-primary bg-primary text-white" : ""}>
               <CardHeader>
                 <div className={`mb-4 w-fit rounded-xl p-3 ${card.emphasized ? "bg-white/20" : "bg-primary/10"}`}>
                   <card.icon className={`h-5 w-5 ${card.emphasized ? "text-white" : "text-primary"}`} />
                 </div>
-                <CardTitle className="text-2xl">{card.title}</CardTitle>
+                <CardTitle className="text-xl">{card.title}</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className={card.emphasized ? "text-blue-100" : "text-muted-foreground"}>{card.desc}</p>
+                <p className={`leading-relaxed ${card.emphasized ? "text-white/85" : "text-muted-foreground"}`}>{card.desc}</p>
                 <ul className="mt-4 space-y-2">
                   {card.points.map((point) => (
                     <li key={point} className="flex items-center gap-2 text-sm font-semibold">
@@ -150,46 +149,40 @@ export default function LandingPage() {
             <h2 className="mt-2 text-3xl font-extrabold md:text-4xl">3단계로 끝내는 분실물 찾기</h2>
           </div>
 
-          <div className="mt-10 grid gap-8 md:grid-cols-3">
+          <div className="mt-10 grid gap-4 md:grid-cols-3 md:gap-5">
             {[
-              { step: "1", title: "로그인", desc: "단국대 이메일로 간편하게 가입하고 로그인해요.", icon: ChevronRight },
+              { step: "1", title: "로그인", desc: "단국대 이메일로 간편하게 가입하고 로그인해요.", icon: LogIn },
               { step: "2", title: "습득물 확인", desc: "실시간 목록과 필터로 내 물건을 찾아봐요.", icon: ListChecks },
               { step: "3", title: "수령하기", desc: "AI 안내에 따라 준비물 확인 후 관리실에서 수령해요.", icon: Wallet },
             ].map((item) => (
-              <Card key={item.step} className="text-center">
+              <Card key={item.step}>
                 <CardHeader>
-                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-lg font-bold text-primary">
-                    {item.step}
+                  <div className="mb-4 flex items-center gap-3">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent text-primary">
+                      <item.icon className="h-5 w-5" aria-hidden />
+                    </span>
+                    <span className="text-sm font-bold text-primary">STEP {item.step}</span>
                   </div>
-                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100">
-                    <item.icon className="h-5 w-5 text-primary" />
-                  </div>
-                  <CardTitle className="text-2xl">{item.title}</CardTitle>
+                  <CardTitle className="text-xl">{item.title}</CardTitle>
                 </CardHeader>
-                <CardContent className="text-muted-foreground">{item.desc}</CardContent>
+                <CardContent className="leading-relaxed text-muted-foreground">{item.desc}</CardContent>
               </Card>
             ))}
           </div>
 
-          <Card className="mt-12 bg-[#eaf3ff]">
-            <CardHeader>
-              <CardTitle className="text-center text-3xl">다양한 물품 카테고리</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-3 overflow-x-auto pb-2">
-                {categories.map((category, idx) => (
-                  <Button
-                    key={category}
-                    variant={idx === 0 ? "default" : "secondary"}
-                    className="rounded-full whitespace-nowrap"
-                  >
-                    {idx === 3 ? <Shirt className="h-4 w-4" /> : null}
-                    {category}
-                  </Button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          <div className="mt-12 rounded-2xl bg-accent px-6 py-8 text-center">
+            <h3 className="text-xl font-bold md:text-2xl">다양한 물품 카테고리</h3>
+            <ul className="mt-5 flex flex-wrap justify-center gap-2">
+              {categories.map((category) => (
+                <li
+                  key={category}
+                  className="rounded-full border border-primary/15 bg-card px-4 py-2 text-sm font-semibold text-accent-foreground"
+                >
+                  {category}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </section>
 
@@ -204,7 +197,7 @@ export default function LandingPage() {
               {faqs.map((faq, idx) => (
                 <AccordionItem key={faq.q} value={`item-${idx}`}>
                   <AccordionTrigger className="py-5 text-base">{faq.q}</AccordionTrigger>
-                  <AccordionContent className="text-sm leading-relaxed">{faq.a}</AccordionContent>
+                  <AccordionContent className="text-sm leading-relaxed text-muted-foreground">{faq.a}</AccordionContent>
                 </AccordionItem>
               ))}
             </Accordion>
@@ -212,11 +205,10 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="bg-gradient-to-r from-primary to-[#4ea2ff] px-4 py-16 text-white">
+      <section className="bg-primary px-4 py-16 text-white">
         <div className="mx-auto max-w-screen-md text-center">
-          <Search className="mx-auto h-10 w-10 text-blue-100" />
-          <h2 className="mt-4 text-4xl font-extrabold">지금 바로 시작하세요</h2>
-          <p className="mt-2 text-blue-100">단국대학교 이메일만 있으면 무료로 이용할 수 있습니다.</p>
+          <h2 className="text-3xl font-extrabold md:text-4xl">지금 바로 시작하세요</h2>
+          <p className="mt-3 text-white/85">단국대학교 이메일만 있으면 무료로 이용할 수 있습니다.</p>
           <Button asChild size="lg" className="mt-8 rounded-xl bg-white text-primary hover:bg-white/90">
             <Link href="/login">단디 시작하기</Link>
           </Button>
@@ -227,11 +219,11 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-screen-lg flex-col justify-between gap-3 text-sm md:flex-row md:items-center">
           <div className="font-semibold">단디(DANDI) - 단국대학교 스마트 분실물 플랫폼</div>
           <div className="flex items-center gap-4">
-            <Link href="/login">로그인</Link>
-            <Link href="/login">회원가입</Link>
-            <Link href="/home">메인</Link>
+            <Link href="/login" className="hover:text-white">로그인</Link>
+            <Link href="/login" className="hover:text-white">회원가입</Link>
+            <Link href="/home" className="hover:text-white">메인</Link>
           </div>
-          <div className="text-xs text-slate-500">© 2026 DANDI. Dankook University Capstone Design.</div>
+          <div className="text-xs text-slate-400">© 2026 DANDI. Dankook University Capstone Design.</div>
         </div>
       </footer>
     </div>
