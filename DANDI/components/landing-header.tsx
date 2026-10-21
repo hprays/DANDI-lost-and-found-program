@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { Menu } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { DandiLogo } from "@/components/dandi-logo";
 
 const menus = [
@@ -35,10 +36,11 @@ export function LandingHeader() {
 
         <div className="justify-self-end md:hidden">
           <details className="group relative">
-            <summary className="list-none">
-              <Button variant="ghost" size="icon" aria-label="메뉴 열기">
-                <Menu className="h-5 w-5" />
-              </Button>
+            <summary
+              className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "cursor-pointer list-none [&::-webkit-details-marker]:hidden")}
+              aria-label="메뉴 열기"
+            >
+              <Menu className="h-5 w-5" />
             </summary>
             <div className="absolute right-0 mt-2 w-56 space-y-2 rounded-xl border bg-white p-3 shadow-lg">
                 {menus.map((menu) => (
