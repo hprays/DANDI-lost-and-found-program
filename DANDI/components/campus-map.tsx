@@ -205,7 +205,7 @@ export function CampusMap({ activeOffice, onOfficeSelect }: CampusMapProps) {
   };
 
   return (
-    <div className="relative h-72 rounded-xl border bg-slate-100">
+    <div className="relative isolate z-0 h-72 rounded-xl border bg-slate-100">
       <div ref={mapRef} className="h-full w-full rounded-xl" />
       <Badge className="absolute left-3 top-3 bg-emerald-600">OpenStreetMap</Badge>
       <button
