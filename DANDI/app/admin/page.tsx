@@ -77,6 +77,7 @@ import {
   type NormalizedVisionResult,
 } from '@/lib/vision-utils';
 import { categories } from '@/lib/mock-data';
+import { itemSearchText } from '@/lib/use-catalog-items';
 
 const selectableCategories = categories.filter((c) => c !== '전체');
 type ManageDraft = {
@@ -188,6 +189,7 @@ export default function AdminPage() {
     null,
   );
   const [pickupSearch, setPickupSearch] = useState('');
+  const [manageSearch, setManageSearch] = useState('');
   const [pickupTokens, setPickupTokens] = useState<Record<string, string>>({});
   const [lastVerifiedPass, setLastVerifiedPass] = useState<{
     itemName?: string;
@@ -748,6 +750,12 @@ export default function AdminPage() {
   const onFinalizePickup = async () => {
     await onVerifyScanTokenDirect();
   };
+
+  const manageSearchResults = useMemo(() => {
+    const keyword = manageSearch.trim().toLowerCase();
+    if (!keyword) return managedItems;
+    return managedItems.filter((item) => itemSearchText(item).includes(keyword));
+  }, [managedItems, manageSearch]);
 
   const pickupSearchResults = useMemo(() => {
     if (adminTab !== 'pickup') return [];
@@ -1590,14 +1598,31 @@ export default function AdminPage() {
                       {manageMessage}
                     </p>
                   ) : null}
+                  {managedItems.length > 0 ? (
+                    <div className="space-y-1">
+                      <Input
+                        value={manageSearch}
+                        onChange={(e) => setManageSearch(e.target.value)}
+                        placeholder="검색 (예: 에어팟, 검정 지갑, 혜당관)"
+                        aria-label="관리 물품 검색"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {manageSearchResults.length}건 / 전체 {managedItems.length}건
+                      </p>
+                    </div>
+                  ) : null}
                   {managedItems.length === 0 ? (
                     <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
                       등록된 분실물이 없습니다. 「분실물 등록」 탭에서 직접
                       등록하거나, 검수 대기에서 습득 완료 처리하면 이 목록에
                       표시됩니다.
                     </p>
+                  ) : manageSearchResults.length === 0 ? (
+                    <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
+                      검색 결과가 없습니다.
+                    </p>
                   ) : (
-                    managedItems.map((item) => {
+                    manageSearchResults.map((item) => {
                       const draft =
                         manageDrafts[item.id] ?? buildManageDraft(item);
                       return (
