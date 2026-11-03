@@ -1208,7 +1208,7 @@ export default function AdminPage() {
         </div>
 
         <Tabs value={adminTab} onValueChange={setAdminTab}>
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 md:grid-cols-3 lg:grid-cols-6">
             <TabsTrigger value="register">관리자 분실물 등록</TabsTrigger>
             <TabsTrigger value="manage">물품 관리</TabsTrigger>
             <TabsTrigger value="pending">검수 대기</TabsTrigger>

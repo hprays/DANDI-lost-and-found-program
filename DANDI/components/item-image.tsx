@@ -13,7 +13,7 @@ type ItemImageProps = {
   fit?: "contain" | "cover";
 };
 
-/** 사진이 없거나 로드 실패 시 물품명에 맞는 일러스트 + "사진 없음" 표시 */
+/** 사진이 없거나 로드 실패 시 물품명에 맞는 일러스트 표시 */
 export function ItemImage({
   src,
   alt,
@@ -35,7 +35,6 @@ export function ItemImage({
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={itemPlaceholderImage(alt, category)} alt="" className="h-1/2 max-h-36 w-auto" />
-        <span className="text-xs font-medium text-slate-400">사진 없음</span>
       </div>
     );
   }

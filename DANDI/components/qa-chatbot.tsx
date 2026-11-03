@@ -109,12 +109,23 @@ export function QAChatbot({ tips }: QAChatbotProps) {
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="질문을 입력하세요" />
-                  <Button size="icon" onClick={() => ask(question)} aria-label="전송" disabled={loading}>
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void ask(question);
+                  }}
+                >
+                  <Input
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    placeholder="질문을 입력하세요"
+                    enterKeyHint="send"
+                  />
+                  <Button type="submit" size="icon" aria-label="전송" disabled={loading}>
                     {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
                   </Button>
-                </div>
+                </form>
               </CardContent>
             </Card>
           </motion.div>
