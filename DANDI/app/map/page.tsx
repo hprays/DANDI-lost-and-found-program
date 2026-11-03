@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Clock3, MapPin, Navigation, Phone } from "lucide-react";
+import { Clock3, MapPin, Phone } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { CampusMap } from "@/components/campus-map";
 import { Badge } from "@/components/ui/badge";
@@ -40,10 +40,6 @@ export default function MapPage() {
           <CardContent className="space-y-1 text-sm">
             <p className="font-medium">{activeOffice.location}</p>
             <p className="text-muted-foreground">{activeOffice.address}</p>
-            <p className="flex items-center gap-2">
-              <Navigation className="h-4 w-4 text-primary" />
-              현재 위치 기준 가장 가까운 관리실 후보
-            </p>
             <p className="flex items-center gap-2">
               <Clock3 className="h-4 w-4 text-primary" />
               {activeOffice.hours}
