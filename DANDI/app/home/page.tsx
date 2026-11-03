@@ -14,6 +14,7 @@ import { catalogReceivedBadgeLabel, parseDateTimeMs } from "@/lib/format-display
 import {
   PERIOD_FILTERS,
   STATUS_FILTERS,
+  matchesBuilding,
   periodStartMs,
   type PeriodFilter,
   type StatusFilter,
@@ -104,10 +105,7 @@ export default function HomePage() {
       const statusOk =
         selectedStatus === "전체" || (selectedStatus === "수령 완료" ? received : !received);
       const categoryOk = selectedCategory === "전체" || item.category === selectedCategory;
-      const buildingOk =
-        selectedBuilding === "전체" ||
-        (item.place ?? "").toLowerCase().includes(selectedBuilding.toLowerCase()) ||
-        (item.storage ?? "").toLowerCase().includes(selectedBuilding.toLowerCase());
+      const buildingOk = selectedBuilding === "전체" || matchesBuilding(selectedBuilding, item.place, item.storage);
       const keywordOk = keyword.length === 0 || itemSearchText(item).includes(keyword);
       return periodOk && statusOk && categoryOk && buildingOk && keywordOk;
     });

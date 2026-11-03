@@ -38,6 +38,21 @@ export function findOfficeForStorage<T extends { name: string; location: string;
   );
 }
 
+// 크롤링·등록 데이터에 섞여 쓰이는 다른 건물 이름
+const BUILDING_ALIASES: Record<string, string[]> = {
+  퇴계도서관: ["퇴계기념중앙도서관", "중앙도서관"],
+  제1공학관: ["1공학관"],
+};
+
+/** 장소 문자열들 중 하나에 건물 이름(또는 별칭)이 들어 있는지 — 띄어쓰기는 무시 */
+export function matchesBuilding(building: string, ...places: (string | undefined)[]): boolean {
+  const names = [building, ...(BUILDING_ALIASES[building] ?? [])].map(compact);
+  return places.some((place) => {
+    const target = compact(place ?? "");
+    return names.some((name) => target.includes(name));
+  });
+}
+
 /** 남은 시간 "9분 05초" (0 이하면 "0분 00초") */
 export function formatRemaining(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));

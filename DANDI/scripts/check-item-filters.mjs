@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   findOfficeForStorage,
   formatRemaining,
+  matchesBuilding,
   officeForBuilding,
   officeStorageLabel,
   periodStartMs,
@@ -27,6 +28,14 @@ assert.equal(findOfficeForStorage("혜당관 425호", offices)?.name, "혜당관
 assert.equal(findOfficeForStorage("소프트웨어ICT관 1층", offices)?.name, "소프트웨어 ICT관");
 assert.equal(findOfficeForStorage("", offices), undefined);
 assert.equal(findOfficeForStorage("정문 경비실", offices), undefined);
+
+// 건물별 분류 — 실제 데이터의 다른 이름·띄어쓰기도 같은 건물로
+assert.ok(matchesBuilding("퇴계도서관", "퇴계기념중앙도서관 3층 도산라운지"));
+assert.ok(matchesBuilding("퇴계도서관", "정문", "퇴계도서관 320호"));
+assert.ok(matchesBuilding("제1공학관", "공과대학 1공학관 2층"));
+assert.ok(!matchesBuilding("제2공학관", "1공학관"));
+assert.ok(matchesBuilding("소프트웨어 ICT관", "소프트웨어ICT관 1층 로비"));
+assert.ok(!matchesBuilding("혜당관", "퇴계기념중앙도서관", undefined));
 
 assert.equal(formatRemaining(9 * 60_000 + 5_000), "9분 05초");
 assert.equal(formatRemaining(-1), "0분 00초");
