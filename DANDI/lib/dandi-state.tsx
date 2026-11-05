@@ -441,40 +441,8 @@ async function publishAdminLostItemToApi(
   const foundAtIso = toApiDateTime(payload.lostAt);
   const createdAtIso = nowISO();
   const image = imageSource ?? payload.image;
-  let linkedReportId: string | undefined;
-
-  try {
-    const reportData = await postReportCreate(
-      {
-        itemName: payload.itemName,
-        category: payload.category,
-        location: payload.location,
-        place: payload.location,
-        storage: payload.storage,
-        memo: payload.memo,
-        lostAt: foundAtIso,
-        foundAt: foundAtIso,
-        // 관리자 직접 등록 — 서버가 신고 알림(새 신고 등)을 만들지 않는다
-        adminDirect: 'true',
-      },
-      image,
-    );
-    const rid = String(reportData.id ?? reportData.reportId ?? reportData.report_id ?? '').trim();
-    if (/^\d+$/.test(rid)) {
-      linkedReportId = rid;
-      try {
-        await patchReportStatus(rid, 'resolved');
-      } catch {
-        // lost_item 등록 시 reportId만 연결해도 됨
-      }
-    }
-  } catch {
-    // 신고 생성 실패 시 분실물만 등록
-  }
-
-  const data = await postLostItemCreate(
+  return postLostItemCreate(
     {
-      reportId: linkedReportId,
       name: payload.itemName,
       itemName: payload.itemName,
       category: payload.category,
@@ -492,14 +460,6 @@ async function publishAdminLostItemToApi(
     },
     image,
   );
-  const rawReportId = data.reportId ?? data.report_id ?? linkedReportId;
-  return {
-    ...data,
-    reportId:
-      rawReportId != null && String(rawReportId).trim()
-        ? String(rawReportId).trim()
-        : linkedReportId,
-  };
 }
 
 function normalizePendingPatch(patch: PendingReportPatch): PendingReportPatch {
