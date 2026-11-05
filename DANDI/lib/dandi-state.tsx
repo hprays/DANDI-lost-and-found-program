@@ -454,6 +454,8 @@ async function publishAdminLostItemToApi(
         memo: payload.memo,
         lostAt: foundAtIso,
         foundAt: foundAtIso,
+        // 관리자 직접 등록 — 서버가 신고 알림(새 신고 등)을 만들지 않는다
+        adminDirect: 'true',
       },
       image,
     );
