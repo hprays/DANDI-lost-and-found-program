@@ -341,6 +341,24 @@ export default function AdminPage() {
         return;
       }
     }
+    if (status === 'resolved') {
+      // 신분증·카드는 모자이크 없이 공개하면 원본 사진이 홈에 그대로 노출된다 — 승인 전에 한 번 확인
+      const target = reports.find((r) => String(r.id) === String(reportId));
+      const category = overrides?.category ?? target?.category ?? '';
+      const image = overrides?.image ?? target?.image ?? '';
+      const sensitive = category === '신분증' || category === '카드/티켓';
+      const masked = image.includes('/vision/mosaic/');
+      if (
+        sensitive &&
+        image &&
+        !masked &&
+        !window.confirm(
+          `${category} 물품을 모자이크 없이 승인하면 원본 사진이 홈 화면에 그대로 공개됩니다.\nVision 마스킹을 적용하지 않고 계속할까요?`,
+        )
+      ) {
+        return;
+      }
+    }
     setStatusUpdatingId(reportId);
     setStatusUpdatingType(status);
     try {
