@@ -75,7 +75,7 @@ import {
   imageForLocalStorage,
   safeSetLocalStorage,
 } from '@/lib/safe-local-storage';
-import { clearStoredLocalNotices } from '@/lib/user-preferences';
+import { clearLegacyLocalState } from '@/lib/user-preferences';
 
 export type ReportStatus = 'pending' | 'resolved' | 'picked_up' | 'unavailable';
 
@@ -104,9 +104,12 @@ export type UserNotice = {
   read: boolean;
 };
 
+/** 관리자 작업 이력 — 서버 DB(GET /api/admin/action-logs)가 기준 */
 export type AdminAuditLog = {
   id: string;
+  action: string;
   message: string;
+  actorEmail?: string;
   createdAt: string;
 };
 
@@ -169,6 +172,8 @@ type DandiStateContextValue = {
   apiBaseUrl: string;
   adminAuditLogs: AdminAuditLog[];
   pickupPasses: PickupPass[];
+  /** 관리자 화면 전용 — 모든 사용자의 수령 코드 (GET /api/admin/pickup-passes) */
+  adminPickupPasses: PickupPass[];
   submitReport: (
     payload: Omit<LostReport, 'id' | 'status' | 'createdAt'>,
   ) => Promise<{ ok: boolean; message: string; reportId?: string }>;
@@ -206,6 +211,8 @@ type DandiStateContextValue = {
   refreshReportsList: () => Promise<void>;
   refreshHomeCatalog: () => Promise<void>;
   refreshPickupPasses: () => Promise<void>;
+  refreshAdminPickupPasses: () => Promise<void>;
+  refreshAdminAuditLogs: () => Promise<void>;
   markNoticeRead: (
     noticeId: string,
   ) => Promise<{ ok: boolean; message: string }>;
@@ -500,19 +507,14 @@ export function DandiStateProvider({
   const [noticesLoading, setNoticesLoading] = useState(false);
   const [noticesError, setNoticesError] = useState<string | null>(null);
 
-  // 예전 버전이 브라우저(계정 구분 없이)에 남긴 알림을 한 번 지운다
+  // 예전 버전이 브라우저(계정 구분 없이)에 남긴 알림·알림 설정을 지운다
   useEffect(() => {
-    clearStoredLocalNotices();
+    clearLegacyLocalState();
   }, []);
-  const [adminAuditLogs, setAdminAuditLogs] = useState<AdminAuditLog[]>([
-    {
-      id: 'a-1001',
-      message: '관리자 대시보드가 초기화되었습니다.',
-      createdAt: shortDateTime(),
-    },
-  ]);
+  const [adminAuditLogs, setAdminAuditLogs] = useState<AdminAuditLog[]>([]);
   // 수령 QR은 서버(GET /api/pickup-passes/me)가 기준 — 계정별로 다시 불러온다
   const [pickupPasses, setPickupPasses] = useState<PickupPass[]>([]);
+  const [adminPickupPasses, setAdminPickupPasses] = useState<PickupPass[]>([]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -567,7 +569,7 @@ export function DandiStateProvider({
 
       remoteItems
         .filter((item) => {
-          if (isLostItemMarkedDeleted(item)) return false;
+          // 서버 목록이 기준 — 이 브라우저의 '삭제됨' 표시로 서버에 있는 물품을 숨기지 않는다
           if (!item.reportId) return true;
           const linked = reportList.find(
             (r) => String(r.id) === String(item.reportId),
@@ -743,6 +745,44 @@ export function DandiStateProvider({
     }
   }, []);
 
+  const refreshAdminAuditLogs = useCallback(async () => {
+    const session = getAuthSession();
+    if (!API_BASE_URL || !session?.email || !session.isAdmin) return;
+    try {
+      const data = await apiJson<unknown>('/api/admin/action-logs', { method: 'GET' });
+      if (getAuthSession()?.email !== session.email) return;
+      const rows = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+      setAdminAuditLogs(
+        rows.map((row) => ({
+          id: String(row.id ?? ''),
+          action: String(row.action ?? ''),
+          message: String(row.message ?? ''),
+          actorEmail: row.actorEmail != null ? String(row.actorEmail) : undefined,
+          createdAt: formatDateTimeLabel(String(row.createdAt ?? '')) || String(row.createdAt ?? ''),
+        })),
+      );
+    } catch {
+      // 기존 목록 유지
+    }
+  }, []);
+
+  const refreshAdminPickupPasses = useCallback(async () => {
+    const session = getAuthSession();
+    if (!API_BASE_URL || !session?.email || !session.isAdmin) return;
+    try {
+      const data = await apiJson<unknown>('/api/admin/pickup-passes', { method: 'GET' });
+      if (getAuthSession()?.email !== session.email) return;
+      const rows = Array.isArray(data) ? data : [];
+      setAdminPickupPasses(
+        rows
+          .map((row) => mapPickupPass(row as Record<string, unknown>))
+          .filter((row): row is PickupPass => row !== null),
+      );
+    } catch {
+      // 기존 목록 유지
+    }
+  }, []);
+
   const refreshReports = useCallback(async () => {
     await refreshReportsList();
     await refreshHomeCatalogInner();
@@ -798,6 +838,7 @@ export function DandiStateProvider({
       sessionEmailRef.current = email;
       setReports(email ? loadReportsLocal() : []);
       setPickupPasses([]);
+      setAdminPickupPasses([]);
       setNotices([]);
       setNoticesError(null);
       setAdminAuditLogs([]);
@@ -854,6 +895,7 @@ export function DandiStateProvider({
       apiBaseUrl: API_BASE_URL,
       adminAuditLogs,
       pickupPasses,
+      adminPickupPasses,
       submitReport: async (payload) => {
         const session = getAuthSession();
         const ownerEmail = session?.email;
@@ -1059,14 +1101,7 @@ export function DandiStateProvider({
             if (typeof window !== 'undefined') {
               window.setTimeout(() => scheduleHomeCatalogRefresh(), 4000);
             }
-            setAdminAuditLogs((prev) => [
-              {
-                id: `a-${Date.now()}`,
-                message: `관리자 직접 등록: ${normalizedPayload.itemName} (홈 즉시 노출)`,
-                createdAt: shortDateTime(),
-              },
-              ...prev,
-            ]);
+            void refreshAdminAuditLogs();
             return {
               ok: true,
               message: '홈·검색에 바로 등록되었습니다.',
@@ -1185,14 +1220,7 @@ export function DandiStateProvider({
         }
 
         replaceReportLocal(resolvedReport);
-        setAdminAuditLogs((prev) => [
-          {
-            id: `a-${Date.now()}`,
-            message: `${normalizedId} 신고건을 ${status === 'resolved' ? '습득 완료' : '습득 불가'}로 처리했습니다.`,
-            createdAt: shortDateTime(),
-          },
-          ...prev,
-        ]);
+        void refreshAdminAuditLogs();
 
         if (API_BASE_URL) {
           invalidateRemoteLostItemsCache();
@@ -1398,9 +1426,9 @@ export function DandiStateProvider({
           };
         }
 
-        const localPass = pickupPasses.find(
-          (it) => it.token.toUpperCase() === normalized,
-        );
+        const localPass =
+          pickupPasses.find((it) => it.token.toUpperCase() === normalized) ??
+          adminPickupPasses.find((it) => it.token.toUpperCase() === normalized);
         if (localPass?.usedAt) {
           return { ok: false, message: '이미 수령 인증이 완료된 코드입니다.' };
         }
@@ -1452,6 +1480,7 @@ export function DandiStateProvider({
               it.token.toUpperCase() === normalized ? { ...it, usedAt } : it,
             ),
           );
+          void refreshAdminPickupPasses();
           if (reportId) {
             const pickedUpAt = formatDateTimeLabel(usedAt) || usedAt;
             setReports((prev) =>
@@ -1467,14 +1496,7 @@ export function DandiStateProvider({
           scheduleHomeCatalogRefresh();
           void refreshReportsList();
           notifyReportsChanged();
-          setAdminAuditLogs((prev) => [
-            {
-              id: `a-${Date.now()}`,
-              message: `[${pass.itemName ?? '물품'}] QR 수령 인증 완료 — 인수자: ${pass.claimantEmail ?? '이메일 없음'}`,
-              createdAt: formatDateTimeLabel(usedAt) || usedAt,
-            },
-            ...prev,
-          ]);
+          void refreshAdminAuditLogs();
           return {
             ok: true,
             message: data.message ?? 'QR 인증 완료: 최종 수령 처리되었습니다.',
@@ -1511,14 +1533,7 @@ export function DandiStateProvider({
             persistReportsLocal(next);
             return next;
           });
-          setAdminAuditLogs((prev) => [
-            {
-              id: `a-${Date.now()}`,
-              message: `${reportId} 신고건이 삭제되었습니다.`,
-              createdAt: shortDateTime(),
-            },
-            ...prev,
-          ]);
+          void refreshAdminAuditLogs();
         };
 
         // 서버에 없는 로컬 임시 신고는 백엔드 호출 없이 바로 삭제
@@ -1551,6 +1566,8 @@ export function DandiStateProvider({
       refreshReportsList,
       refreshHomeCatalog,
       refreshPickupPasses,
+      refreshAdminPickupPasses,
+      refreshAdminAuditLogs,
       deleteNotice: async (noticeId) => {
         const target = notices.find((notice) => notice.id === noticeId);
         if (!target) {
@@ -1660,6 +1677,9 @@ export function DandiStateProvider({
       noticesError,
       noticesLoading,
       pickupPasses,
+      adminPickupPasses,
+      refreshAdminPickupPasses,
+      refreshAdminAuditLogs,
       refreshHomeCatalog,
       refreshHomeCatalogInner,
       refreshNotices,

@@ -21,7 +21,7 @@ import {
 import { formatDateTimeLabel, parseDateTimeMs, sanitizeLocation } from "@/lib/format-display";
 import { useListPagination } from "@/lib/use-list-pagination";
 import { useDandiState } from "@/lib/dandi-state";
-import { fetchMyProfile, saveMyProfile, type UserProfileResponse } from "@/lib/user-profile-api";
+import { fetchMyProfile, saveKeywordAlertEnabled, saveMyProfile, type UserProfileResponse } from "@/lib/user-profile-api";
 import { isValidStudentId, STUDENT_ID_LENGTH, STUDENT_ID_MESSAGE } from "@/lib/student-id";
 import { pickupPassState, useNow } from "@/lib/pickup-pass-state";
 import {
@@ -30,12 +30,7 @@ import {
   fetchUserKeywords,
   type UserKeyword,
 } from "@/lib/user-keywords-api";
-import {
-  getStoredAlertEnabled,
-  getStoredKeywords,
-  setStoredAlertEnabled,
-  setStoredKeywords,
-} from "@/lib/user-preferences";
+import { getStoredKeywords, setStoredKeywords } from "@/lib/user-preferences";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "";
 
@@ -96,7 +91,6 @@ export default function MyPage() {
       setEditName(s?.name ?? "");
       setEditDepartment(s?.department ?? "");
       setEditStudentId(s?.studentId ?? "");
-      setAlertEnabled(getStoredAlertEnabled());
       setTagsReady(false);
     });
     return () => window.cancelAnimationFrame(rafId);
@@ -121,6 +115,7 @@ export default function MyPage() {
       setEditName(fields.name);
       setEditDepartment(fields.department);
       setEditStudentId(fields.studentId ?? "");
+      setAlertEnabled(profile.keywordAlertEnabled !== false);
     }).catch(() => {
       if (!cancelled) setProfileMessage("프로필을 불러오지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.");
     }).finally(() => {
@@ -172,9 +167,16 @@ export default function MyPage() {
     );
   };
 
+  // 서버(DB)에 저장 — 다른 기기·다시 로그인해도 유지되고, 서버가 키워드 알림 전에 확인한다
   const onAlertEnabledChange = (checked: boolean) => {
     setAlertEnabled(checked);
-    setStoredAlertEnabled(checked);
+    if (!API_BASE_URL) return;
+    void saveKeywordAlertEnabled(checked)
+      .then((saved) => setAlertEnabled(saved.keywordAlertEnabled !== false))
+      .catch(() => {
+        setAlertEnabled(!checked);
+        setKeywordMessage("알림 설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      });
   };
 
   const myPickupPasses = useMemo(() => {

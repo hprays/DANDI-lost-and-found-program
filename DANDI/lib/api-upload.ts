@@ -173,7 +173,6 @@ const REPORT_MULTIPART_KEYS = [
   'imageUrl',
   'photoUrl',
   'mosaicImageUrl',
-  'adminDirect',
 ] as const;
 
 function buildReportMultipartForm(

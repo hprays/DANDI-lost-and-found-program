@@ -127,9 +127,11 @@ export default function AdminPage() {
   const {
     reports,
     resolveReport,
-    pickupPasses,
+    adminPickupPasses: pickupPasses,
+    refreshAdminPickupPasses,
     verifyPickupPass,
     adminAuditLogs,
+    refreshAdminAuditLogs,
     apiConfigured,
     apiBaseUrl,
     publishAdminLostItem,
@@ -198,16 +200,6 @@ export default function AdminPage() {
     usedAt: string | null;
   } | null>(null);
   const [registering, setRegistering] = useState(false);
-  const [registeredItems, setRegisteredItems] = useState<
-    Array<{
-      id: string;
-      name: string;
-      category: string;
-      location: string;
-      storage: string;
-      createdAt: string;
-    }>
-  >([]);
   const [manageMessage, setManageMessage] = useState('');
   const [manageBusyId, setManageBusyId] = useState<string | null>(null);
   const [manageDrafts, setManageDrafts] = useState<Record<string, ManageDraft>>(
@@ -434,18 +426,6 @@ export default function AdminPage() {
       return;
     }
 
-    const registeredAt = koreanDateTime(new Date());
-    setRegisteredItems((prev) => [
-      {
-        id: publishResult.itemId ?? `adm-${Date.now()}`,
-        name: regName.trim(),
-        category: regCategory.trim(),
-        location: regFoundLocation.composed,
-        storage: regStorageLocation.composed,
-        createdAt: `${registeredAt} · 습득 ${formatFoundAtLabel(regFoundAt)}`,
-      },
-      ...prev,
-    ]);
 
     setRegName('');
     setRegCategory(selectableCategories[0] ?? '기타');
@@ -458,11 +438,6 @@ export default function AdminPage() {
     setVisionFile(null);
     setRegMessage('등록 완료. 홈·검색에 바로 반영되었습니다.');
     setRegistering(false);
-  };
-
-  const clearLastRegistered = () => {
-    setRegisteredItems((prev) => prev.slice(1));
-    setRegMessage('최근 등록 항목을 삭제했습니다.');
   };
 
   const onVerifyPickup = async (
@@ -785,6 +760,21 @@ export default function AdminPage() {
       return haystack.includes(keyword);
     });
   }, [adminTab, pickupItemPool, pickupSearch, pickupPasses]);
+
+  // 수령 인증 탭: 모든 사용자의 수령 코드를 서버에서 다시 불러온다 (다른 기기·다른 관리자 발급분 포함)
+  useEffect(() => {
+    if (adminTab === 'pickup') void refreshAdminPickupPasses();
+  }, [adminTab, refreshAdminPickupPasses]);
+
+  // 작업 이력·등록된 물품 목록은 서버 DB 기록 — 탭을 열 때마다 다시 불러온다 (다른 기기·다른 관리자 작업 포함)
+  useEffect(() => {
+    if (adminTab === 'audit' || adminTab === 'register') void refreshAdminAuditLogs();
+  }, [adminTab, refreshAdminAuditLogs]);
+
+  const registeredLogs = useMemo(
+    () => adminAuditLogs.filter((log) => log.action === 'REGISTER').slice(0, 10),
+    [adminAuditLogs],
+  );
 
   const onVisionFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -1539,13 +1529,6 @@ export default function AdminPage() {
                             ) : null}
                             등록 완료
                           </Button>
-                          <Button
-                            variant="outline"
-                            className="border-red-300 text-red-600 hover:bg-red-50"
-                            onClick={clearLastRegistered}
-                          >
-                            등록 삭제
-                          </Button>
                         </>
                       )}
                     </div>
@@ -1557,25 +1540,21 @@ export default function AdminPage() {
                   </CardContent>
                 </Card>
 
-                {registeredItems.length > 0 ? (
+                {registeredLogs.length > 0 ? (
                   <Card>
                     <CardHeader>
                       <CardTitle>등록된 물품 목록</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
-                      {registeredItems.map((item) => (
+                      {registeredLogs.map((log) => (
                         <div
-                          key={item.id}
+                          key={log.id}
                           className="rounded-lg border p-3 text-sm"
                         >
-                          <p className="font-semibold">
-                            {item.name} / {item.category}
-                          </p>
-                          <p className="text-muted-foreground">
-                            {item.location} / 보관: {item.storage}
-                          </p>
+                          <p className="font-semibold">{log.message}</p>
                           <p className="text-xs text-muted-foreground">
-                            {item.createdAt}
+                            {log.createdAt}
+                            {log.actorEmail ? ` · ${log.actorEmail}` : ''}
                           </p>
                         </div>
                       ))}
@@ -2369,7 +2348,7 @@ export default function AdminPage() {
                           </p>
                           {pass.usedAt ? (
                             <p className="mt-1 text-xs font-semibold text-primary">
-                              수령 완료: {pass.usedAt}
+                              수령 완료: {formatDateTimeLabel(pass.usedAt) || pass.usedAt}
                             </p>
                           ) : null}
                         </div>
@@ -2382,6 +2361,11 @@ export default function AdminPage() {
           </TabsContent>
 
           <TabsContent value="audit" className="space-y-2">
+            {adminTab === 'audit' && adminAuditLogs.length === 0 ? (
+              <p className="rounded-xl border bg-white p-3 text-sm text-muted-foreground">
+                아직 기록된 관리자 작업이 없습니다.
+              </p>
+            ) : null}
             {adminTab === 'audit'
               ? adminAuditLogs.map((log) => (
                   <div
@@ -2394,6 +2378,7 @@ export default function AdminPage() {
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {log.createdAt}
+                      {log.actorEmail ? ` · ${log.actorEmail}` : ''}
                     </p>
                   </div>
                 ))

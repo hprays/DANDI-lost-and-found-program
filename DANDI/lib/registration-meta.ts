@@ -116,10 +116,11 @@ function applyMetaToItem<
   const foundLabel = foundAt ? formatDateTimeLabel(foundAt) || foundAt : undefined;
 
   const itemExt = item as T & { catalogStatus?: string; pickedUpAt?: string };
-  const pickedUpLabel = merged.pickedUpAt
-    ? formatDateTimeLabel(merged.pickedUpAt) || merged.pickedUpAt
-    : itemExt.pickedUpAt
-      ? formatDateTimeLabel(itemExt.pickedUpAt) || itemExt.pickedUpAt
+  // 수령 시각은 서버 값이 기준, 이 브라우저에 남은 값은 서버에 없을 때만
+  const pickedUpLabel = itemExt.pickedUpAt
+    ? formatDateTimeLabel(itemExt.pickedUpAt) || itemExt.pickedUpAt
+    : merged.pickedUpAt
+      ? formatDateTimeLabel(merged.pickedUpAt) || merged.pickedUpAt
       : undefined;
 
   return {

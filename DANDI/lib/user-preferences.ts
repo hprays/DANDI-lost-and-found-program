@@ -31,19 +31,8 @@ export function setStoredKeywords(keywords: string[], options?: { silent?: boole
   }
 }
 
-export function getStoredAlertEnabled(): boolean {
-  if (typeof window === "undefined") return true;
-  const raw = window.localStorage.getItem(ALERT_ENABLED_KEY);
-  if (raw === "false") return false;
-  return true;
-}
-
-export function setStoredAlertEnabled(enabled: boolean) {
-  if (typeof window === "undefined") return;
-  safeSetLocalStorage(ALERT_ENABLED_KEY, enabled ? "true" : "false");
-}
-
-/** 예전에 브라우저에만 저장하던 알림을 지운다. 알림은 서버 DB(/api/notices)만 쓴다. */
-export function clearStoredLocalNotices() {
+/** 예전에 브라우저에만 저장하던 알림·알림 받기 설정을 지운다. 둘 다 이제 서버 DB가 기준이다. */
+export function clearLegacyLocalState() {
   safeRemoveLocalStorage(LOCAL_NOTICES_KEY);
+  safeRemoveLocalStorage(ALERT_ENABLED_KEY);
 }

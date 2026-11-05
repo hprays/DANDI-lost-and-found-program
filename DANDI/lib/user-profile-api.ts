@@ -6,10 +6,18 @@ export type UserProfileResponse = {
   department?: string | null;
   studentId?: string | null;
   profileCompleted: boolean;
+  /** 관심 키워드 알림 받기 — 서버 DB에 저장 */
+  keywordAlertEnabled?: boolean;
 };
 
 export function fetchMyProfile() {
   return apiJson<UserProfileResponse>("/api/users/me");
+}
+
+export function saveKeywordAlertEnabled(keywordAlertEnabled: boolean) {
+  return apiJson<UserProfileResponse>("/api/users/me/preferences", {
+    method: "PATCH", body: JSON.stringify({ keywordAlertEnabled }),
+  });
 }
 
 export async function saveMyProfile(profile: { name: string; department: string; studentId: string }) {
