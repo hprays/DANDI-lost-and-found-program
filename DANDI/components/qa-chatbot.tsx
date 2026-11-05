@@ -6,7 +6,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getAuthorizationHeaders } from "@/lib/auth-token";
 
 type QAChatbotProps = {
   tips?: string[];
@@ -39,15 +38,14 @@ export function QAChatbot({ tips }: QAChatbotProps) {
       setLoading(true);
       const response = await fetch("/api/chatbot", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(await getAuthorizationHeaders()) },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
           history: messages.slice(-8),
         }),
       });
 
-      // 로그인 필요·호출 제한·길이 초과 안내는 서버 문구를 그대로 보여준다
-      if (!response.ok && ![400, 401, 429].includes(response.status)) {
+      if (!response.ok) {
         throw new Error("chat api failed");
       }
       const data = (await response.json()) as { answer: string };
