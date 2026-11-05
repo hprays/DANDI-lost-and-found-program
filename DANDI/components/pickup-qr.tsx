@@ -25,8 +25,8 @@ export function PickupQr({ value, size = 144 }: PickupQrProps) {
   if (!trimmed) {
     return (
       <div
-        className="flex items-center justify-center rounded-lg border bg-slate-50 text-xs text-muted-foreground"
-        style={{ width: size, height: size }}
+        className="flex max-w-full items-center justify-center rounded-lg border bg-slate-50 text-xs text-muted-foreground"
+        style={{ width: size, maxWidth: "100%", aspectRatio: "1" }}
       >
         QR 없음
       </div>
@@ -36,20 +36,17 @@ export function PickupQr({ value, size = 144 }: PickupQrProps) {
   const qrSrc = buildQrImageUrl(trimmed, size);
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="max-w-full" style={{ width: size, maxWidth: "100%" }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={qrSrc}
         alt={`수령 QR ${trimmed}`}
         width={size}
         height={size}
-        className="rounded-lg border bg-white"
+        className="h-auto max-w-full rounded-lg border bg-white"
         loading="lazy"
         decoding="async"
       />
-      <p className="max-w-full break-all text-center font-mono text-[10px] leading-tight text-muted-foreground">
-        {trimmed}
-      </p>
     </div>
   );
 }

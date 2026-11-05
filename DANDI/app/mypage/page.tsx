@@ -478,10 +478,15 @@ export default function MyPage() {
                 {pass.itemLocation ? <p className="text-muted-foreground">{pass.itemLocation}</p> : null}
                 <div className="mt-2 rounded-lg border bg-slate-50 p-3">
                   <p className="text-xs text-muted-foreground">수령 코드 (QR)</p>
-                  <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-center">
+                  <div className="mt-2 flex min-w-0 flex-col items-center gap-3 md:flex-row">
                     {state === "active" ? <PickupQr value={pass.token} /> : null}
-                    <div className="space-y-1">
-                      <p className="text-lg font-bold tracking-wider">{pass.token}</p>
+                    <div className="w-full min-w-0 space-y-1">
+                      <p
+                        className="max-w-full whitespace-normal break-all font-mono text-sm font-semibold leading-5"
+                        style={{ overflowWrap: "anywhere" }}
+                      >
+                        {pass.token}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         유효기간: {new Date(pass.expiresAt).toLocaleString("ko-KR", { hour12: false })}
                       </p>

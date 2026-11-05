@@ -260,10 +260,15 @@ export default function LostDetailPage({ params }: { params: Promise<{ id: strin
           ) : latestPass && latestPassState === "active" ? (
             <div className="rounded-lg border bg-white p-3">
               <p className="text-xs text-muted-foreground">발급된 수령 QR</p>
-              <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-center">
+              <div className="mt-2 flex min-w-0 flex-col items-center gap-3 md:flex-row">
                 <PickupQr value={latestPass.token} />
-                <div className="space-y-1 text-sm">
-                  <p className="text-base font-bold tracking-wider">{latestPass.token}</p>
+                <div className="w-full min-w-0 space-y-1 text-sm">
+                  <p
+                    className="max-w-full whitespace-normal break-all font-mono text-sm font-semibold leading-5"
+                    style={{ overflowWrap: "anywhere" }}
+                  >
+                    {latestPass.token}
+                  </p>
                   <p className="text-lg font-bold text-primary" role="timer">
                     남은 시간 {formatRemaining(remainingMs)}
                   </p>
