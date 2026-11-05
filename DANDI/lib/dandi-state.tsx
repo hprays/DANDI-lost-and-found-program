@@ -75,10 +75,7 @@ import {
   imageForLocalStorage,
   safeSetLocalStorage,
 } from '@/lib/safe-local-storage';
-import {
-  getStoredLocalNotices,
-  setStoredLocalNotices,
-} from '@/lib/user-preferences';
+import { clearStoredLocalNotices } from '@/lib/user-preferences';
 
 export type ReportStatus = 'pending' | 'resolved' | 'picked_up' | 'unavailable';
 
@@ -536,15 +533,15 @@ export function DandiStateProvider({
   const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
-  const [notices, setNotices] = useState<UserNotice[]>(() => getStoredLocalNotices());
+  // 알림은 서버 DB(/api/notices)가 기준이다. 브라우저에는 저장하지 않는다.
+  const [notices, setNotices] = useState<UserNotice[]>([]);
   const [noticesLoading, setNoticesLoading] = useState(false);
   const [noticesError, setNoticesError] = useState<string | null>(null);
 
-  // 로컬 알림(n- prefix)은 새로고침/세션 사이에 유지되도록 localStorage에 백업합니다.
+  // 예전 버전이 브라우저(계정 구분 없이)에 남긴 알림을 한 번 지운다
   useEffect(() => {
-    const localOnly = notices.filter((it) => it.id.startsWith('n-'));
-    setStoredLocalNotices(localOnly);
-  }, [notices]);
+    clearStoredLocalNotices();
+  }, []);
   const [adminAuditLogs, setAdminAuditLogs] = useState<AdminAuditLog[]>([
     {
       id: 'a-1001',
@@ -817,16 +814,7 @@ export function DandiStateProvider({
     try {
       const data = await apiJson<unknown>('/api/notices', { method: 'GET' });
       if (getAuthSession()?.email !== email) return; // 요청 중 계정이 바뀜
-      const remote = extractNoticeList(data);
-      setNotices((prev) => {
-        const localOnly = prev.filter((it) => it.id.startsWith('n-'));
-        const merged = [...remote, ...localOnly];
-        const dedup = new Map<string, UserNotice>();
-        merged.forEach((notice) => {
-          if (!dedup.has(notice.id)) dedup.set(notice.id, notice);
-        });
-        return Array.from(dedup.values());
-      });
+      setNotices(extractNoticeList(data));
     } catch (error) {
       setNoticesError(
         error instanceof Error
@@ -848,7 +836,7 @@ export function DandiStateProvider({
       sessionEmailRef.current = email;
       setReports(email ? loadReportsLocal() : []);
       setPickupPasses([]);
-      setNotices(email ? getStoredLocalNotices() : []);
+      setNotices([]);
       setNoticesError(null);
       setAdminAuditLogs([]);
     }

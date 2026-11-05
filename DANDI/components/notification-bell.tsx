@@ -12,7 +12,7 @@ import { formatDateTimeLabel } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
 
 export function NotificationBell() {
-  const { notices, noticesLoading, refreshNotices, markNoticeRead, markAllNoticesRead, deleteNotice, deleteAllNotices } =
+  const { notices, noticesLoading, refreshNotices, markNoticeRead, markAllNoticesRead, deleteNotice } =
     useDandiState();
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -61,17 +61,6 @@ export function NotificationBell() {
     try {
       const result = await markAllNoticesRead();
       if (!result.ok) window.alert(result.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const onDeleteAll = async () => {
-    if (!window.confirm("사용자 알림함의 지난 알림까지 모든 알림을 삭제할까요?")) return;
-    setBusyId("all");
-    try {
-      await deleteAllNotices();
-      setSelectedId(null);
     } finally {
       setBusyId(null);
     }
@@ -138,18 +127,6 @@ export function NotificationBell() {
                         onClick={() => void onReadAll()}
                       >
                         모두 읽음
-                      </Button>
-                    ) : null}
-                    {!selected && notices.length > 0 ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="text-xs text-muted-foreground"
-                        disabled={busyId === "all"}
-                        onClick={() => void onDeleteAll()}
-                      >
-                        전체 삭제
                       </Button>
                     ) : null}
                     {selected ? (

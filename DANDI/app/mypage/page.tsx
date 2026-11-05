@@ -45,6 +45,7 @@ export default function MyPage() {
     reports,
     pickupPasses,
     markNoticeRead,
+    deleteAllNotices,
     refreshNotices,
     refreshPickupPasses,
     noticesLoading,
@@ -75,6 +76,18 @@ export default function MyPage() {
   const [alertEnabled, setAlertEnabled] = useState(true);
   const [noticeMessage, setNoticeMessage] = useState("");
   const [readingNoticeId, setReadingNoticeId] = useState<string | null>(null);
+  const [deletingAllNotices, setDeletingAllNotices] = useState(false);
+
+  const onDeleteAllNotices = async () => {
+    if (!window.confirm("알림함의 모든 알림을 삭제할까요? 삭제한 알림은 되돌릴 수 없습니다.")) return;
+    setDeletingAllNotices(true);
+    try {
+      const result = await deleteAllNotices();
+      setNoticeMessage(result.message);
+    } finally {
+      setDeletingAllNotices(false);
+    }
+  };
 
   useEffect(() => {
     const rafId = window.requestAnimationFrame(() => {
@@ -500,10 +513,24 @@ export default function MyPage() {
           <CardContent className="space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">알림을 클릭하면 읽음 처리됩니다.</p>
-              <Button variant="outline" size="sm" onClick={() => void refreshNotices()} disabled={noticesLoading}>
-                {noticesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                새로고침
-              </Button>
+              <div className="flex items-center gap-2">
+                {notices.length > 0 ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-red-600"
+                    onClick={() => void onDeleteAllNotices()}
+                    disabled={deletingAllNotices}
+                  >
+                    {deletingAllNotices ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    전체 삭제
+                  </Button>
+                ) : null}
+                <Button variant="outline" size="sm" onClick={() => void refreshNotices()} disabled={noticesLoading}>
+                  {noticesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  새로고침
+                </Button>
+              </div>
             </div>
             {noticesError ? <p className="text-sm font-semibold text-amber-700">{noticesError}</p> : null}
             {notices.length === 0 ? (

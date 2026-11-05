@@ -1,6 +1,6 @@
 "use client";
 
-import { safeSetLocalStorage } from "@/lib/safe-local-storage";
+import { safeRemoveLocalStorage, safeSetLocalStorage } from "@/lib/safe-local-storage";
 
 const KEYWORDS_STORAGE_KEY = "dandi.userPrefs.keywords";
 const ALERT_ENABLED_KEY = "dandi.userPrefs.alertEnabled";
@@ -43,28 +43,7 @@ export function setStoredAlertEnabled(enabled: boolean) {
   safeSetLocalStorage(ALERT_ENABLED_KEY, enabled ? "true" : "false");
 }
 
-export type StoredNotice = {
-  id: string;
-  title: string;
-  message: string;
-  createdAt: string;
-  read: boolean;
-};
-
-export function getStoredLocalNotices(): StoredNotice[] {
-  if (typeof window === "undefined") return [];
-  const raw = window.localStorage.getItem(LOCAL_NOTICES_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as StoredNotice[];
-    // n-1001: 예전에 목록이 비면 자동으로 다시 만들던 기본 알림. 이미 저장된 것도 걸러낸다.
-    return Array.isArray(parsed) ? parsed.filter((it) => it.id !== "n-1001") : [];
-  } catch {
-    return [];
-  }
-}
-
-export function setStoredLocalNotices(notices: StoredNotice[]) {
-  if (typeof window === "undefined") return;
-  safeSetLocalStorage(LOCAL_NOTICES_KEY, JSON.stringify(notices.slice(0, 50)));
+/** 예전에 브라우저에만 저장하던 알림을 지운다. 알림은 서버 DB(/api/notices)만 쓴다. */
+export function clearStoredLocalNotices() {
+  safeRemoveLocalStorage(LOCAL_NOTICES_KEY);
 }
