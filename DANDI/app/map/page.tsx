@@ -26,7 +26,7 @@ export default function MapPage() {
         <Card>
           <CardHeader>
             <CardTitle>캠퍼스 지도</CardTitle>
-            <p className="text-sm text-muted-foreground">현재 위치 기준 주변 관리실 핀 표시 (OpenStreetMap)</p>
+            <p className="text-sm text-muted-foreground">현재 위치 기준 주변 관리실 핀 표시</p>
           </CardHeader>
           <CardContent>
             <CampusMap activeOffice={activeOffice} onOfficeSelect={setActiveOffice} />

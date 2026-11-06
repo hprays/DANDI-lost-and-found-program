@@ -46,7 +46,6 @@ export default function MyPage() {
     noticesLoading,
     noticesError,
     apiConfigured,
-    apiBaseUrl,
   } = useDandiState();
   const now = useNow();
 
@@ -315,9 +314,7 @@ export default function MyPage() {
               <div className="col-span-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                 백엔드 주소가 비어 있습니다. `.env.local`에 `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
               </div>
-            ) : (
-              <p className="col-span-full text-xs text-muted-foreground">연동 대상 API: {apiBaseUrl}</p>
-            )}
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="profile-name">이름</Label>
               <Input

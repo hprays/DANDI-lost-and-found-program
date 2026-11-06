@@ -133,7 +133,6 @@ export default function AdminPage() {
     adminAuditLogs,
     refreshAdminAuditLogs,
     apiConfigured,
-    apiBaseUrl,
     publishAdminLostItem,
     updatePendingReport,
     homeLostItems,
@@ -1169,11 +1168,7 @@ export default function AdminPage() {
             백엔드 주소가 비어 있습니다. `.env.local`에
             `NEXT_PUBLIC_API_BASE_URL`을 설정하세요.
           </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            연동 대상 API: {apiBaseUrl}
-          </p>
-        )}
+        ) : null}
 
         {actionMessage ? (
           <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-primary">
@@ -1285,8 +1280,7 @@ export default function AdminPage() {
                       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                         관리자가 등록한 물품은{' '}
                         <b>검수 대기 없이 홈·검색에 바로</b> 노출됩니다. 사용자
-                        분실 신고는 검수 대기에서 수정·Vision 적용 후 「습득
-                        완료」 처리 시 홈에 등록됩니다.
+                        분실 신고는 검수 대기에서 수정 처리 시 홈에 등록됩니다.
                       </div>
                     )}
 
@@ -1313,10 +1307,7 @@ export default function AdminPage() {
                             checked={visionMaskId}
                             onChange={(e) => setVisionMaskId(e.target.checked)}
                           />
-                          <span>
-                            신분증·학생증 (체크 시 Vision API로 중요 정보
-                            마스킹/블러 요청)
-                          </span>
+                          <span>신분증·학생증</span>
                         </label>
                         <label className="flex items-center gap-2">
                           <input
@@ -1326,7 +1317,7 @@ export default function AdminPage() {
                               setVisionMaskCard(e.target.checked)
                             }
                           />
-                          <span>카드·체크카드 (모자이크 이미지 생성)</span>
+                          <span>카드·체크카드</span>
                         </label>
                       </div>
                       {visionPreview ? (
@@ -1992,7 +1983,7 @@ export default function AdminPage() {
               <>
                 <Card className="border-emerald-400/50 bg-emerald-50/40">
                   <CardHeader>
-                    <CardTitle>수령 코드 직접 입력 (가장 빠름)</CardTitle>
+                    <CardTitle>수령 코드 직접 입력</CardTitle>
                     <p className="text-sm text-muted-foreground">
                       마이페이지에 표시된{' '}
                       <span className="font-mono">DKU-…</span> 코드 전체 또는
