@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
@@ -174,6 +175,9 @@ export default function LoginPage() {
           <Button size="lg" className="w-full" onClick={onGoogleLogin} disabled={loading}>
             {loading ? '로그인 진행 중...' : '학교 계정으로 로그인'}
           </Button>
+          <p className="text-center text-xs text-muted-foreground">
+            <Link href="/privacy" className="underline">개인정보 처리방침</Link>
+          </p>
           {AUTH_DEMO_MODE ? (
             <p className="text-center text-xs text-amber-700">
               임시 데모 모드: 백엔드 로그인 API 없이 홈으로 이동합니다.

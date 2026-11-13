@@ -48,6 +48,9 @@ export function AccountMenu({ className, fullWidth = false, label = "마이" }: 
           <Link href="/" className="block rounded-md px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setOpen(false)}>
             초기화면
           </Link>
+          <Link href="/privacy" className="block rounded-md px-3 py-2 text-sm hover:bg-slate-50" onClick={() => setOpen(false)}>
+            개인정보 처리방침
+          </Link>
           <Link
             href="/"
             className="flex items-center gap-1 rounded-md px-3 py-2 text-sm text-red-600 hover:bg-red-50"

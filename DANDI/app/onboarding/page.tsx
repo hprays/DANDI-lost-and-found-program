@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,7 @@ export default function OnboardingPage() {
   const [name, setName] = useState("");
   const [department, setDepartment] = useState("");
   const [studentId, setStudentId] = useState("");
+  const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -45,6 +47,10 @@ export default function OnboardingPage() {
     }
     if (!isValidStudentId(studentId.trim())) {
       setMessage(STUDENT_ID_MESSAGE);
+      return;
+    }
+    if (!agreed) {
+      setMessage("개인정보 수집·이용에 동의해 주세요.");
       return;
     }
 
@@ -123,7 +129,29 @@ export default function OnboardingPage() {
               aria-describedby="student-id-help" disabled={loading} />
             <p id="student-id-help" className="text-xs text-muted-foreground">학번은 직접 입력해 주세요. 수령 시 학생증으로 본인 확인을 진행합니다.</p>
           </div>
-          <Button className="w-full" onClick={onSubmit} disabled={loading}>
+          <div className="space-y-2 rounded-xl border bg-slate-50 p-3 text-xs leading-relaxed text-slate-700">
+            <p className="font-semibold">개인정보 수집·이용 동의 (필수)</p>
+            <ul className="list-disc space-y-0.5 pl-4">
+              <li>항목: 학교 이메일, 이름, 학과, 학번, 신고 내용과 사진, 수령 기록</li>
+              <li>목적: 분실물 신고·조회, 수령할 때 본인 확인</li>
+              <li>보관: 시범 운영 종료(2026년 12월 중순 예정) 후 삭제</li>
+              <li>동의하지 않을 수 있지만, 그러면 서비스를 쓸 수 없습니다.</li>
+            </ul>
+            <Link href="/privacy" target="_blank" className="inline-block font-medium text-primary underline">
+              개인정보 처리방침 전문 보기
+            </Link>
+            <label className="flex items-center gap-2 pt-1 text-sm font-medium text-slate-900">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-primary"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                disabled={loading}
+              />
+              위 내용에 동의합니다.
+            </label>
+          </div>
+          <Button className="w-full" onClick={onSubmit} disabled={loading || !agreed}>
             {loading ? "저장 중..." : "저장하고 시작하기"}
           </Button>
           {message ? <p role="alert" className="text-sm font-medium text-red-600">{message}</p> : null}
