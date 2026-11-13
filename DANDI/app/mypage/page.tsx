@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { BellRing, Loader2, Plus, Save, X } from "lucide-react";
+import { BellRing, Loader2, Plus, Save, Trash2, X } from "lucide-react";
 import { AccountMenu } from "@/components/account-menu";
 import { AppShell } from "@/components/app-shell";
 import { PickupQr } from "@/components/pickup-qr";
@@ -40,6 +40,7 @@ export default function MyPage() {
     reports,
     pickupPasses,
     markNoticeRead,
+    deleteNotice,
     deleteAllNotices,
     refreshNotices,
     refreshPickupPasses,
@@ -71,6 +72,7 @@ export default function MyPage() {
   const [noticeMessage, setNoticeMessage] = useState("");
   const [readingNoticeId, setReadingNoticeId] = useState<string | null>(null);
   const [deletingAllNotices, setDeletingAllNotices] = useState(false);
+  const [deletingNoticeId, setDeletingNoticeId] = useState<string | null>(null);
 
   const onDeleteAllNotices = async () => {
     if (!window.confirm("알림함의 모든 알림을 삭제할까요? 삭제한 알림은 되돌릴 수 없습니다.")) return;
@@ -541,8 +543,11 @@ export default function MyPage() {
               <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">도착한 알림이 없습니다.</p>
             ) : (
               noticePage.items.map((notice) => (
-                <button
+                <div
                   key={notice.id}
+                  className={`flex items-start gap-1 rounded-xl border text-sm ${notice.read ? "bg-slate-50" : "bg-primary/5"}`}
+                >
+                <button
                   type="button"
                   onClick={async () => {
                     setReadingNoticeId(notice.id);
@@ -550,7 +555,7 @@ export default function MyPage() {
                     setNoticeMessage(result.message);
                     setReadingNoticeId(null);
                   }}
-                  className={`w-full rounded-xl border p-3 text-left text-sm ${notice.read ? "bg-slate-50" : "bg-primary/5"}`}
+                  className="min-w-0 flex-1 p-3 text-left"
                 >
                   <p className="font-semibold">
                     {notice.title}{" "}
@@ -564,6 +569,23 @@ export default function MyPage() {
                     {readingNoticeId === notice.id ? " · 읽음 처리 중..." : ""}
                   </p>
                 </button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="m-1 shrink-0"
+                  aria-label={`${notice.title} 알림 삭제`}
+                  disabled={deletingNoticeId === notice.id}
+                  onClick={async () => {
+                    setDeletingNoticeId(notice.id);
+                    const result = await deleteNotice(notice.id);
+                    setNoticeMessage(result.message);
+                    setDeletingNoticeId(null);
+                  }}
+                >
+                  {deletingNoticeId === notice.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 text-red-500" />}
+                </Button>
+                </div>
               ))
             )}
             <ListPagination label="알림함" {...noticePage} onPageChange={noticePage.setPage} />

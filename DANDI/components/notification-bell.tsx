@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Bell, ChevronLeft, Trash2, X } from "lucide-react";
+import { Bell, ChevronLeft, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,7 @@ import { formatDateTimeLabel } from "@/lib/format-display";
 import { useDandiState } from "@/lib/dandi-state";
 
 export function NotificationBell() {
-  const { notices, noticesLoading, refreshNotices, markNoticeRead, markAllNoticesRead, deleteNotice } =
+  const { notices, noticesLoading, refreshNotices, markNoticeRead, markAllNoticesRead } =
     useDandiState();
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -46,11 +46,12 @@ export function NotificationBell() {
     setSelectedId(noticeId);
   };
 
-  const onDelete = async (noticeId: string) => {
+  // 패널은 안 읽은 알림만 보여주므로 읽음 처리하면 패널에서 사라진다. 실제 삭제는 마이페이지 알림함에서 한다.
+  const onDismiss = async (noticeId: string) => {
     setBusyId(noticeId);
     try {
-      await deleteNotice(noticeId);
-      if (selectedId === noticeId) setSelectedId(null);
+      const result = await markNoticeRead(noticeId);
+      if (!result.ok) window.alert(result.message);
     } finally {
       setBusyId(null);
     }
@@ -129,18 +130,6 @@ export function NotificationBell() {
                         모두 읽음
                       </Button>
                     ) : null}
-                    {selected ? (
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        aria-label="알림 삭제"
-                        disabled={busyId === selected.id}
-                        onClick={() => void onDelete(selected.id)}
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
-                    ) : null}
                     <Button type="button" size="icon" variant="ghost" onClick={onClose} aria-label="닫기">
                       <X className="h-4 w-4" />
                     </Button>
@@ -173,11 +162,14 @@ export function NotificationBell() {
                   ) : (
                     <ul className="space-y-2">
                       {unreadNotices.map((notice) => (
-                        <li key={notice.id}>
+                        <li
+                          key={notice.id}
+                          className="flex items-start rounded-xl border border-primary/30 bg-primary/5 transition hover:border-primary/40"
+                        >
                           <button
                             type="button"
                             onClick={() => void onSelect(notice.id)}
-                            className="w-full rounded-xl border border-primary/30 bg-primary/5 p-3 text-left transition hover:border-primary/40"
+                            className="min-w-0 flex-1 p-3 text-left"
                           >
                             <motion.div className="flex items-start justify-between gap-2">
                               <motion.div className="min-w-0">
@@ -188,6 +180,17 @@ export function NotificationBell() {
                             </motion.div>
                             <p className="mt-1 text-[11px] text-muted-foreground">{formatDateTimeLabel(notice.createdAt) || notice.createdAt}</p>
                           </button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="m-1 shrink-0"
+                            aria-label={`${notice.title} 알림 숨기기`}
+                            disabled={busyId === notice.id}
+                            onClick={() => void onDismiss(notice.id)}
+                          >
+                            <X className="h-4 w-4 text-slate-500" />
+                          </Button>
                         </li>
                       ))}
                     </ul>
