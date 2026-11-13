@@ -130,16 +130,32 @@ export default function OnboardingPage() {
             <p id="student-id-help" className="text-xs text-muted-foreground">학번은 직접 입력해 주세요. 수령 시 학생증으로 본인 확인을 진행합니다.</p>
           </div>
           <div className="space-y-2 rounded-xl border bg-slate-50 p-3 text-xs leading-relaxed text-slate-700">
-            <p className="font-semibold">개인정보 수집·이용 동의 (필수)</p>
-            <ul className="list-disc space-y-0.5 pl-4">
-              <li>항목: 학교 이메일, 이름, 학과, 학번, 신고 내용과 사진, 수령 기록</li>
-              <li>목적: 분실물 신고·조회, 수령할 때 본인 확인</li>
-              <li>보관: 시범 운영 종료(2026년 12월 중순 예정) 후 삭제</li>
-              <li>동의하지 않을 수 있지만, 그러면 서비스를 쓸 수 없습니다.</li>
-            </ul>
-            <Link href="/privacy" target="_blank" className="inline-block font-medium text-primary underline">
-              개인정보 처리방침 전문 보기
-            </Link>
+            <p className="text-center text-sm font-bold">개인정보 수집·이용 동의서</p>
+            <p>DANDI(단디)의 개인정보 수집·이용 목적은 다음과 같습니다. 내용을 자세히 읽어 보신 후 동의 여부를 결정하여 주시기 바랍니다.</p>
+            <table className="w-full table-fixed border-collapse bg-white text-center">
+              <thead className="bg-slate-100">
+                <tr>
+                  <th className="border px-1 py-1.5 font-semibold">수집목적</th>
+                  <th className="border px-1 py-1.5 font-semibold">필수항목</th>
+                  <th className="border px-1 py-1.5 font-semibold">보유·이용기간</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="border px-1.5 py-2">분실물 신고·조회, 분실물 수령 시 본인 확인</td>
+                  <td className="border px-1.5 py-2">학교 이메일, 이름, 학과, 학번, 신고 내용, 사진, 수령 기록</td>
+                  <td className="border px-1.5 py-2 font-semibold">시범 운영 종료 (2026/12/20)시까지</td>
+                </tr>
+              </tbody>
+            </table>
+            <p>
+              자세한 내용은{" "}
+              <Link href="/privacy" target="_blank" className="font-medium text-primary underline">
+                개인정보 처리방침
+              </Link>
+              을 확인해 주세요.
+            </p>
+            <p>귀하는 위와 같이 개인정보를 수집·이용하는 데 동의를 거부할 권리가 있습니다. 필수 수집 항목에 대한 동의를 거부하는 경우 서비스 이용이 제한될 수 있습니다.</p>
             <label className="flex items-center gap-2 pt-1 text-sm font-medium text-slate-900">
               <input
                 type="checkbox"
@@ -148,7 +164,7 @@ export default function OnboardingPage() {
                 onChange={(e) => setAgreed(e.target.checked)}
                 disabled={loading}
               />
-              위 내용에 동의합니다.
+              (필수) 개인정보 수집·이용에 동의합니다.
             </label>
           </div>
           <Button className="w-full" onClick={onSubmit} disabled={loading || !agreed}>
