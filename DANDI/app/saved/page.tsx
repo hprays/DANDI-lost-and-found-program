@@ -44,14 +44,18 @@ export default function SavedPage() {
     [items, favorites.ids]
   );
 
+  // 해시태그를 누르면 그 키워드만, 다시 누르면 전체 키워드로 본다
+  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
+  const activeKeyword = selectedKeyword && keywords.includes(selectedKeyword) ? selectedKeyword : null;
+
   const keywordItems = useMemo(() => {
-    const needles = keywords.map((k) => k.trim().toLowerCase()).filter(Boolean);
+    const needles = (activeKeyword ? [activeKeyword] : keywords).map((k) => k.trim().toLowerCase()).filter(Boolean);
     if (needles.length === 0) return [];
     return items.filter((item) => {
       const text = itemSearchText(item);
       return needles.some((k) => text.includes(k));
     });
-  }, [items, keywords]);
+  }, [items, keywords, activeKeyword]);
 
   const renderList = (list: PublishedLostItem[], empty: React.ReactNode) => {
     if (catalogLoading && items.length === 0) {
@@ -95,9 +99,16 @@ export default function SavedPage() {
           {keywords.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {keywords.map((k) => (
-                <Badge key={k} variant="secondary">
-                  #{k}
-                </Badge>
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={activeKeyword === k}
+                  onClick={() => setSelectedKeyword(activeKeyword === k ? null : k)}
+                >
+                  <Badge variant={activeKeyword === k ? "default" : "secondary"} className="cursor-pointer">
+                    #{k}
+                  </Badge>
+                </button>
               ))}
             </div>
           ) : null}
@@ -110,6 +121,8 @@ export default function SavedPage() {
                   마이페이지에서 키워드 등록
                 </Link>
               </>
+            ) : activeKeyword ? (
+              `#${activeKeyword}에 맞는 물품이 아직 없습니다.`
             ) : (
               "키워드에 맞는 물품이 아직 없습니다."
             )
