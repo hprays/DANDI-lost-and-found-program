@@ -69,6 +69,7 @@ import {
 } from '@/lib/qr-scanner';
 import {
   buildVisionFormData,
+  buildVisionFormDataForReport,
   fetchVisionResult,
   isMosaicImageUrl,
   isSensitiveCategory,
@@ -277,7 +278,7 @@ export default function AdminPage() {
     setVisionPreview(image);
     setVisionDataUrl(image);
     setVisionFile(null);
-    setVisionImageMasked(Boolean(image));
+    setVisionImageMasked(isMosaicImageUrl(image));
     setVisionResult(null);
     setVisionResultId('');
     setVisionMessage('');
@@ -904,7 +905,14 @@ export default function AdminPage() {
   };
 
   const onAnalyzeVision = async () => {
-    if (!visionFile) {
+    // 검수 대기 신고를 수정 중이고 새 사진을 고르지 않았다면, 서버에 올라간 신고 사진으로 분석한다
+    const pendingReportId =
+      !visionFile &&
+      editingPendingReportId &&
+      Number.isInteger(Number(editingPendingReportId))
+        ? String(editingPendingReportId)
+        : null;
+    if (!visionFile && !pendingReportId) {
       setVisionMessage('먼저 분석할 이미지를 선택해 주세요.');
       return;
     }
@@ -922,11 +930,10 @@ export default function AdminPage() {
       maskId: visionMaskId,
       maskCard: visionMaskCard,
     });
-    const compressed = await compressImageFile(visionFile);
-    const formData = buildVisionFormData(compressed, {
-      maskId: visionMaskId,
-      maskCard: visionMaskCard,
-    });
+    const maskOptions = { maskId: visionMaskId, maskCard: visionMaskCard };
+    const formData = visionFile
+      ? buildVisionFormData(await compressImageFile(visionFile), maskOptions)
+      : buildVisionFormDataForReport(pendingReportId as string, maskOptions);
 
     setVisionLoading(true);
     setVisionMessage('');

@@ -51,6 +51,20 @@ export function buildVisionFormData(
 }
 
 /**
+ * 사진 파일 없이, 서버에 이미 올라간 검수 대기 신고의 사진으로 분석한다 (reportId).
+ * 브라우저는 사진 저장소(S3)에서 사진을 직접 가져올 수 없어서 서버가 대신 읽는다.
+ */
+export function buildVisionFormDataForReport(
+  reportId: string,
+  options: { maskId: boolean; maskCard: boolean }
+): FormData {
+  const formData = new FormData();
+  formData.append("reportId", reportId);
+  formData.append("documentType", resolveVisionDocumentType(options));
+  return formData;
+}
+
+/**
  * 백엔드 DTO 기준: mosaicImageUrl (마스킹·모자이크 결과물)
  * originalImageUrl 은 등록에 사용하지 않음
  */
