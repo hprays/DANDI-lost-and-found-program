@@ -164,3 +164,38 @@ export async function resolveVisionPublishImage(options: {
     notice: "일반 물품 분석입니다. (documentType=NONE)",
   };
 }
+
+/**
+ * 신분증·카드는 Vision 모자이크를 거친 사진만 공개할 수 있다.
+ * 서버(SensitiveImagePolicy)도 같은 규칙으로 거부한다. 화면에서는 요청을 보내기 전에 먼저 경고한다.
+ */
+export const UNMASKED_SENSITIVE_MESSAGE =
+  "신분증·카드 사진은 Vision 모자이크를 적용한 뒤에만 공개할 수 있습니다.\n'수정 (Vision·사진)'에서 Vision 분석으로 모자이크 사진을 만든 뒤 다시 시도해 주세요.";
+
+const SENSITIVE_CATEGORIES = ["신분증", "카드/티켓", "카드"];
+
+export function isSensitiveCategory(category?: string | null): boolean {
+  if (!category) return false;
+  return category
+    .split(",")
+    .some((part) => SENSITIVE_CATEGORIES.includes(part.trim()));
+}
+
+export function isMosaicImageUrl(url?: string | null): boolean {
+  return Boolean(url) && String(url).includes("/vision/mosaic/");
+}
+
+/** 신분증·카드인데 사진이 있고 모자이크가 아니면 true */
+export function isUnmaskedSensitive(
+  category?: string | null,
+  image?: string | null,
+): boolean {
+  return (
+    isSensitiveCategory(category) && Boolean(image) && !isMosaicImageUrl(image)
+  );
+}
+
+/** 서버가 모자이크 미적용으로 공개를 거부했는지 */
+export function isUnmaskedRejection(message?: string | null): boolean {
+  return Boolean(message) && String(message).includes("모자이크");
+}

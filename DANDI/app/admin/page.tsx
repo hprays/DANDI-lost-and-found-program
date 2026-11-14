@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { UnmaskedPhotoDialog } from '@/components/unmasked-photo-dialog';
 import { MAX_IMAGE_BYTES } from '@/lib/constants';
 import {
   findCatalogItemByHint,
@@ -69,6 +70,8 @@ import {
 import {
   buildVisionFormData,
   fetchVisionResult,
+  isUnmaskedRejection,
+  isUnmaskedSensitive,
   normalizeVisionResult,
   pickMosaicImageUrl,
   resolveVisionDocumentType,
@@ -179,9 +182,10 @@ export default function AdminPage() {
   const [visionDataUrl, setVisionDataUrl] = useState<string | null>(null);
   const [visionLoading, setVisionLoading] = useState(false);
   const [visionMessage, setVisionMessage] = useState('');
+  const [unmaskedAlertOpen, setUnmaskedAlertOpen] = useState(false);
   const [visionResultId, setVisionResultId] = useState('');
-  const [visionResult, setVisionResult] =
-    useState<NormalizedVisionResult | null>(null);
+  // 분석 결과 상세(ID·OCR 텍스트 등)는 화면에 보이지 않는다. 상태만 유지한다.
+  const [, setVisionResult] = useState<NormalizedVisionResult | null>(null);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [statusUpdatingType, setStatusUpdatingType] = useState<
     'resolved' | 'unavailable' | null
@@ -341,20 +345,12 @@ export default function AdminPage() {
       }
     }
     if (status === 'resolved') {
-      // 신분증·카드는 모자이크 없이 공개하면 원본 사진이 홈에 그대로 노출된다 — 승인 전에 한 번 확인
+      // 신분증·카드는 모자이크 사진만 공개할 수 있다 (서버도 거부한다) — 요청을 보내기 전에 경고하고 멈춘다
       const target = reports.find((r) => String(r.id) === String(reportId));
       const category = overrides?.category ?? target?.category ?? '';
       const image = overrides?.image ?? target?.image ?? '';
-      const sensitive = category === '신분증' || category === '카드/티켓';
-      const masked = image.includes('/vision/mosaic/');
-      if (
-        sensitive &&
-        image &&
-        !masked &&
-        !window.confirm(
-          `${category} 물품을 모자이크 없이 승인하면 원본 사진이 홈 화면에 그대로 공개됩니다.\nVision 마스킹을 적용하지 않고 계속할까요?`,
-        )
-      ) {
+      if (isUnmaskedSensitive(category, image)) {
+        setUnmaskedAlertOpen(true);
         return;
       }
     }
@@ -362,6 +358,9 @@ export default function AdminPage() {
     setStatusUpdatingType(status);
     try {
       const result = await resolveReport(reportId, status, overrides);
+      if (!result.ok && isUnmaskedRejection(result.message)) {
+        setUnmaskedAlertOpen(true);
+      }
       setActionMessage(result.message);
       if (result.ok) {
         if (editingPendingReportId === reportId) {
@@ -426,6 +425,14 @@ export default function AdminPage() {
       return;
     }
 
+    // 신분증·카드는 모자이크 사진만 공개할 수 있다 (서버도 거부한다) — 요청을 보내기 전에 경고하고 멈춘다
+    const registerImage = visionDataUrl ?? visionPreview ?? undefined;
+    if (isUnmaskedSensitive(regCategory, registerImage)) {
+      setUnmaskedAlertOpen(true);
+      setRegMessage('신분증·카드 사진은 Vision 모자이크를 적용한 뒤에만 공개할 수 있습니다.');
+      return;
+    }
+
     setRegistering(true);
     const publishResult = await publishAdminLostItem({
       itemName: regName.trim(),
@@ -434,10 +441,13 @@ export default function AdminPage() {
       location: regFoundLocation.composed,
       storage: regStorageLocation.composed,
       memo: regMemo.trim(),
-      image: visionDataUrl ?? visionPreview ?? undefined,
+      image: registerImage,
     });
 
     if (!publishResult.ok) {
+      if (isUnmaskedRejection(publishResult.message)) {
+        setUnmaskedAlertOpen(true);
+      }
       setRegMessage(publishResult.message);
       setRegistering(false);
       return;
@@ -1372,51 +1382,6 @@ export default function AdminPage() {
                         <p className="text-xs font-medium text-primary">
                           {visionMessage}
                         </p>
-                      ) : null}
-                      {visionResult ? (
-                        <div className="space-y-1 rounded-lg border bg-slate-50 p-3 text-xs">
-                          <p>
-                            <span className="font-semibold">분석 ID:</span>{' '}
-                            {visionResult.id ?? '-'}
-                          </p>
-                          <p>
-                            <span className="font-semibold">documentType:</span>{' '}
-                            {visionResult.documentType}
-                          </p>
-                          <p>
-                            <span className="font-semibold">ocrApplied:</span>{' '}
-                            {visionResult.ocrApplied ? 'true' : 'false'}
-                          </p>
-                          <p className="break-all">
-                            <span className="font-semibold">
-                              mosaicImageUrl:
-                            </span>{' '}
-                            {visionResult.mosaicImageUrl ?? '(없음)'}
-                          </p>
-                          <p className="break-all text-muted-foreground">
-                            <span className="font-semibold">
-                              originalImageUrl:
-                            </span>{' '}
-                            {visionResult.originalImageUrl ?? '(없음)'} — 등록에
-                            사용 안 함
-                          </p>
-                          <p>
-                            <span className="font-semibold">카테고리:</span>{' '}
-                            {visionResult.category ?? '-'}
-                          </p>
-                          <p>
-                            <span className="font-semibold">라벨:</span>{' '}
-                            {(visionResult.labels ?? []).join(', ') || '-'}
-                          </p>
-                          <p>
-                            <span className="font-semibold">대표 색상:</span>{' '}
-                            {visionResult.dominantColor ?? '-'}
-                          </p>
-                          <p>
-                            <span className="font-semibold">OCR 텍스트:</span>{' '}
-                            {visionResult.text?.slice(0, 120) || '-'}
-                          </p>
-                        </div>
                       ) : null}
                     </div>
 
@@ -2395,6 +2360,10 @@ export default function AdminPage() {
           </TabsContent>
         </Tabs>
       </div>
+      <UnmaskedPhotoDialog
+        open={unmaskedAlertOpen}
+        onClose={() => setUnmaskedAlertOpen(false)}
+      />
     </AppShell>
   );
 }
