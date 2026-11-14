@@ -144,7 +144,7 @@ export default function OnboardingPage() {
                 <tr>
                   <td className="border px-1.5 py-2">분실물 신고·조회, 분실물 수령 시 본인 확인</td>
                   <td className="border px-1.5 py-2">학교 이메일, 이름, 학과, 학번, 신고 내용, 사진, 수령 기록</td>
-                  <td className="border px-1.5 py-2 font-semibold">시범 운영 종료 (2026/11/20)시까지</td>
+                  <td className="border px-1.5 py-2 font-semibold">시범 운영 종료 (2026/12/20)시까지</td>
                 </tr>
               </tbody>
             </table>
