@@ -12,9 +12,11 @@ import { UNMASKED_SENSITIVE_MESSAGE } from '@/lib/vision-utils';
  */
 export function UnmaskedPhotoDialog({
   open,
+  message,
   onClose,
 }: {
   open: boolean;
+  message?: string;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -52,7 +54,7 @@ export function UnmaskedPhotoDialog({
           id="unmasked-photo-desc"
           className="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-700"
         >
-          {UNMASKED_SENSITIVE_MESSAGE}
+          {message ?? UNMASKED_SENSITIVE_MESSAGE}
         </p>
         <Button type="button" className="mt-4 w-full" onClick={onClose} autoFocus>
           확인

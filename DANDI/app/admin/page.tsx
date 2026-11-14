@@ -70,12 +70,15 @@ import {
 import {
   buildVisionFormData,
   fetchVisionResult,
+  isMosaicImageUrl,
+  isSensitiveCategory,
   isUnmaskedRejection,
-  isUnmaskedSensitive,
+  MASK_REQUESTED_MESSAGE,
   normalizeVisionResult,
   pickMosaicImageUrl,
   resolveVisionDocumentType,
   resolveVisionPublishImage,
+  UNMASKED_SENSITIVE_MESSAGE,
   wantsVisionMask,
   type NormalizedVisionResult,
 } from '@/lib/vision-utils';
@@ -182,7 +185,7 @@ export default function AdminPage() {
   const [visionDataUrl, setVisionDataUrl] = useState<string | null>(null);
   const [visionLoading, setVisionLoading] = useState(false);
   const [visionMessage, setVisionMessage] = useState('');
-  const [unmaskedAlertOpen, setUnmaskedAlertOpen] = useState(false);
+  const [unmaskedAlertMessage, setUnmaskedAlertMessage] = useState<string | null>(null);
   const [visionResultId, setVisionResultId] = useState('');
   // 분석 결과 상세(ID·OCR 텍스트 등)는 화면에 보이지 않는다. 상태만 유지한다.
   const [, setVisionResult] = useState<NormalizedVisionResult | null>(null);
@@ -349,8 +352,20 @@ export default function AdminPage() {
       const target = reports.find((r) => String(r.id) === String(reportId));
       const category = overrides?.category ?? target?.category ?? '';
       const image = overrides?.image ?? target?.image ?? '';
-      if (isUnmaskedSensitive(category, image)) {
-        setUnmaskedAlertOpen(true);
+      // 가림 체크박스를 선택한 채 수정·승인하는 경우도 모자이크 사진이 아니면 막는다
+      const maskRequested =
+        useFormOverrides &&
+        wantsVisionMask({ maskId: visionMaskId, maskCard: visionMaskCard });
+      if (
+        image &&
+        !isMosaicImageUrl(image) &&
+        (isSensitiveCategory(category) || maskRequested)
+      ) {
+        setUnmaskedAlertMessage(
+          isSensitiveCategory(category)
+            ? UNMASKED_SENSITIVE_MESSAGE
+            : MASK_REQUESTED_MESSAGE,
+        );
         return;
       }
     }
@@ -359,7 +374,7 @@ export default function AdminPage() {
     try {
       const result = await resolveReport(reportId, status, overrides);
       if (!result.ok && isUnmaskedRejection(result.message)) {
-        setUnmaskedAlertOpen(true);
+        setUnmaskedAlertMessage(UNMASKED_SENSITIVE_MESSAGE);
       }
       setActionMessage(result.message);
       if (result.ok) {
@@ -427,9 +442,24 @@ export default function AdminPage() {
 
     // 신분증·카드는 모자이크 사진만 공개할 수 있다 (서버도 거부한다) — 요청을 보내기 전에 경고하고 멈춘다
     const registerImage = visionDataUrl ?? visionPreview ?? undefined;
-    if (isUnmaskedSensitive(regCategory, registerImage)) {
-      setUnmaskedAlertOpen(true);
-      setRegMessage('신분증·카드 사진은 Vision 모자이크를 적용한 뒤에만 공개할 수 있습니다.');
+    // 카테고리가 신분증·카드이거나, 가림 체크박스를 선택했는데 모자이크 사진이 아니면 막는다
+    const maskRequested = wantsVisionMask({
+      maskId: visionMaskId,
+      maskCard: visionMaskCard,
+    });
+    if (
+      registerImage &&
+      !isMosaicImageUrl(registerImage) &&
+      (isSensitiveCategory(regCategory) || maskRequested)
+    ) {
+      setUnmaskedAlertMessage(
+        isSensitiveCategory(regCategory)
+          ? UNMASKED_SENSITIVE_MESSAGE
+          : MASK_REQUESTED_MESSAGE,
+      );
+      setRegMessage(
+        '신분증·카드 사진은 Vision 모자이크를 적용한 뒤에만 공개할 수 있습니다.',
+      );
       return;
     }
 
@@ -446,7 +476,7 @@ export default function AdminPage() {
 
     if (!publishResult.ok) {
       if (isUnmaskedRejection(publishResult.message)) {
-        setUnmaskedAlertOpen(true);
+        setUnmaskedAlertMessage(UNMASKED_SENSITIVE_MESSAGE);
       }
       setRegMessage(publishResult.message);
       setRegistering(false);
@@ -2361,8 +2391,9 @@ export default function AdminPage() {
         </Tabs>
       </div>
       <UnmaskedPhotoDialog
-        open={unmaskedAlertOpen}
-        onClose={() => setUnmaskedAlertOpen(false)}
+        open={unmaskedAlertMessage !== null}
+        message={unmaskedAlertMessage ?? undefined}
+        onClose={() => setUnmaskedAlertMessage(null)}
       />
     </AppShell>
   );

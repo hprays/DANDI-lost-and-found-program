@@ -199,3 +199,7 @@ export function isUnmaskedSensitive(
 export function isUnmaskedRejection(message?: string | null): boolean {
   return Boolean(message) && String(message).includes("모자이크");
 }
+
+/** 신분증·카드 가림 체크박스를 선택했는데 모자이크 사진이 아닐 때의 안내 */
+export const MASK_REQUESTED_MESSAGE =
+  "신분증·카드 가림 체크박스를 선택하셨습니다.\n'Vision 분석'으로 모자이크 사진을 만든 뒤에만 공개할 수 있습니다.";
