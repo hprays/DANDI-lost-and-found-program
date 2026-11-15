@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
 import { signInWithPopup, type AuthError } from 'firebase/auth';
 import { firebaseAuth, googleProvider } from '@/lib/firebase-client';
 import {
+  getAuthSession,
   isAdminEmail,
   isDankookEmail,
   setAuthSession,
@@ -47,6 +48,27 @@ export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  // 이미 로그인한 세션이 남아 있으면 로그인 화면을 건너뛴다 (로고로 들어갈 때와 같은 기준).
+  // 이동 위치는 방금 로그인했을 때와 같다: 프로필 미완성 → 온보딩, 관리자 → /admin, 그 외 → /home
+  useEffect(() => {
+    const rafId = window.requestAnimationFrame(() => {
+      const session = getAuthSession();
+      if (session?.accessToken) {
+        router.replace(
+          !session.profileCompleted
+            ? '/onboarding'
+            : session.isAdmin
+              ? '/admin'
+              : '/home',
+        );
+        return;
+      }
+      setCheckingSession(false);
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [router]);
 
   const onGoogleLogin = async () => {
     if (!AUTH_DEMO_MODE && !API_BASE_URL) {
@@ -158,6 +180,16 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
+
+  if (checkingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100">
+        <p className="text-sm text-muted-foreground">
+          인증 상태를 확인하고 있습니다...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-safe">

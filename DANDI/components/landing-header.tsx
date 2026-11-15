@@ -17,7 +17,8 @@ export function LandingHeader() {
     <header className="sticky top-0 z-40 border-b border-border/70 bg-white/85 backdrop-blur-md">
       <div className="container grid h-16 grid-cols-[1fr_auto] items-center md:grid-cols-3">
         <div className="justify-self-start">
-          <DandiLogo />
+          {/* 랜딩에서는 시작하기와 같이 /login으로 보낸다 (세션이 있으면 로그인 화면이 알아서 건너뛴다) */}
+          <DandiLogo href="/login" />
         </div>
 
         <nav className="hidden items-center justify-center gap-8 md:flex">

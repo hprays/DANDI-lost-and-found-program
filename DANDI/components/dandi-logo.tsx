@@ -2,9 +2,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
-export function DandiLogo({ className }: { className?: string }) {
+export function DandiLogo({ className, href = "/home" }: { className?: string; href?: string }) {
   return (
-    <Link href="/home" className={cn("inline-flex items-center gap-2.5", className)}>
+    <Link href={href} className={cn("inline-flex items-center gap-2.5", className)}>
       <span className="relative h-9 w-9 shrink-0 overflow-hidden md:h-11 md:w-11">
         <Image
           src="/dandi-logo-mark.png"
