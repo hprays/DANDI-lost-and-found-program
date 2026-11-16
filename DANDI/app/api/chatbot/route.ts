@@ -19,7 +19,7 @@ const MAX_HISTORY = 8;
 const RATE_LIMIT_PER_MINUTE = 10;
 const TOKEN_CACHE_MS = 5 * 60_000;
 
-// ponytail: 서버리스 인스턴스마다 메모리가 따로라 인스턴스 단위 제한. 공유가 필요하면 KV/Redis로.
+// 서버리스 인스턴스마다 메모리가 따로라 인스턴스 단위 제한. 공유가 필요하면 KV/Redis로.
 const verifiedTokens = new Map<string, { uid: string; until: number }>();
 const recentCalls = new Map<string, number[]>();
 

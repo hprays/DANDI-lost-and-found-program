@@ -1642,7 +1642,7 @@ export function DandiStateProvider({
         }
         setNotices((prev) => prev.map((notice) => ({ ...notice, read: true })));
 
-        // ponytail: 일괄 읽음 API가 없어 알림마다 PATCH, 알림이 많아지면 백엔드 일괄 API로 교체
+        // 일괄 읽음 API가 없어 알림마다 PATCH, 알림이 많아지면 백엔드 일괄 API로 교체
         const remoteIds = API_BASE_URL ? unreadIds.filter((id) => !id.startsWith('n-')) : [];
         const results = await Promise.allSettled(
           remoteIds.map((id) =>
