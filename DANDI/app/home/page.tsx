@@ -137,7 +137,7 @@ export default function HomePage() {
           <Card className="border-primary/30 bg-primary/5">
             <CardContent className="flex items-center justify-between p-4">
               <div>
-                <p className="text-sm text-muted-foreground">물건을 잃어버리셨나요?</p>
+                <p className="text-sm text-muted-foreground">물건을 주우셨나요?</p>
                 <p className="text-lg font-bold">관리자에게 신고 접수</p>
               </div>
               <Button asChild>
@@ -151,8 +151,8 @@ export default function HomePage() {
           <Card>
             <CardContent className="flex items-center justify-between p-4">
               <div>
-                <p className="text-sm text-muted-foreground">주인을 찾아주세요</p>
-                <p className="text-lg font-bold">주변 관리실 위치 안내</p>
+                <p className="text-sm text-muted-foreground">물건을 찾으러 가시나요?</p>
+                <p className="text-lg font-bold">분실물 수령 장소 안내</p>
               </div>
               <Button asChild variant="outline">
                 <Link href="/map">지도 보기</Link>
