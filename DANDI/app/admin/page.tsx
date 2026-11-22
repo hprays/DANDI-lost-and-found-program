@@ -395,6 +395,11 @@ export default function AdminPage() {
     () => reports.filter((report) => report.status !== 'pending'),
     [reports],
   );
+  // 관리자 직접 등록 물품은 신고가 없다 — 수령 완료된 QR(reportId 없음)을 처리 완료로 보여준다
+  const directPickedUpPasses = useMemo(
+    () => pickupPasses.filter((pass) => pass.usedAt && !pass.reportId),
+    [pickupPasses],
+  );
   const needsCatalogLists = adminTab === 'manage' || adminTab === 'pickup';
   const managedItems = useMemo(() => {
     if (!needsCatalogLists) return [];
@@ -821,7 +826,8 @@ export default function AdminPage() {
 
   // 수령 인증 탭: 모든 사용자의 수령 코드를 서버에서 다시 불러온다 (다른 기기·다른 관리자 발급분 포함)
   useEffect(() => {
-    if (adminTab === 'pickup') void refreshAdminPickupPasses();
+    if (adminTab === 'pickup' || adminTab === 'processed')
+      void refreshAdminPickupPasses();
   }, [adminTab, refreshAdminPickupPasses]);
 
   // 작업 이력·등록된 물품 목록은 서버 DB 기록 — 탭을 열 때마다 다시 불러온다 (다른 기기·다른 관리자 작업 포함)
@@ -1952,12 +1958,29 @@ export default function AdminPage() {
 
           <TabsContent value="processed" className="space-y-2">
             {adminTab === 'processed' ? (
-              processedReports.length === 0 ? (
+              processedReports.length === 0 &&
+              directPickedUpPasses.length === 0 ? (
                 <p className="rounded-xl border bg-slate-50 px-3 py-2 text-sm text-muted-foreground">
                   처리 완료된 신고 이력이 없습니다.
                 </p>
               ) : (
-                processedReports.map((report) => (
+                <>
+                {directPickedUpPasses.map((pass) => (
+                  <div
+                    key={`direct-${pass.id}`}
+                    className="rounded-xl border bg-white p-3 text-sm"
+                  >
+                    <p className="font-semibold">{pass.itemName ?? '물품'}</p>
+                    <p className="text-muted-foreground">
+                      {sanitizeLocation(pass.itemLocation ?? '')}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-primary">
+                      최종 수령 완료 (관리자 등록) /{' '}
+                      {formatDateTimeLabel(pass.usedAt) || pass.usedAt}
+                    </p>
+                  </div>
+                ))}
+                {processedReports.map((report) => (
                   <div
                     key={report.id}
                     className="rounded-xl border bg-white p-3 text-sm"
@@ -1975,7 +1998,8 @@ export default function AdminPage() {
                       / {report.createdAt}
                     </p>
                   </div>
-                ))
+                ))}
+                </>
               )
             ) : null}
           </TabsContent>
