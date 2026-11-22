@@ -307,3 +307,10 @@ export function sanitizeLocation(location: string | undefined | null): string {
   }
   return trimmed;
 }
+
+/** 사람 표시 형식: 이름(이메일). 이름이 없으면 '이름 미등록' */
+export function formatPerson(name?: string | null, email?: string | null): string {
+  const n = name?.trim() || '이름 미등록';
+  const e = email?.trim();
+  return e ? `${n}(${e})` : n;
+}

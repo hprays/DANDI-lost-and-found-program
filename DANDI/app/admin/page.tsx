@@ -56,6 +56,7 @@ import {
   displayFoundDateTime,
   displayRegistrationDateTime,
   formatDateTimeLabel,
+  formatPerson,
   koreanDateTime,
   sanitizeLocation,
   toDatetimeLocalValue,
@@ -1884,11 +1885,7 @@ export default function AdminPage() {
                           {report.ownerName || report.ownerEmail ? (
                             <p>
                               신고자:{' '}
-                              {report.ownerName?.trim() ||
-                                '프로필 미등록 (마이페이지에서 이름 저장 필요)'}{' '}
-                              {report.ownerEmail ? (
-                                <>({report.ownerEmail})</>
-                              ) : null}
+                              {formatPerson(report.ownerName, report.ownerEmail)}
                             </p>
                           ) : null}
                           {report.memo ? (
@@ -2058,11 +2055,11 @@ export default function AdminPage() {
                         <p className="font-semibold">최근 인증 완료</p>
                         <p>물품: {lastVerifiedPass.itemName ?? '-'}</p>
                         <p>
-                          인수자: {lastVerifiedPass.claimantName ?? '이름 없음'}
-                        </p>
-                        <p>
-                          이메일:{' '}
-                          {lastVerifiedPass.claimantEmail ?? '이메일 없음'}
+                          인수자:{' '}
+                          {formatPerson(
+                            lastVerifiedPass.claimantName,
+                            lastVerifiedPass.claimantEmail,
+                          )}
                         </p>
                         <p className="text-xs text-emerald-700">
                           {lastVerifiedPass.usedAt ?? ''}
@@ -2184,11 +2181,12 @@ export default function AdminPage() {
                               </li>
                               <li>
                                 인수자:{' '}
-                                {scannedPass?.claimantName ??
-                                  '(서버 인증 시 확인)'}
-                              </li>
-                              <li>
-                                이메일: {scannedPass?.claimantEmail ?? '-'}
+                                {scannedPass
+                                  ? formatPerson(
+                                      scannedPass.claimantName,
+                                      scannedPass.claimantEmail,
+                                    )
+                                  : '(서버 인증 시 확인)'}
                               </li>
                             </ul>
 
@@ -2372,8 +2370,8 @@ export default function AdminPage() {
                             {pass.itemLocation ?? '-'}
                           </p>
                           <p className="text-muted-foreground">
-                            인수자: {pass.claimantName ?? '이름 없음'} (
-                            {pass.claimantEmail ?? '이메일 없음'})
+                            인수자:{' '}
+                            {formatPerson(pass.claimantName, pass.claimantEmail)}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             만료:{' '}
